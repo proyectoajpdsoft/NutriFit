@@ -92,6 +92,7 @@ Thumbs.db
 
 # PHP sensitive/config files
 php_api/config/database.php
+php_api/dev_scripts/
 
 # Logs
 *.log
