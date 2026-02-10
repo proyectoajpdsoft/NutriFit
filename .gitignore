@@ -1,0 +1,43 @@
+# Flutter/Dart
+**/build/
+**/.dart_tool/
+**/.idea/
+**/.vscode/
+**/pubspec.lock
+**/generated_plugin_registrant.*
+**/local.properties
+**/android/key.properties
+**/android/app/google-services.json
+**/ios/Runner/GoogleService-Info.plist
+**/windows/runner/Runner.rc
+**/windows/runner/Runner.exe.manifest
+**/windows/runner/Runner.pfx
+**/web/manifest.json
+**/web/firebase-messaging-sw.js
+
+# System
+.DS_Store
+Thumbs.db
+
+# PHP sensitive/config files
+php_api/config/database.php
+
+# Logs
+*.log
+
+# Others
+*.iml
+*.swp
+*.swo
+*.tmp
+
+# Ignore build outputs
+nutri_app/build/
+
+# Ignore user-specific files
+nutri_app/android/local.properties
+nutri_app/ios/Flutter/Generated.xcconfig
+
+# Ignore backup config
+php_api/config/database.php
+!php_api/config/database_.php
