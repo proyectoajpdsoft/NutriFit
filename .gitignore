@@ -15,6 +15,76 @@
 **/web/manifest.json
 **/web/firebase-messaging-sw.js
 
+# macOS
+**/macos/Flutter/ephemeral/
+**/macos/Flutter/Generated.xcconfig
+**/macos/Pods/
+**/macos/Runner.xcworkspace/
+**/macos/xcuserdata/
+**/macos/Podfile.lock
+
+# Linux
+**/linux/flutter/ephemeral/
+**/linux/CMakeFiles/
+**/linux/Makefile
+**/linux/cmake_install.cmake
+**/linux/Flutter/GeneratedPluginRegistrant.*
+
+# Windows
+**/windows/flutter/ephemeral/
+**/windows/CMakeFiles/
+**/windows/Makefile
+**/windows/cmake_install.cmake
+**/windows/Flutter/GeneratedPluginRegistrant.*
+
+# iOS
+**/ios/Flutter/ephemeral/
+**/ios/Pods/
+**/ios/Runner.xcworkspace/
+**/ios/xcuserdata/
+**/ios/Podfile.lock
+
+# Web
+**/web/.dart_tool/
+**/web/.firebase/
+
+# Coverage
+coverage/
+
+# VS Code
+.history/
+.vscode/
+
+# Misc
+*.orig
+*.bak
+*.tmp
+*.temp
+*.log
+*.lock
+*.class
+*.pyc
+*.pyo
+*.exe
+*.dll
+*.obj
+*.so
+*.dylib
+*.bin
+*.swp
+*.swo
+*.DS_Store
+Thumbs.db
+.env
+.env.*
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.metadata
+.dart_tool/
+.pub-cache/
+.pub/
+
 # System
 .DS_Store
 Thumbs.db
