@@ -1,0 +1,118 @@
+name: nutri_app
+description: "Una aplicación para la gestión de nutricionistas."
+# Prevenir publicaciones accidentales en pub.dev.
+publish_to: 'none' 
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Localización para soportar español
+  flutter_localizations:
+    sdk: flutter
+
+  # Iconos de Cupertino para estilo iOS
+  cupertino_icons: ^1.0.2
+
+  # Peticiones HTTP para conectar con el API REST
+  http: ^1.2.1
+
+  # Calendario para la sección de Citas
+  table_calendar: ^3.1.2
+
+  # Formateo de fechas y números
+  intl: ^0.20.2
+
+  # Selector de ficheros para los planes nutricionales (PDF)
+  file_picker: ^8.0.5
+
+  # Abrir ficheros descargados
+  open_filex: ^4.4.0
+
+  # Acceder a las rutas del sistema de ficheros (para guardar los PDFs)
+  path_provider: ^2.1.3
+
+  # Almacenamiento seguro para el token de autenticación
+  flutter_secure_storage: ^10.0.0
+
+  # Gestión de estado (para el servicio de autenticación)
+  provider: ^6.1.2
+  shared_preferences: ^2.5.4
+
+  # Selector de imágenes (cámara y galería)
+  image_picker: ^1.0.7
+
+  # Procesamiento de imágenes (redimensionamiento)
+  image: ^4.1.0
+
+  # Realizar llamadas y enviar emails
+  url_launcher: ^6.2.5
+
+  # Reproductor de videos de YouTube incrustado
+  # youtube_player_flutter: ^9.0.3  # Deshabilitado temporalmente para compatibilidad web
+
+  # Información del dispositivo
+  # (Retirado para evitar conflictos de compilación)
+  # device_info_plus: ^9.0.2
+  # platform_device_id: ^1.0.1
+  http_parser: ^4.0.2
+
+  # Generación de PDFs
+  pdf: ^3.11.0
+  printing: ^5.14.2
+  fl_chart: ^1.1.1
+
+  # Mantener pantalla encendida durante el temporizador
+  wakelock_plus: ^1.2.0
+
+  # Audio para el metrónomo
+  audioplayers: ^6.0.0
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  # Linter para análisis estático y buenas prácticas de código.
+  flutter_lints: ^2.0.0
+  
+  # Generador de iconos de la app
+  flutter_launcher_icons: ^0.13.1
+
+# Configuración específica de Flutter.
+flutter:
+  # La siguiente línea asegura que la fuente Material Icons esté incluida.
+  uses-material-design: true
+
+  # Para añadir assets a tu aplicación, descomenta esta sección:
+  assets:
+    - assets/
+    - assets/sounds/
+
+  # Para añadir fuentes personalizadas, descomenta esta sección:
+  # fonts:
+  #   - family: Schyler
+  #     fonts:
+  #       - asset: fonts/Schyler-Regular.ttf
+  #       - asset: fonts/Schyler-Italic.ttf
+  #         style: italic
+  #   - family: Trajan Pro
+  #     fonts:
+  #       - asset: fonts/TrajanPro.ttf
+  #       - asset: fonts/TrajanPro_Bold.ttf
+  #         weight: 700
+
+# Configuración para generar los iconos de la app.
+# Coloca el archivo de icono en assets/app_icon.png (idealmente 1024x1024 PNG)
+# y luego ejecuta:
+#   flutter pub get
+#   dart run flutter_launcher_icons
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/app_icon.png
+  min_sdk_android: 21

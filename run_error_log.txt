@@ -1,0 +1,9 @@
+﻿flutter : Error: No pubspec.yaml file found.
+En línea: 1 Carácter: 1
++ flutter run -d emulator-5554 2>&1 | Out-File run_error_log.txt -Encod ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Error: No pubspec.yaml file found.:Stri 
+   ng) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+This command should be run from the root of your Flutter project.
