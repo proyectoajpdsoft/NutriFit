@@ -5,6 +5,7 @@ import '../models/entrenamiento.dart';
 import '../models/entrenamiento_ejercicio.dart';
 import '../models/paciente.dart';
 import '../services/api_service.dart';
+import '../widgets/image_viewer_dialog.dart' show showImageViewerDialog;
 
 class EntrenamientosPacientesPlanFitScreen extends StatefulWidget {
   const EntrenamientosPacientesPlanFitScreen({super.key});
@@ -199,141 +200,151 @@ class _EntrenamientosPacientePlanFitListScreenState
                         entrenamiento.ejerciciosNoRealizados ?? 0;
                     final validado = entrenamiento.validado == true;
 
+                    void openDetalle() {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              EntrenamientoPacientePlanFitDetailScreen(
+                            entrenamiento: entrenamiento,
+                            nombrePaciente: widget.paciente.nombre,
+                          ),
+                        ),
+                      );
+                    }
+
                     return Card(
                       elevation: 2,
-                      child: InkWell(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>
-                                  EntrenamientoPacientePlanFitDetailScreen(
-                                entrenamiento: entrenamiento,
-                                nombrePaciente: widget.paciente.nombre,
-                              ),
-                            ),
-                          );
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          entrenamiento.actividad,
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          'Fecha: $fechaText · Plan ${entrenamiento.codigoPlanFit ?? '-'}',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodySmall,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 8, vertical: 4),
-                                        decoration: BoxDecoration(
+                                      Text(
+                                        entrenamiento.actividad,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Fecha: $fechaText · Plan ${entrenamiento.codigoPlanFit ?? '-'}',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: validado
+                                            ? Colors.green.withOpacity(0.15)
+                                            : Colors.orange.withOpacity(0.15),
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Text(
+                                        validado ? 'Validado' : 'No validado',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
                                           color: validado
-                                              ? Colors.green.withOpacity(0.15)
-                                              : Colors.orange.withOpacity(0.15),
-                                          borderRadius:
-                                              BorderRadius.circular(10),
+                                              ? Colors.green.shade800
+                                              : Colors.orange.shade800,
                                         ),
-                                        child: Text(
-                                          validado ? 'Validado' : 'No validado',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w600,
-                                            color: validado
-                                                ? Colors.green.shade800
-                                                : Colors.orange.shade800,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 12,
+                              runSpacing: 6,
+                              children: [
+                                Text(
+                                  'Ejercicios: $totalEjercicios',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.check_circle,
+                                      size: 16,
+                                      color: Colors.green.shade700,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '$realizados',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(
+                                            color: Colors.green.shade700,
                                           ),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 6),
-                                      if (!validado)
-                                        TextButton.icon(
-                                          onPressed: () =>
-                                              _validarEntrenamiento(
-                                                  entrenamiento),
-                                          icon: const Icon(Icons.verified),
-                                          label: const Text('Validar'),
-                                        ),
-                                    ],
+                                    ),
+                                  ],
+                                ),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.cancel,
+                                      size: 16,
+                                      color: Colors.red.shade700,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '$noRealizados',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(
+                                            color: Colors.red.shade700,
+                                          ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.start,
+                              children: [
+                                if (!validado)
+                                  IconButton(
+                                    icon: const Icon(Icons.verified),
+                                    color: Colors.green,
+                                    iconSize: 28,
+                                    tooltip: 'Validar',
+                                    onPressed: () =>
+                                        _validarEntrenamiento(entrenamiento),
                                   ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 12,
-                                runSpacing: 6,
-                                children: [
-                                  Text(
-                                    'Ejercicios: $totalEjercicios',
-                                    style:
-                                        Theme.of(context).textTheme.bodySmall,
-                                  ),
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.check_circle,
-                                        size: 16,
-                                        color: Colors.green.shade700,
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        'Realizados: $realizados',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall
-                                            ?.copyWith(
-                                              color: Colors.green.shade700,
-                                            ),
-                                      ),
-                                    ],
-                                  ),
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.cancel,
-                                        size: 16,
-                                        color: Colors.red.shade700,
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        'No realizados: $noRealizados',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall
-                                            ?.copyWith(
-                                              color: Colors.red.shade700,
-                                            ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
+                                IconButton(
+                                  icon: const Icon(Icons.visibility_outlined),
+                                  color: Colors.blue,
+                                  iconSize: 28,
+                                  tooltip: 'Visualizar',
+                                  onPressed: openDetalle,
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                       ),
                     );
@@ -455,6 +466,8 @@ class _EntrenamientoPacientePlanFitDetailScreenState
     final hasSensaciones = (e.sensaciones ?? '').trim().isNotEmpty;
     final hasComentario = (e.comentarioNutricionista ?? '').trim().isNotEmpty;
     final esfuerzo = e.esfuerzoPercibido ?? 0;
+    final hasMiniatura = (e.fotoMiniatura ?? '').isNotEmpty;
+    final hasImagenCompleta = (e.fotoBase64 ?? '').isNotEmpty;
 
     // Función para obtener color del esfuerzo
     Color getEsfuerzoColor(int valor) {
@@ -463,167 +476,235 @@ class _EntrenamientoPacientePlanFitDetailScreenState
       return Colors.red;
     }
 
+    // Widget para mostrar la miniatura o icono genérico
+    Widget buildThumbnail() {
+      if (hasMiniatura) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: GestureDetector(
+            onTap: hasImagenCompleta
+                ? () => showImageViewerDialog(
+                      context: context,
+                      base64Image: e.fotoBase64!,
+                      title: e.nombre,
+                    )
+                : null,
+            child: Image.memory(
+              base64Decode(e.fotoMiniatura!),
+              width: 80,
+              height: 80,
+              fit: BoxFit.cover,
+            ),
+          ),
+        );
+      } else {
+        return Container(
+          width: 80,
+          height: 80,
+          decoration: BoxDecoration(
+            color: Colors.grey[300],
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Icon(Icons.fitness_center, size: 40, color: Colors.grey),
+        );
+      }
+    }
+
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       elevation: 2,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if ((e.fotoBase64 ?? '').isNotEmpty)
-            Image.memory(
-              base64Decode(e.fotoBase64!),
-              height: 200,
-              width: double.infinity,
-              fit: BoxFit.contain,
-            )
-          else
-            Container(
-              height: 200,
-              width: double.infinity,
-              color: Colors.grey[300],
-              child: const Icon(Icons.fitness_center,
-                  size: 64, color: Colors.grey),
-            ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Fila con miniatura y nombre del ejercicio
+            Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  e.nombre,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    if (reps > 0)
-                      Chip(
-                        avatar: const Icon(Icons.repeat, size: 16),
-                        label: Text('$reps repeticiones'),
-                      ),
-                    if (descanso > 0)
-                      Chip(
-                        avatar: const Icon(Icons.pause_circle_filled, size: 16),
-                        label: Text('${descanso}s descanso'),
-                      ),
-                    if (tiempo > 0)
-                      Chip(
-                        avatar: const Icon(Icons.timer, size: 16),
-                        label: Text('${tiempo}s tiempo'),
-                      ),
-                    if (kilos > 0)
-                      Chip(
-                        avatar: const Icon(Icons.fitness_center, size: 16),
-                        label: Text('$kilos kg'),
-                      ),
-                    if (esfuerzo > 0)
-                      Chip(
-                        avatar: Container(
-                          width: 20,
-                          height: 20,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: getEsfuerzoColor(esfuerzo).withOpacity(0.2),
-                            border: Border.all(
-                              color: getEsfuerzoColor(esfuerzo),
-                              width: 2,
-                            ),
-                          ),
-                          child: Center(
-                            child: Text(
-                              '$esfuerzo',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                color: getEsfuerzoColor(esfuerzo),
-                              ),
-                            ),
-                          ),
-                        ),
-                        label: const Text('Esfuerzo percibido'),
-                      ),
-                  ],
-                ),
-                if (hasSensaciones) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.amber.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.amber.withOpacity(0.4)),
-                    ),
-                    child: Text(
-                      'Sensaciones: ${e.sensaciones}',
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                  ),
-                ],
-                if (hasComentario) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .primary
-                          .withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .primary
-                            .withOpacity(0.2),
-                      ),
-                    ),
-                    child: Text(
-                      e.comentarioNutricionista ?? '',
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
+                buildThumbnail(),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(
-                        e.comentarioLeido == true
-                            ? Icons.mark_email_read_outlined
-                            : Icons.mark_email_unread_outlined,
-                        size: 16,
-                        color: e.comentarioLeido == true
-                            ? Colors.green.shade700
-                            : Colors.orange.shade700,
-                      ),
-                      const SizedBox(width: 6),
                       Text(
-                        e.comentarioLeido == true
-                            ? 'Leido por paciente'
-                            : 'Pendiente de leer',
-                        style: Theme.of(context).textTheme.bodySmall,
+                        e.nombre,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      // Chips con información del ejercicio
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          if (reps > 0)
+                            Chip(
+                              avatar: const Icon(Icons.repeat, size: 14),
+                              label: Text('$reps reps',
+                                  style: const TextStyle(fontSize: 11)),
+                              padding: EdgeInsets.zero,
+                            ),
+                          if (descanso > 0)
+                            Chip(
+                              avatar: const Icon(Icons.pause_circle_filled,
+                                  size: 14),
+                              label: Text('${descanso}s',
+                                  style: const TextStyle(fontSize: 11)),
+                              padding: EdgeInsets.zero,
+                            ),
+                          if (tiempo > 0)
+                            Chip(
+                              avatar: const Icon(Icons.timer, size: 14),
+                              label: Text('${tiempo}s',
+                                  style: const TextStyle(fontSize: 11)),
+                              padding: EdgeInsets.zero,
+                            ),
+                          if (kilos > 0)
+                            Chip(
+                              avatar:
+                                  const Icon(Icons.fitness_center, size: 14),
+                              label: Text('$kilos kg',
+                                  style: const TextStyle(fontSize: 11)),
+                              padding: EdgeInsets.zero,
+                            ),
+                          if (esfuerzo > 0)
+                            Chip(
+                              avatar: Container(
+                                width: 16,
+                                height: 16,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: getEsfuerzoColor(esfuerzo)
+                                      .withOpacity(0.2),
+                                  border: Border.all(
+                                    color: getEsfuerzoColor(esfuerzo),
+                                    width: 1.5,
+                                  ),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    '$esfuerzo',
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                      color: getEsfuerzoColor(esfuerzo),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              label: const Text('Esf.',
+                                  style: TextStyle(fontSize: 11)),
+                              padding: EdgeInsets.zero,
+                            ),
+                        ],
                       ),
                     ],
-                  ),
-                ],
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: ElevatedButton.icon(
-                    onPressed: () => _editComentario(e),
-                    icon: const Icon(Icons.comment),
-                    label:
-                        Text(hasComentario ? 'Editar comentario' : 'Comentar'),
                   ),
                 ),
               ],
             ),
-          ),
-        ],
+            // Sensaciones
+            if (hasSensaciones) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.amber.withOpacity(0.4)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.comment_outlined,
+                        size: 16, color: Colors.amber),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        e.sensaciones!,
+                        style: const TextStyle(fontSize: 12),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            // Comentario nutricionista
+            if (hasComentario) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color:
+                      Theme.of(context).colorScheme.primary.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color:
+                        Theme.of(context).colorScheme.primary.withOpacity(0.2),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.note_outlined, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        e.comentarioNutricionista!,
+                        style: const TextStyle(fontSize: 12),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Icon(
+                    e.comentarioLeido == true
+                        ? Icons.mark_email_read_outlined
+                        : Icons.mark_email_unread_outlined,
+                    size: 14,
+                    color: e.comentarioLeido == true
+                        ? Colors.green.shade700
+                        : Colors.orange.shade700,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    e.comentarioLeido == true
+                        ? 'Leido por paciente'
+                        : 'Pendiente de leer',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(fontSize: 11),
+                  ),
+                ],
+              ),
+            ],
+            // Botón comentar
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: ElevatedButton.icon(
+                onPressed: () => _editComentario(e),
+                icon: const Icon(Icons.comment, size: 16),
+                label: Text(
+                  hasComentario ? 'Editar comentario' : 'Comentar',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

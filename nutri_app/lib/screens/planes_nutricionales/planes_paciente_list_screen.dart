@@ -7,7 +7,7 @@ import 'package:nutri_app/widgets/app_drawer.dart';
 import 'package:nutri_app/widgets/contact_nutricionista_dialog.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
+// import 'package:url_launcher/url_launcher.dart';
 
 class PlanesPacienteListScreen extends StatefulWidget {
   const PlanesPacienteListScreen({super.key});
@@ -73,9 +73,10 @@ class _PlanesPacienteListScreenState extends State<PlanesPacienteListScreen> {
         }
       }
     } catch (e) {
+      final errorMessage = e.toString().replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text('Error en la descarga: $e'),
+            content: Text('Error al descargar plan. $errorMessage'),
             backgroundColor: Colors.red),
       );
     }
@@ -150,6 +151,7 @@ class _PlanesPacienteListScreenState extends State<PlanesPacienteListScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // Título del plan
                       Text(
                         _buildPlanTitle(plan.desde, plan.hasta),
                         style: Theme.of(context)
@@ -158,73 +160,92 @@ class _PlanesPacienteListScreenState extends State<PlanesPacienteListScreen> {
                             ?.copyWith(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 12),
-                      if (plan.planIndicacionesVisibleUsuario != null &&
-                          plan.planIndicacionesVisibleUsuario!.isNotEmpty) ...[
-                        Text(
-                          'Indicaciones:',
-                          style: Theme.of(context).textTheme.titleSmall,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(plan.planIndicacionesVisibleUsuario!),
-                        const SizedBox(height: 12),
-                      ],
-                      if (plan.url != null && plan.url!.isNotEmpty) ...[
-                        InkWell(
-                          onTap: () async {
-                            try {
-                              String urlString = plan.url!.trim();
-                              // Asegurarse de que la URL tenga un esquema
-                              if (!urlString.startsWith('http://') &&
-                                  !urlString.startsWith('https://')) {
-                                urlString = 'https://$urlString';
-                              }
-                              final Uri url = Uri.parse(urlString);
-                              await launchUrl(url,
-                                  mode: LaunchMode.externalApplication);
-                            } catch (e) {
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                        'No se pudo abrir la URL: ${plan.url}'),
-                                    backgroundColor: Colors.red,
-                                  ),
-                                );
-                              }
-                            }
-                          },
+
+                      // Semanas (recuadro ancho)
+                      if (plan.semanas != null && plan.semanas!.isNotEmpty)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12.0,
+                            vertical: 8.0,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.blue[50],
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: Colors.blue[200]!,
+                              width: 1,
+                            ),
+                          ),
                           child: Row(
                             children: [
-                              const Icon(
-                                Icons.open_in_browser,
-                                size: 16,
-                                color: Colors.blue,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                'Ver en el navegador web',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodyMedium
-                                    ?.copyWith(
-                                      color: Colors.blue,
-                                      decoration: TextDecoration.underline,
-                                    ),
+                              const Icon(Icons.calendar_today, size: 16),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text('${plan.semanas} semanas'),
                               ),
                             ],
                           ),
                         ),
+                      if (plan.semanas != null && plan.semanas!.isNotEmpty)
+                        const SizedBox(height: 12),
+
+                      // Indicaciones (recuadro amarillo, sin label)
+                      if (plan.planIndicacionesVisibleUsuario != null &&
+                          plan.planIndicacionesVisibleUsuario!.isNotEmpty) ...[
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12.0),
+                          decoration: BoxDecoration(
+                            color: Colors.amber[100],
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: Colors.amber[300]!,
+                              width: 1,
+                            ),
+                          ),
+                          child: Text(
+                            plan.planIndicacionesVisibleUsuario!,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
                         const SizedBox(height: 12),
                       ],
-                      if (plan.planDocumentoNombre != null &&
-                          plan.planDocumentoNombre!.isNotEmpty)
-                        Center(
-                          child: ElevatedButton.icon(
-                            icon:
-                                const Icon(Icons.download_for_offline_outlined),
-                            label: const Text('Descargar plan'),
-                            onPressed: () => _downloadAndOpenFile(
-                                plan.codigo, plan.planDocumentoNombre!),
+
+                      // Botones (URL + descarga en la misma linea)
+                      if ((plan.url != null && plan.url!.isNotEmpty) ||
+                          (plan.planDocumentoNombre != null &&
+                              plan.planDocumentoNombre!.isNotEmpty))
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12.0),
+                          child: Row(
+                            children: [
+                              if (plan.url != null && plan.url!.isNotEmpty)
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    onPressed:
+                                        null, // () => _launchUrlExternal(plan.url ?? ''),
+                                    icon: const Icon(Icons.open_in_browser),
+                                    label: const Text('Web'),
+                                  ),
+                                ),
+                              if (plan.url != null && plan.url!.isNotEmpty)
+                                const SizedBox(width: 12),
+                              if (plan.planDocumentoNombre != null &&
+                                  plan.planDocumentoNombre!.isNotEmpty)
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    icon: const Icon(
+                                      Icons.download_for_offline_outlined,
+                                    ),
+                                    label: const Text('Descargar'),
+                                    onPressed: () => _downloadAndOpenFile(
+                                      plan.codigo,
+                                      plan.planDocumentoNombre!,
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
                     ],
@@ -237,4 +258,26 @@ class _PlanesPacienteListScreenState extends State<PlanesPacienteListScreen> {
       ),
     );
   }
+
+  // Future<void> _launchUrlExternal(String url) async {
+  //   final trimmed = url.trim();
+  //   if (trimmed.isEmpty) return;
+  //   Uri? uri = Uri.tryParse(trimmed);
+  //   if (uri == null) return;
+  //   if (uri.scheme.isEmpty) {
+  //     uri = Uri.tryParse('https://$trimmed');
+  //   }
+  //   if (uri == null) return;
+  //   final launched = await launchUrl(
+  //     uri,
+  //     mode: LaunchMode.externalApplication,
+  //   );
+  //   if (!launched && mounted) {
+  //     ScaffoldMessenger.of(context).showSnackBar(
+  //       const SnackBar(
+  //         content: Text('No se pudo abrir el enlace'),
+  //       ),
+  //     );
+  //   }
+  // }
 }

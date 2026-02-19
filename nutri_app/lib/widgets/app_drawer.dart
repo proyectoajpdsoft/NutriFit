@@ -21,7 +21,6 @@ import 'package:nutri_app/screens/chat_screen.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:nutri_app/constants/app_constants.dart';
 
 class AppDrawer extends StatelessWidget {
@@ -357,11 +356,12 @@ class AppDrawer extends StatelessWidget {
               leading: const Icon(Icons.mark_chat_unread_outlined),
               title: const Text('Chat dietista'),
               onTap: () {
-                Navigator.pop(context);
                 if (isGuestMode) {
+                  // No cerrar el drawer para guest, mostrar diálogo sobre el drawer abierto
                   _showChatGuestDialog(context);
                   return;
                 }
+                Navigator.pop(context);
                 Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -558,7 +558,9 @@ class AppDrawer extends StatelessWidget {
                   icon: Icons.email,
                   label: 'Email',
                   value: contactInfo['email'] ?? '',
-                  onTap: () => _launchUrl('mailto:${contactInfo['email']}'),
+                  // URL Launcher disabled - feature temporarily disabled
+                  // onTap: () => _launchUrl('mailto:${contactInfo['email']}'),
+                  onTap: () {},
                 ),
 
               // Teléfono
@@ -569,7 +571,9 @@ class AppDrawer extends StatelessWidget {
                   icon: Icons.phone,
                   label: 'Teléfono',
                   value: contactInfo['telefono'] ?? '',
-                  onTap: () => _launchUrl('tel:${contactInfo['telefono']}'),
+                  // URL Launcher disabled - feature temporarily disabled
+                  // onTap: () => _launchUrl('tel:${contactInfo['telefono']}'),
+                  onTap: () {},
                 ),
               ],
             ],
@@ -613,7 +617,8 @@ class AppDrawer extends StatelessWidget {
           ),
           ElevatedButton(
             onPressed: () {
-              Navigator.pop(context);
+              Navigator.pop(context); // Cerrar diálogo
+              Navigator.pop(context); // Cerrar drawer
               Navigator.pushNamed(context, '/register');
             },
             child: const Text('Registrarse'),
@@ -668,14 +673,15 @@ class AppDrawer extends StatelessWidget {
     );
   }
 
-  static Future<void> _launchUrl(String url) async {
-    try {
-      final uri = Uri.parse(url);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      }
-    } catch (e) {
-      // Error silencioso
-    }
-  }
+  // URL Launcher disabled - feature temporarily disabled
+  // static Future<void> _launchUrl(String url) async {
+  //   try {
+  //     final uri = Uri.parse(url);
+  //     if (await canLaunchUrl(uri)) {
+  //       await launchUrl(uri, mode: LaunchMode.externalApplication);
+  //     }
+  //   } catch (e) {
+  //     // Error silencioso
+  //   }
+  // }
 }

@@ -14,6 +14,7 @@ class EntrenamientoEjercicio {
   String? urlVideo;
   String? fotoBase64;
   String? fotoNombre;
+  String? fotoMiniatura;
   int? tiempoPlan;
   int? descansoPlan;
   int? repeticionesPlan;
@@ -29,6 +30,7 @@ class EntrenamientoEjercicio {
   DateTime? sensacionesLeidoNutriFecha;
   String? realizado;
   int? orden;
+  int? codusuarioa;
 
   EntrenamientoEjercicio({
     required this.codigo,
@@ -39,6 +41,7 @@ class EntrenamientoEjercicio {
     this.urlVideo,
     this.fotoBase64,
     this.fotoNombre,
+    this.fotoMiniatura,
     this.tiempoPlan,
     this.descansoPlan,
     this.repeticionesPlan,
@@ -54,6 +57,7 @@ class EntrenamientoEjercicio {
     this.sensacionesLeidoNutriFecha,
     this.realizado,
     this.orden,
+    this.codusuarioa,
   });
 
   factory EntrenamientoEjercicio.fromJson(Map<String, dynamic> json) {
@@ -72,6 +76,7 @@ class EntrenamientoEjercicio {
       urlVideo: json['url_video']?.toString(),
       fotoBase64: json['foto']?.toString(),
       fotoNombre: json['foto_nombre']?.toString(),
+      fotoMiniatura: json['foto_miniatura']?.toString(),
       tiempoPlan: json['tiempo_plan'] is int
           ? json['tiempo_plan']
           : int.tryParse(json['tiempo_plan']?.toString() ?? ''),
@@ -116,6 +121,9 @@ class EntrenamientoEjercicio {
       orden: json['orden'] is int
           ? json['orden']
           : int.tryParse(json['orden']?.toString() ?? ''),
+      codusuarioa: json['codusuarioa'] is int
+          ? json['codusuarioa']
+          : int.tryParse(json['codusuarioa']?.toString() ?? ''),
     );
   }
 
@@ -128,6 +136,7 @@ class EntrenamientoEjercicio {
         'url_video': urlVideo,
         'foto': fotoBase64,
         'foto_nombre': fotoNombre,
+        'foto_miniatura': fotoMiniatura,
         'tiempo_plan': tiempoPlan,
         'descanso_plan': descansoPlan,
         'repeticiones_plan': repeticionesPlan,
@@ -144,5 +153,6 @@ class EntrenamientoEjercicio {
             sensacionesLeidoNutriFecha?.toIso8601String(),
         'realizado': realizado,
         'orden': orden,
+        'codusuarioa': codusuarioa,
       };
 }

@@ -9,11 +9,13 @@ class PlanFitEjercicio {
   int codigo;
   int codigoPlanFit;
   int? codigoDia;
+  int? codigoEjercicioCatalogo;
   String nombre;
   String? instrucciones;
   String? urlVideo;
   String? fotoBase64;
   String? fotoNombre;
+  String? fotoMiniatura;
   int? tiempo;
   int? descanso;
   int? repeticiones;
@@ -24,11 +26,13 @@ class PlanFitEjercicio {
     required this.codigo,
     required this.codigoPlanFit,
     this.codigoDia,
+    this.codigoEjercicioCatalogo,
     required this.nombre,
     this.instrucciones,
     this.urlVideo,
     this.fotoBase64,
     this.fotoNombre,
+    this.fotoMiniatura,
     this.tiempo,
     this.descanso,
     this.repeticiones,
@@ -47,11 +51,15 @@ class PlanFitEjercicio {
       codigoDia: json['codigo_dia'] is int
           ? json['codigo_dia']
           : int.tryParse(json['codigo_dia']?.toString() ?? ''),
+      codigoEjercicioCatalogo: json['codigo_ejercicio_catalogo'] is int
+          ? json['codigo_ejercicio_catalogo']
+          : int.tryParse(json['codigo_ejercicio_catalogo']?.toString() ?? ''),
       nombre: json['nombre']?.toString() ?? '',
       instrucciones: json['instrucciones']?.toString(),
       urlVideo: json['url_video']?.toString(),
       fotoBase64: json['foto']?.toString(),
       fotoNombre: json['foto_nombre']?.toString(),
+      fotoMiniatura: json['foto_miniatura']?.toString(),
       tiempo: json['tiempo'] is int
           ? json['tiempo']
           : int.tryParse(json['tiempo']?.toString() ?? ''),
@@ -74,10 +82,12 @@ class PlanFitEjercicio {
         'codigo': codigo,
         'codigo_plan_fit': codigoPlanFit,
         'codigo_dia': codigoDia,
+        'codigo_ejercicio_catalogo': codigoEjercicioCatalogo,
         'nombre': nombre,
         'instrucciones': instrucciones,
         'url_video': urlVideo,
         'foto_nombre': fotoNombre,
+        'foto_miniatura': fotoMiniatura,
         'tiempo': tiempo,
         'descanso': descanso,
         'repeticiones': repeticiones,

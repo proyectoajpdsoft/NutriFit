@@ -161,13 +161,11 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.end,
+                Column(
                   children: [
                     Text('NutriFit',
                         style: Theme.of(context).textTheme.headlineLarge),
-                    const SizedBox(width: 6),
+                    const SizedBox(height: 4),
                     Text(
                       AppConstants.appVersion,
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(

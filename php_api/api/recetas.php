@@ -201,13 +201,22 @@ function bind_receta_params($stmt, $data) {
     }
     $stmt->bindParam(":imagen_portada", $imagen_portada, PDO::PARAM_LOB);
     $stmt->bindParam(":imagen_portada_nombre", $imagen_portada_nombre);
+
+    // Handle thumbnail
+    $imagen_miniatura = null;
+    if (!empty($data->imagen_miniatura)) {
+        $imagen_miniatura = base64_decode($data->imagen_miniatura);
+    }
+    $stmt->bindParam(":imagen_miniatura", $imagen_miniatura, PDO::PARAM_LOB);
 }
 
 function get_recetas() {
     global $db;
     ensure_receta_categoria_tables();
 
-    $query = "SELECT r.*, 
+    $query = "SELECT r.codigo, r.titulo, r.texto, r.activo, r.fecha_inicio, r.fecha_fin, 
+              r.mostrar_portada, r.visible_para_todos, r.imagen_portada_nombre, r.imagen_miniatura,
+              r.fechaa, r.codusuarioa, r.fecham, r.codusuariom,
               (SELECT COUNT(*) FROM nu_receta_usuario ru WHERE ru.codigo_receta = r.codigo AND ru.me_gusta = 'S') as total_likes,
               (SELECT COUNT(*) FROM nu_receta_usuario ru WHERE ru.codigo_receta = r.codigo) as total_usuarios,
               GROUP_CONCAT(DISTINCT rc.codigo ORDER BY rc.nombre SEPARATOR ',') as categorias_ids,
@@ -223,8 +232,9 @@ function get_recetas() {
     $recetas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     foreach ($recetas as &$receta) {
-        if ($receta['imagen_portada']) {
-            $receta['imagen_portada'] = base64_encode($receta['imagen_portada']);
+        // Solo codificar miniatura (imagen_portada no está en el SELECT)
+        if ($receta['imagen_miniatura']) {
+            $receta['imagen_miniatura'] = base64_encode($receta['imagen_miniatura']);
         }
     }
 
@@ -266,6 +276,9 @@ function get_receta($codigo) {
         if ($receta['imagen_portada']) {
             $receta['imagen_portada'] = base64_encode($receta['imagen_portada']);
         }
+        if ($receta['imagen_miniatura']) {
+            $receta['imagen_miniatura'] = base64_encode($receta['imagen_miniatura']);
+        }
         ob_clean();
         echo json_encode($receta);
     } else {
@@ -281,7 +294,9 @@ function get_recetas_paciente($paciente_codigo, $codigo_usuario = null) {
 
     // Si se proporciona codigo_usuario, hacer JOIN para obtener estado de favorito y me_gusta
     if ($codigo_usuario !== null) {
-        $query = "SELECT r.*, 
+          $query = "SELECT r.codigo, r.titulo, r.texto, r.activo, r.fecha_inicio, r.fecha_fin,
+              r.mostrar_portada, r.visible_para_todos, r.imagen_portada, r.imagen_portada_nombre, r.imagen_miniatura,
+              r.fechaa, r.codusuarioa, r.fecham, r.codusuariom,
               MAX(COALESCE(ru.me_gusta, 'N')) as me_gusta, 
               MAX(COALESCE(ru.favorito, 'N')) as favorito,
               (SELECT COUNT(*) FROM nu_receta_usuario ru2 WHERE ru2.codigo_receta = r.codigo AND ru2.me_gusta = 'S') as total_likes,
@@ -300,7 +315,9 @@ function get_recetas_paciente($paciente_codigo, $codigo_usuario = null) {
         $stmt->bindParam(':codigo_usuario', $codigo_usuario);
     } else {
         // Sin codigo_usuario, devolver valores por defecto
-        $query = "SELECT r.*, 
+          $query = "SELECT r.codigo, r.titulo, r.texto, r.activo, r.fecha_inicio, r.fecha_fin,
+              r.mostrar_portada, r.visible_para_todos, r.imagen_portada, r.imagen_portada_nombre, r.imagen_miniatura,
+              r.fechaa, r.codusuarioa, r.fecham, r.codusuariom,
               'N' as me_gusta, 
               'N' as favorito,
               (SELECT COUNT(*) FROM nu_receta_usuario ru2 WHERE ru2.codigo_receta = r.codigo AND ru2.me_gusta = 'S') as total_likes,
@@ -324,6 +341,9 @@ function get_recetas_paciente($paciente_codigo, $codigo_usuario = null) {
         if ($receta['imagen_portada']) {
             $receta['imagen_portada'] = base64_encode($receta['imagen_portada']);
         }
+        if ($receta['imagen_miniatura']) {
+            $receta['imagen_miniatura'] = base64_encode($receta['imagen_miniatura']);
+        }
     }
 
     ob_clean();
@@ -338,7 +358,9 @@ function get_recetas_portada_paciente($paciente_codigo, $codigo_usuario = null) 
 
     // Si se proporciona codigo_usuario, hacer JOIN para obtener estado de favorito y me_gusta
     if ($codigo_usuario !== null) {
-        $query = "SELECT r.*, 
+          $query = "SELECT r.codigo, r.titulo, r.texto, r.activo, r.fecha_inicio, r.fecha_fin,
+              r.mostrar_portada, r.visible_para_todos, r.imagen_portada, r.imagen_portada_nombre, r.imagen_miniatura,
+              r.fechaa, r.codusuarioa, r.fecham, r.codusuariom,
               MAX(COALESCE(ru.me_gusta, 'N')) as me_gusta, 
               MAX(COALESCE(ru.favorito, 'N')) as favorito,
               (SELECT COUNT(*) FROM nu_receta_usuario ru2 WHERE ru2.codigo_receta = r.codigo AND ru2.me_gusta = 'S') as total_likes,
@@ -361,7 +383,9 @@ function get_recetas_portada_paciente($paciente_codigo, $codigo_usuario = null) 
         $stmt->bindParam(':hoy', $hoy);
     } else {
         // Sin codigo_usuario, devolver valores por defecto
-        $query = "SELECT r.*, 
+          $query = "SELECT r.codigo, r.titulo, r.texto, r.activo, r.fecha_inicio, r.fecha_fin,
+              r.mostrar_portada, r.visible_para_todos, r.imagen_portada, r.imagen_portada_nombre, r.imagen_miniatura,
+              r.fechaa, r.codusuarioa, r.fecham, r.codusuariom,
               'N' as me_gusta, 
               'N' as favorito,
               (SELECT COUNT(*) FROM nu_receta_usuario ru2 WHERE ru2.codigo_receta = r.codigo AND ru2.me_gusta = 'S') as total_likes,
@@ -388,6 +412,9 @@ function get_recetas_portada_paciente($paciente_codigo, $codigo_usuario = null) 
     foreach ($recetas as &$receta) {
         if ($receta['imagen_portada']) {
             $receta['imagen_portada'] = base64_encode($receta['imagen_portada']);
+        }
+        if ($receta['imagen_miniatura']) {
+            $receta['imagen_miniatura'] = base64_encode($receta['imagen_miniatura']);
         }
     }
 
@@ -424,6 +451,7 @@ function create_receta() {
                 visible_para_todos = :visible_para_todos,
                 imagen_portada = :imagen_portada,
                 imagen_portada_nombre = :imagen_portada_nombre,
+                imagen_miniatura = :imagen_miniatura,
                 fechaa = NOW(),
                 codusuarioa = :codusuarioa";
 
@@ -472,6 +500,7 @@ function update_receta() {
                 visible_para_todos = :visible_para_todos,
                 imagen_portada = :imagen_portada,
                 imagen_portada_nombre = :imagen_portada_nombre,
+                imagen_miniatura = :imagen_miniatura,
                 fecham = NOW(),
                 codusuariom = :codusuariom
               WHERE codigo = :codigo";

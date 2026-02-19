@@ -7,12 +7,14 @@ import 'package:nutri_app/screens/planes_fit/planes_fit_paciente_list_screen.dar
 import 'package:nutri_app/screens/planes_nutricionales/planes_paciente_list_screen.dart';
 import 'package:nutri_app/screens/consejos_paciente_screen.dart';
 import 'package:nutri_app/screens/contacto_nutricionista_screen.dart';
+import 'package:nutri_app/screens/chat_screen.dart';
 import 'package:nutri_app/screens/messages_inbox_screen.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/widgets/app_drawer.dart';
+import 'package:nutri_app/widgets/image_viewer_dialog.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
+// import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 
@@ -62,7 +64,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
         _comentariosNoLeidos = items.length;
       });
     } catch (e) {
-      debugPrint('Error al cargar comentarios pendientes: $e');
+      // debugPrint('Error al cargar comentarios pendientes: $e');
     }
   }
 
@@ -81,7 +83,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
         _chatNoLeidos = total;
       });
     } catch (e) {
-      debugPrint('Error al cargar chat pendientes: $e');
+      // debugPrint('Error al cargar chat pendientes: $e');
     }
   }
 
@@ -169,7 +171,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
         'telegram': telegram?['valor'] ?? '',
       };
     } catch (e) {
-      debugPrint('Error al cargar información de contacto: $e');
+      // debugPrint('Error al cargar información de contacto: $e');
     }
   }
 
@@ -193,8 +195,8 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
           });
         } catch (parseError) {
           // La API devolvió un error HTML en lugar de JSON (error 500, etc)
-          debugPrint('Error al parsear consejos destacados: $parseError');
-          debugPrint('Response body: ${response.body.substring(0, 100)}');
+          // debugPrint('Error al parsear consejos destacados: $parseError');
+          // debugPrint('Response body: ${response.body.substring(0, 100)}');
           setState(() {
             _consejosDestacados = [];
             _consejosNoLeidos = 0;
@@ -202,7 +204,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
         }
       }
     } catch (e) {
-      debugPrint('Error al cargar consejos destacados: $e');
+      // debugPrint('Error al cargar consejos destacados: $e');
     }
   }
 
@@ -230,75 +232,75 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
       // Recargar consejos después de marcar como leído
       await _loadConsejosDestacados();
     } catch (e) {
-      debugPrint('Error al marcar consejo como leído: $e');
+      // debugPrint('Error al marcar consejo como leído: $e');
     }
   }
 
-  Future<void> _launchEmail(String email) async {
-    if (email.isEmpty) return;
+  // Future<void> _launchEmail(String email) async {
+  //   if (email.isEmpty) return;
+  //
+  //   try {
+  //     final uri = Uri(
+  //       scheme: 'mailto',
+  //       path: email,
+  //       queryParameters: {
+  //         'subject': 'Solicitud de servicios de Nutricionista Online',
+  //         'body': '',
+  //       },
+  //     );
+  //
+  //     if (await canLaunchUrl(uri)) {
+  //       await launchUrl(uri, mode: LaunchMode.externalApplication);
+  //     } else {
+  //       if (mounted) {
+  //         ScaffoldMessenger.of(context).showSnackBar(
+  //           const SnackBar(
+  //             content: Text('No se puede abrir el email'),
+  //             backgroundColor: Colors.red,
+  //           ),
+  //         );
+  //       }
+  //     }
+  //   } catch (e) {
+  //     if (mounted) {
+  //       ScaffoldMessenger.of(context).showSnackBar(
+  //         SnackBar(
+  //           content: Text('Error al abrir el email: $e'),
+  //           backgroundColor: Colors.red,
+  //         ),
+  //       );
+  //     }
+  //   }
+  // }
 
-    try {
-      final uri = Uri(
-        scheme: 'mailto',
-        path: email,
-        queryParameters: {
-          'subject': 'Solicitud de servicios de Nutricionista Online',
-          'body': '',
-        },
-      );
-
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No se puede abrir el email'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al abrir el email: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _launchPhone(String phoneNumber) async {
-    if (phoneNumber.isEmpty) return;
-
-    try {
-      final uri = Uri(scheme: 'tel', path: phoneNumber);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri);
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No se puede realizar la llamada'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al realizar la llamada: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
+  // Future<void> _launchPhone(String phoneNumber) async {
+  //   if (phoneNumber.isEmpty) return;
+  //
+  //   try {
+  //     final uri = Uri(scheme: 'tel', path: phoneNumber);
+  //     if (await canLaunchUrl(uri)) {
+  //       await launchUrl(uri);
+  //     } else {
+  //       if (mounted) {
+  //         ScaffoldMessenger.of(context).showSnackBar(
+  //           const SnackBar(
+  //             content: Text('No se puede realizar la llamada'),
+  //             backgroundColor: Colors.red,
+  //           ),
+  //         );
+  //       }
+  //     }
+  //   } catch (e) {
+  //     if (mounted) {
+  //       ScaffoldMessenger.of(context).showSnackBar(
+  //         SnackBar(
+  //           content: Text('Error al realizar la llamada: $e'),
+  //           backgroundColor: Colors.red,
+  //         ),
+  //       );
+  //     }
+  //   }
+  // }
 
   Widget _buildWelcomeCard() {
     final genero = _paciente?.sexo ?? '';
@@ -372,11 +374,18 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (consejo.imagenPortada != null)
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.memory(
-                          base64Decode(consejo.imagenPortada!),
-                          fit: BoxFit.cover,
+                      GestureDetector(
+                        onTap: () => showImageViewerDialog(
+                          context: context,
+                          base64Image: consejo.imagenPortada!,
+                          title: consejo.titulo,
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.memory(
+                            base64Decode(consejo.imagenPortada!),
+                            fit: BoxFit.cover,
+                          ),
                         ),
                       ),
                     const SizedBox(height: 12),
@@ -554,19 +563,41 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   Widget _buildPrimaryContactItems() {
     final authService = context.read<AuthService>();
     final hasPatient = (authService.patientCode ?? '').isNotEmpty;
+    final isGuestMode = authService.isGuestMode;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        _buildSimpleContactRow(
+          icon: Icons.mark_chat_unread_outlined,
+          label: 'Chat con dietista',
+          onTap: () async {
+            if (isGuestMode) {
+              _showChatGuestDialog();
+              return;
+            }
+            await Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const ChatScreen(),
+              ),
+            );
+            if (mounted) {
+              _loadChatPendientes();
+              _loadComentariosPendientes();
+            }
+          },
+        ),
+
         // Email - siempre se muestra si existe
-        if ((_contactInfo['email'] ?? '').isNotEmpty)
+        if ((_contactInfo['email'] ?? '').isNotEmpty) ...[
+          const SizedBox(height: 12),
           _buildSimpleContactRow(
             icon: Icons.email,
-            label: hasPatient
-                ? 'Enviar email a dietista'
-                : 'Enviar email a dietista',
-            onTap: () => _launchEmail(_contactInfo['email'] ?? ''),
+            label: 'Email',
+            onTap: () {}, // => _launchEmail(_contactInfo['email'] ?? ''),
           ),
+        ],
 
         // Teléfono - solo para usuarios sin paciente o guest
         if (!hasPatient && (_contactInfo['telefono'] ?? '').isNotEmpty) ...[
@@ -574,7 +605,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
           _buildSimpleContactRow(
             icon: Icons.phone,
             label: 'Llamar a dietista',
-            onTap: () => _launchPhone(_contactInfo['telefono'] ?? ''),
+            onTap: () {}, // => _launchPhone(_contactInfo['telefono'] ?? ''),
           ),
         ],
       ],
@@ -677,7 +708,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                   icon: Icons.email,
                   label: 'Email',
                   value: _contactInfo['email'] ?? '',
-                  onTap: () => _launchEmail(_contactInfo['email'] ?? ''),
+                  onTap: () {}, // => _launchEmail(_contactInfo['email'] ?? ''),
                 ),
 
               // Teléfono
@@ -687,7 +718,8 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                   icon: Icons.phone,
                   label: 'Teléfono',
                   value: _contactInfo['telefono'] ?? '',
-                  onTap: () => _launchPhone(_contactInfo['telefono'] ?? ''),
+                  onTap:
+                      () {}, // => _launchPhone(_contactInfo['telefono'] ?? ''),
                 ),
               ],
             ],
@@ -710,6 +742,31 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
             },
             icon: const Icon(Icons.arrow_forward, size: 18),
             label: const Text('Más formas de contacto'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showChatGuestDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Registro requerido'),
+        content: const Text(
+          'Para chatear con tu dietista online, por favor, regístrate (es gratis).',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cerrar'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pushNamed(context, '/register');
+            },
+            child: const Text('Registrarse'),
           ),
         ],
       ),
@@ -1065,7 +1122,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                       ),
                       _buildHomeCard(
                         context: context,
-                        icon: Icons.fitness_center_outlined,
+                        icon: Icons.directions_run,
                         label: 'Actividades',
                         onTap: () =>
                             Navigator.pushNamed(context, '/entrenamientos'),

@@ -4,12 +4,17 @@ import 'package:file_picker/file_picker.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:io';
+import 'package:image/image.dart' as img;
+import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
+// import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import '../models/receta.dart';
 import '../models/receta_documento.dart';
 import '../models/paciente.dart';
 import '../widgets/unsaved_changes_dialog.dart';
+import '../widgets/image_viewer_dialog.dart';
 
 class RecetaEditScreen extends StatefulWidget {
   const RecetaEditScreen({super.key});
@@ -41,9 +46,10 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
 
   Uint8List? _imagenPortadaBytes;
   String? _imagenPortadaNombre;
+  Uint8List? _imagenMiniaturaBytes;
 
   @override
-  void didChangeDependencies() {
+  void didChangeDependencies() async {
     super.didChangeDependencies();
 
     // Solo ejecutar una vez
@@ -54,22 +60,9 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
     if (args != null && args is Receta) {
       _receta = args;
       _isNew = false;
-      _tituloController.text = _receta.titulo;
-      _textoController.text = _receta.texto;
-      _fechaInicio = _receta.fechaInicio;
-      _fechaFin = _receta.fechaFin;
-      _visibleParaTodos = _receta.visibleParaTodos == 'S';
 
-      if (_receta.imagenPortada != null) {
-        _imagenPortadaBytes = base64Decode(_receta.imagenPortada!);
-        _imagenPortadaNombre = _receta.imagenPortadaNombre;
-      }
-
-      _selectedCategoriaIds = List<int>.from(_receta.categoriaIds);
-
-      _initializeData();
-      _loadDocumentos();
-      _loadCategorias();
+      // Cargar la receta completa desde la API para obtener imagen_portada
+      await _loadRecetaCompleta(_receta.codigo!);
     } else {
       _receta = Receta(
         titulo: '',
@@ -80,6 +73,54 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
       );
       _isNew = true;
       _selectedCategoriaIds = [];
+      _loadPacientes();
+      _loadCategorias();
+    }
+  }
+
+  Future<void> _loadRecetaCompleta(int codigo) async {
+    try {
+      final apiService = Provider.of<ApiService>(context, listen: false);
+      final response = await apiService.get('api/recetas.php?codigo=$codigo');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        _receta = Receta.fromJson(data);
+
+        // Inicializar campos del formulario
+        _tituloController.text = _receta.titulo;
+        _textoController.text = _receta.texto;
+        _fechaInicio = _receta.fechaInicio;
+        _fechaFin = _receta.fechaFin;
+        _visibleParaTodos = _receta.visibleParaTodos == 'S';
+
+        if (_receta.imagenPortada != null) {
+          _imagenPortadaBytes = base64Decode(_receta.imagenPortada!);
+          _imagenPortadaNombre = _receta.imagenPortadaNombre;
+        }
+
+        if (_receta.imagenMiniatura != null) {
+          _imagenMiniaturaBytes = base64Decode(_receta.imagenMiniatura!);
+        } else if (_imagenPortadaBytes != null) {
+          // Si tiene imagen pero no miniatura, generarla automáticamente
+          _imagenMiniaturaBytes = _generateThumbnail(_imagenPortadaBytes!);
+        }
+
+        _selectedCategoriaIds = List<int>.from(_receta.categoriaIds);
+
+        _initializeData();
+        _loadDocumentos();
+        _loadCategorias();
+      }
+    } catch (e) {
+      // debugPrint('Error cargando receta completa: $e');
+      // Si falla, usar los datos parciales que tenemos
+      _tituloController.text = _receta.titulo;
+      _textoController.text = _receta.texto;
+      _fechaInicio = _receta.fechaInicio;
+      _fechaFin = _receta.fechaFin;
+      _visibleParaTodos = _receta.visibleParaTodos == 'S';
+      _selectedCategoriaIds = List<int>.from(_receta.categoriaIds);
       _loadPacientes();
       _loadCategorias();
     }
@@ -253,35 +294,35 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
   }
 
   Future<void> _initializeData() async {
-    debugPrint(
-        '_initializeData: Iniciando carga de datos para receta ${_receta.codigo}');
+    // debugPrint(
+    //     '_initializeData: Iniciando carga de datos para receta ${_receta.codigo}');
     await _loadPacientes();
-    debugPrint(
-        '_initializeData: Pacientes cargados. Total: ${_allPacientes.length}');
+    // debugPrint(
+    //     '_initializeData: Pacientes cargados. Total: ${_allPacientes.length}');
     await _loadPacientesAsignados();
-    debugPrint(
-        '_initializeData: Pacientes asignados cargados. Seleccionados: ${_selectedPacientes.length}');
+    // debugPrint(
+    //     '_initializeData: Pacientes asignados cargados. Seleccionados: ${_selectedPacientes.length}');
   }
 
   Future<void> _loadPacientes() async {
     try {
-      debugPrint('_loadPacientes: Iniciando carga de todos los pacientes');
+      // debugPrint('_loadPacientes: Iniciando carga de todos los pacientes');
       final apiService = Provider.of<ApiService>(context, listen: false);
       final response = await apiService.get('api/pacientes.php');
 
-      debugPrint('_loadPacientes: Status code: ${response.statusCode}');
+      // debugPrint('_loadPacientes: Status code: ${response.statusCode}');
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
-        debugPrint('_loadPacientes: Pacientes recibidos: ${data.length}');
+        // debugPrint('_loadPacientes: Pacientes recibidos: ${data.length}');
         setState(() {
           _allPacientes = data.map((item) => Paciente.fromJson(item)).toList();
         });
-        debugPrint(
-            '_loadPacientes: _allPacientes actualizado: ${_allPacientes.length}');
+        // debugPrint(
+        //     '_loadPacientes: _allPacientes actualizado: ${_allPacientes.length}');
       }
     } catch (e) {
-      debugPrint('_loadPacientes: Error: $e');
+      // debugPrint('_loadPacientes: Error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -295,41 +336,41 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
 
   Future<void> _loadPacientesAsignados() async {
     if (_isNew) {
-      debugPrint(
-          '_loadPacientesAsignados: Es una receta nueva, no se cargan pacientes');
+      // debugPrint(
+      //     '_loadPacientesAsignados: Es una receta nueva, no se cargan pacientes');
       return;
     }
 
     try {
       final apiService = Provider.of<ApiService>(context, listen: false);
       final url = 'api/receta_pacientes.php?receta=${_receta.codigo}';
-      debugPrint('_loadPacientesAsignados: Cargando desde $url');
+      // debugPrint('_loadPacientesAsignados: Cargando desde $url');
 
       final response = await apiService.get(url);
 
-      debugPrint(
-          '_loadPacientesAsignados: Status code: ${response.statusCode}');
-      debugPrint('_loadPacientesAsignados: Response body: ${response.body}');
+      // debugPrint(
+      //     '_loadPacientesAsignados: Status code: ${response.statusCode}');
+      // debugPrint('_loadPacientesAsignados: Response body: ${response.body}');
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
-        debugPrint('_loadPacientesAsignados: Datos parseados: $data');
+        // debugPrint('_loadPacientesAsignados: Datos parseados: $data');
 
         final pacientesIds = data
             .map((item) => int.parse(item['codigo_paciente'].toString()))
             .toList();
 
-        debugPrint('_loadPacientesAsignados: IDs de pacientes: $pacientesIds');
+        // debugPrint('_loadPacientesAsignados: IDs de pacientes: $pacientesIds');
 
         setState(() {
           _selectedPacientes = pacientesIds;
         });
 
-        debugPrint(
-            '_loadPacientesAsignados: _selectedPacientes actualizado: $_selectedPacientes');
+        // debugPrint(
+        //     '_loadPacientesAsignados: _selectedPacientes actualizado: $_selectedPacientes');
       }
     } catch (e) {
-      debugPrint('_loadPacientesAsignados: Error: $e');
+      // debugPrint('_loadPacientesAsignados: Error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -360,6 +401,32 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
     }
   }
 
+  /// Generate a thumbnail from the full image
+  /// Target size: 200x200 pixels, JPEG quality 85%
+  Uint8List? _generateThumbnail(Uint8List imageBytes) {
+    try {
+      // Decode the image
+      img.Image? image = img.decodeImage(imageBytes);
+      if (image == null) return null;
+
+      // Calculate thumbnail size maintaining aspect ratio
+      const int maxSize = 200;
+      img.Image thumbnail;
+
+      if (image.width > image.height) {
+        thumbnail = img.copyResize(image, width: maxSize);
+      } else {
+        thumbnail = img.copyResize(image, height: maxSize);
+      }
+
+      // Encode as JPEG with 85% quality
+      return Uint8List.fromList(img.encodeJpg(thumbnail, quality: 85));
+    } catch (e) {
+      // debugPrint('Error generating thumbnail: $e');
+      return null;
+    }
+  }
+
   Future<void> _pickPortada() async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
@@ -383,6 +450,8 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
           setState(() {
             _imagenPortadaBytes = bytes;
             _imagenPortadaNombre = result.files.single.name;
+            // Generate thumbnail
+            _imagenMiniaturaBytes = _generateThumbnail(bytes!);
           });
         }
       }
@@ -396,6 +465,73 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
     }
   }
 
+  void _showMenuAtWidget(BuildContext context) {
+    final RenderBox renderBox = context.findRenderObject() as RenderBox;
+    final offset = renderBox.localToGlobal(Offset.zero);
+    final size = renderBox.size;
+    final hasImage = _imagenPortadaBytes != null;
+
+    final menuOptions = <PopupMenuItem<String>>[];
+    if (hasImage) {
+      menuOptions.add(
+        const PopupMenuItem(
+          value: 'delete',
+          child: Text('Eliminar imagen'),
+        ),
+      );
+      menuOptions.add(
+        const PopupMenuItem(
+          value: 'change',
+          child: Text('Cambiar imagen'),
+        ),
+      );
+    } else {
+      menuOptions.add(
+        const PopupMenuItem(
+          value: 'add',
+          child: Text('Añadir imagen'),
+        ),
+      );
+    }
+
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        offset.dx,
+        offset.dy + size.height,
+        offset.dx + size.width,
+        offset.dy,
+      ),
+      items: menuOptions,
+    ).then((value) {
+      if (value == 'delete') {
+        _removeImage();
+      } else if (value == 'change' || value == 'add') {
+        _pickPortada();
+      }
+    });
+  }
+
+  void _viewImage() {
+    if (_imagenPortadaBytes == null) return;
+
+    showImageViewerDialog(
+      context: context,
+      base64Image: base64Encode(_imagenPortadaBytes!),
+      title: _tituloController.text.isNotEmpty
+          ? _tituloController.text
+          : 'Imagen de portada',
+    );
+  }
+
+  void _removeImage() {
+    setState(() {
+      _imagenPortadaBytes = null;
+      _imagenPortadaNombre = null;
+      _imagenMiniaturaBytes = null;
+    });
+  }
+
   bool _isYouTubeUrl(String? url) {
     if (url == null) return false;
     final regExp = RegExp(
@@ -404,6 +540,86 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
     );
     return regExp.hasMatch(url);
   }
+
+  Future<void> _openDocumento(RecetaDocumento doc) async {
+    final raw = (doc.documento ?? '').trim();
+    if (raw.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Documento no disponible')),
+        );
+      }
+      return;
+    }
+
+    try {
+      var data = raw;
+      const marker = 'base64,';
+      final index = data.indexOf(marker);
+      if (index >= 0) {
+        data = data.substring(index + marker.length);
+      }
+      while (data.length % 4 != 0) {
+        data += '=';
+      }
+      final bytes = base64Decode(data);
+      final dir = await getTemporaryDirectory();
+      String fileName = doc.nombre ?? 'documento';
+      if (!fileName.contains('.')) {
+        fileName = '$fileName.pdf';
+      }
+      final filePath = '${dir.path}/$fileName';
+      final file = File(filePath);
+      await file.writeAsBytes(bytes);
+      final result = await OpenFilex.open(filePath);
+      if (result.type != ResultType.done && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('Error al abrir documento: ${result.message}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al abrir documento. $errorMessage')),
+        );
+      }
+    }
+  }
+
+  // Future<void> _openUrl(String? url) async {
+  //   var urlString = (url ?? '').trim();
+  //   if (urlString.isEmpty) {
+  //     if (mounted) {
+  //       ScaffoldMessenger.of(context).showSnackBar(
+  //         const SnackBar(content: Text('URL no disponible')),
+  //       );
+  //     }
+  //     return;
+  //   }
+  //   if (!urlString.startsWith('http://') && !urlString.startsWith('https://')) {
+  //     urlString = 'https://$urlString';
+  //   }
+  //   final uri = Uri.tryParse(urlString);
+  //   if (uri == null) {
+  //     if (mounted) {
+  //       ScaffoldMessenger.of(context).showSnackBar(
+  //         const SnackBar(content: Text('URL no valida')),
+  //       );
+  //     }
+  //     return;
+  //   }
+  //   try {
+  //     await launchUrl(uri, mode: LaunchMode.externalApplication);
+  //   } catch (e) {
+  //     if (mounted) {
+  //       ScaffoldMessenger.of(context).showSnackBar(
+  //         SnackBar(content: Text('No se pudo abrir la URL: $e')),
+  //       );
+  //     }
+  //   }
+  // }
 
   Future<void> _addDocumento([RecetaDocumento? existingDoc]) async {
     final result = await showDialog<Map<String, dynamic>>(
@@ -490,8 +706,9 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
         _loadDocumentos();
       }
     } catch (e) {
+      final errorMessage = e.toString().replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: ${e.toString()}')),
+        SnackBar(content: Text('Error al guardar documento. $errorMessage')),
       );
     }
   }
@@ -516,9 +733,10 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
         _loadDocumentos();
       }
     } catch (e) {
+      final errorMessage = e.toString().replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error: ${e.toString()}'),
+          content: Text('Error al eliminar documento. $errorMessage'),
           backgroundColor: Colors.red,
         ),
       );
@@ -599,7 +817,7 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
 
       return true; // No hay duplicados, continuar
     } catch (e) {
-      debugPrint('Error al verificar título duplicado: $e');
+      // debugPrint('Error al verificar título duplicado: $e');
       return true; // En caso de error, permitir continuar
     }
   }
@@ -633,6 +851,14 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
       if (_imagenPortadaBytes != null) {
         _receta.imagenPortada = base64Encode(_imagenPortadaBytes!);
         _receta.imagenPortadaNombre = _imagenPortadaNombre;
+
+        // Generar miniatura si no existe o si falló la generación anterior
+        _imagenMiniaturaBytes ??= _generateThumbnail(_imagenPortadaBytes!);
+      }
+
+      // Guardar miniatura si existe (puede haberse generado automáticamente)
+      if (_imagenMiniaturaBytes != null) {
+        _receta.imagenMiniatura = base64Encode(_imagenMiniaturaBytes!);
       }
 
       if (_isNew) {
@@ -695,9 +921,10 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: ${e.toString()}'),
+            content: Text('Error al guardar receta. $errorMessage'),
             backgroundColor: Colors.red,
           ),
         );
@@ -720,14 +947,14 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
           : _selectedPacientes;
 
       // Debug: Ver cuántos pacientes se van a asignar
-      debugPrint(
-          'Asignando ${pacientesToAssign.length} pacientes a la receta $recetaId');
-      debugPrint('Visible para todos: $_visibleParaTodos');
-      debugPrint('Pacientes seleccionados: $_selectedPacientes');
+      // debugPrint(
+      //     'Asignando ${pacientesToAssign.length} pacientes a la receta $recetaId');
+      // debugPrint('Visible para todos: $_visibleParaTodos');
+      // debugPrint('Pacientes seleccionados: $_selectedPacientes');
 
       // Si no hay pacientes para asignar, no hacer nada
       if (pacientesToAssign.isEmpty) {
-        debugPrint('No hay pacientes para asignar');
+        // debugPrint('No hay pacientes para asignar');
         return;
       }
 
@@ -738,21 +965,21 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
             authService.userCode != null ? int.parse(authService.userCode!) : 1,
       };
 
-      debugPrint('Enviando datos: ${json.encode(data)}');
+      // debugPrint('Enviando datos: ${json.encode(data)}');
 
       final response = await apiService.post(
         'api/receta_pacientes.php',
         body: json.encode(data),
       );
 
-      debugPrint('Respuesta del servidor: ${response.statusCode}');
-      debugPrint('Body: ${response.body}');
+      // debugPrint('Respuesta del servidor: ${response.statusCode}');
+      // debugPrint('Body: ${response.body}');
 
       if (response.statusCode != 200) {
         throw Exception('Error al asignar pacientes: ${response.body}');
       }
     } catch (e) {
-      debugPrint('Error en _assignPacientes: $e');
+      // debugPrint('Error en _assignPacientes: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -842,10 +1069,21 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Categorias',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Categorias',
+                            style: TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                          IconButton(
+                            onPressed: _showCategoriasDialog,
+                            icon: const Icon(Icons.category),
+                            iconSize: 30,
+                            tooltip: 'Seleccionar categorias',
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 8),
                       if (_selectedCategoriaIds.isEmpty)
@@ -867,12 +1105,6 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
                                 label: Text(match['nombre'].toString()));
                           }).toList(),
                         ),
-                      const SizedBox(height: 12),
-                      OutlinedButton.icon(
-                        onPressed: _showCategoriasDialog,
-                        icon: const Icon(Icons.category),
-                        label: const Text('Seleccionar categorías'),
-                      ),
                     ],
                   ),
                 ),
@@ -910,55 +1142,85 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
                         style: TextStyle(
                             fontSize: 16, fontWeight: FontWeight.bold),
                       ),
-                      const SizedBox(height: 8),
-                      if (_imagenPortadaBytes != null)
-                        Stack(
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: Image.memory(
-                                _imagenPortadaBytes!,
-                                height: 200,
-                                width: double.infinity,
-                                fit: BoxFit.cover,
+                      const SizedBox(height: 12),
+                      Center(
+                        child: Builder(
+                          builder: (BuildContext context) {
+                            return GestureDetector(
+                              onTap: () {
+                                if (_imagenPortadaBytes != null) {
+                                  _viewImage();
+                                } else {
+                                  _showMenuAtWidget(context);
+                                }
+                              },
+                              onLongPress: () {
+                                _showMenuAtWidget(context);
+                              },
+                              child: Container(
+                                width: 100,
+                                height: 100,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: Colors.grey[300]!,
+                                    width: 2,
+                                  ),
+                                ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: _imagenMiniaturaBytes != null
+                                      ? Image.memory(
+                                          _imagenMiniaturaBytes!,
+                                          fit: BoxFit.cover,
+                                        )
+                                      : _imagenPortadaBytes != null
+                                          ? Image.memory(
+                                              _imagenPortadaBytes!,
+                                              fit: BoxFit.cover,
+                                            )
+                                          : Container(
+                                              color: Colors.grey[200],
+                                              child: Column(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment.center,
+                                                children: [
+                                                  Icon(
+                                                    Icons.restaurant_menu,
+                                                    size: 64,
+                                                    color: Colors.grey[400],
+                                                  ),
+                                                  const SizedBox(height: 8),
+                                                  Text(
+                                                    'Sin imagen',
+                                                    style: TextStyle(
+                                                      color: Colors.grey[600],
+                                                      fontSize: 14,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                ),
                               ),
-                            ),
-                            Positioned(
-                              top: 8,
-                              right: 8,
-                              child: IconButton(
-                                icon:
-                                    const Icon(Icons.delete, color: Colors.red),
-                                onPressed: () {
-                                  setState(() {
-                                    _imagenPortadaBytes = null;
-                                    _imagenPortadaNombre = null;
-                                  });
-                                },
-                              ),
-                            ),
-                          ],
-                        )
-                      else
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            OutlinedButton.icon(
-                              onPressed: _pickPortada,
-                              icon: const Icon(Icons.image),
-                              label: const Text('Seleccionar imagen'),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Dimensiones recomendadas: 1200x675 px (16:9)',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[600],
-                                fontStyle: FontStyle.italic,
-                              ),
-                            ),
-                          ],
+                            );
+                          },
                         ),
+                      ),
+                      const SizedBox(height: 8),
+                      Center(
+                        child: Text(
+                          _imagenPortadaBytes != null
+                              ? 'Toca para ver • Mantén pulsado para opciones'
+                              : 'Toca para añadir imagen',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                            fontStyle: FontStyle.italic,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -1201,6 +1463,19 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
+                                  if (doc.tipo == 'url')
+                                    IconButton(
+                                      icon: const Icon(Icons.open_in_browser),
+                                      color: Colors.blue,
+                                      // onPressed: () => _openUrl(doc.url),
+                                      onPressed: () {}, // URL Launcher disabled
+                                    )
+                                  else
+                                    IconButton(
+                                      icon: const Icon(Icons.download),
+                                      color: Colors.blue,
+                                      onPressed: () => _openDocumento(doc),
+                                    ),
                                   IconButton(
                                     icon: const Icon(Icons.edit,
                                         color: Colors.blue),

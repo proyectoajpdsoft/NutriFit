@@ -7,10 +7,11 @@ import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/widgets/app_drawer.dart';
 import 'package:nutri_app/widgets/contact_nutricionista_dialog.dart';
+import 'package:nutri_app/widgets/image_viewer_dialog.dart';
 import 'package:nutri_app/screens/entrenamiento_edit_screen.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
+// import 'package:url_launcher/url_launcher.dart';
 
 class PlanesFitPacienteListScreen extends StatefulWidget {
   const PlanesFitPacienteListScreen({super.key});
@@ -79,9 +80,10 @@ class _PlanesFitPacienteListScreenState
         }
       }
     } catch (e) {
+      final errorMessage = e.toString().replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text('Error en la descarga: $e'),
+            content: Text('Error al descargar plan. $errorMessage'),
             backgroundColor: Colors.red),
       );
     }
@@ -116,7 +118,7 @@ class _PlanesFitPacienteListScreenState
     );
   }
 
-  Widget _buildEjercicioTag({required IconData icon, required String label}) {
+  Widget _buildMetaTag({required IconData icon, required String label}) {
     return Chip(
       avatar: Icon(icon, size: 16),
       label: Text(label),
@@ -134,107 +136,125 @@ class _PlanesFitPacienteListScreenState
         ejercicio.urlVideo != null && ejercicio.urlVideo!.trim().isNotEmpty;
 
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          if (ejercicio.fotoBase64 != null && ejercicio.fotoBase64!.isNotEmpty)
-            Image.memory(
-              base64Decode(ejercicio.fotoBase64!),
-              height: 220,
-              width: double.infinity,
-              fit: BoxFit.contain,
+          if (ejercicio.fotoMiniatura != null &&
+              ejercicio.fotoMiniatura!.isNotEmpty)
+            InkWell(
+              onTap: () {
+                showDialog(
+                  context: context,
+                  builder: (context) => ImageViewerDialog(
+                    base64Image: ejercicio.fotoMiniatura!,
+                    title: ejercicio.nombre,
+                  ),
+                );
+              },
+              child: Image.memory(
+                base64Decode(ejercicio.fotoMiniatura!),
+                height: 80,
+                width: double.infinity,
+                fit: BoxFit.cover,
+              ),
             )
           else
             Container(
-              height: 220,
+              height: 80,
               width: double.infinity,
               color: Colors.grey[300],
               child: const Icon(Icons.fitness_center,
-                  size: 64, color: Colors.grey),
+                  size: 32, color: Colors.grey),
             ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding: const EdgeInsets.all(8.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
                   ejercicio.nombre,
                   style: const TextStyle(
-                    fontSize: 18,
+                    fontSize: 14,
                     fontWeight: FontWeight.bold,
                   ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 8),
-                if (hasReps || hasRest || hasTime)
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                const SizedBox(height: 6),
+                if (hasReps)
+                  Row(
                     children: [
-                      if (hasReps)
-                        _buildEjercicioTag(
-                          icon: Icons.repeat,
-                          label: '${ejercicio.repeticiones} repeticiones',
+                      const Icon(Icons.repeat, size: 12),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          '${ejercicio.repeticiones} reps',
+                          style: const TextStyle(fontSize: 11),
                         ),
-                      if (hasRest)
-                        _buildEjercicioTag(
-                          icon: Icons.pause_circle_filled,
-                          label: '${ejercicio.descanso}s descanso',
-                        ),
-                      if (hasTime)
-                        _buildEjercicioTag(
-                          icon: Icons.timer,
-                          label: '${ejercicio.tiempo}s tiempo',
-                        ),
+                      ),
                     ],
                   ),
-                if (hasReps || hasRest || hasTime) const SizedBox(height: 8),
-                if (hasInstructions)
+                if (hasRest)
+                  Row(
+                    children: [
+                      const Icon(Icons.pause_circle_filled, size: 12),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          '${ejercicio.descanso}s',
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                      ),
+                    ],
+                  ),
+                if (hasTime)
+                  Row(
+                    children: [
+                      const Icon(Icons.timer, size: 12),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          '${ejercicio.tiempo}s',
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                      ),
+                    ],
+                  ),
+                if (hasInstructions) ...[
+                  const SizedBox(height: 4),
                   Text(
                     ejercicio.instrucciones!,
-                    style: TextStyle(color: Colors.grey[700]),
+                    style: TextStyle(color: Colors.grey[700], fontSize: 11),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
+                ],
                 if (hasVideo) ...[
-                  const SizedBox(height: 10),
-                  InkWell(
-                    onTap: () async {
-                      try {
-                        String urlString = ejercicio.urlVideo!.trim();
-                        if (!urlString.startsWith('http://') &&
-                            !urlString.startsWith('https://')) {
-                          urlString = 'https://$urlString';
-                        }
-                        await launchUrl(
-                          Uri.parse(urlString),
-                          mode: LaunchMode.externalApplication,
-                        );
-                      } catch (e) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('No se pudo abrir el video.'),
-                              backgroundColor: Colors.red,
-                            ),
-                          );
-                        }
-                      }
-                    },
+                  const SizedBox(height: 6),
+                  const InkWell(
+                    onTap:
+                        null, // () => _launchUrlExternal(ejercicio.urlVideo ?? ''),
                     child: Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(
+                        Icon(
                           Icons.play_circle_fill,
-                          size: 18,
+                          size: 14,
                           color: Colors.blue,
                         ),
-                        const SizedBox(width: 6),
-                        Text(
-                          'Cómo se hace...',
-                          style:
-                              Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    color: Colors.blue,
-                                    decoration: TextDecoration.underline,
-                                  ),
+                        SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            'Ver video',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.blue,
+                              decoration: TextDecoration.underline,
+                            ),
+                          ),
                         ),
                       ],
                     ),
@@ -295,6 +315,7 @@ class _PlanesFitPacienteListScreenState
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // Título del plan
                       Text(
                         _buildPlanTitle(plan.desde, plan.hasta),
                         style: Theme.of(context)
@@ -303,112 +324,135 @@ class _PlanesFitPacienteListScreenState
                             ?.copyWith(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 12),
-                      if (plan.planIndicacionesVisibleUsuario != null &&
-                          plan.planIndicacionesVisibleUsuario!.isNotEmpty) ...[
-                        Text(
-                          'Indicaciones:',
-                          style: Theme.of(context).textTheme.titleSmall,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(plan.planIndicacionesVisibleUsuario!),
-                        const SizedBox(height: 12),
-                      ],
-                      if (plan.url != null && plan.url!.isNotEmpty) ...[
-                        InkWell(
-                          onTap: () async {
-                            try {
-                              String urlString = plan.url!.trim();
-                              // Asegurarse de que la URL tenga un esquema
-                              if (!urlString.startsWith('http://') &&
-                                  !urlString.startsWith('https://')) {
-                                urlString = 'https://$urlString';
-                              }
-                              final Uri url = Uri.parse(urlString);
-                              await launchUrl(url,
-                                  mode: LaunchMode.externalApplication);
-                            } catch (e) {
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                        'No se pudo abrir la URL: ${plan.url}'),
-                                    backgroundColor: Colors.red,
-                                  ),
-                                );
-                              }
-                            }
-                          },
+
+                      // Semanas (recuadro ancho)
+                      if (plan.semanas != null && plan.semanas!.isNotEmpty)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12.0,
+                            vertical: 8.0,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.blue[50],
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: Colors.blue[200]!,
+                              width: 1,
+                            ),
+                          ),
                           child: Row(
                             children: [
-                              const Icon(
-                                Icons.open_in_browser,
-                                size: 16,
-                                color: Colors.blue,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                'Ver en el navegador web',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodyMedium
-                                    ?.copyWith(
-                                      color: Colors.blue,
-                                      decoration: TextDecoration.underline,
-                                    ),
+                              const Icon(Icons.calendar_today, size: 16),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text('${plan.semanas} semanas'),
                               ),
                             ],
                           ),
                         ),
+                      if (plan.semanas != null && plan.semanas!.isNotEmpty)
+                        const SizedBox(height: 12),
+
+                      // Indicaciones (recuadro amarillo, sin label)
+                      if (plan.planIndicacionesVisibleUsuario != null &&
+                          plan.planIndicacionesVisibleUsuario!.isNotEmpty) ...[
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12.0),
+                          decoration: BoxDecoration(
+                            color: Colors.amber[100],
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: Colors.amber[300]!,
+                              width: 1,
+                            ),
+                          ),
+                          child: Text(
+                            plan.planIndicacionesVisibleUsuario!,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
                         const SizedBox(height: 12),
                       ],
-                      Wrap(
-                        spacing: 12,
-                        runSpacing: 8,
-                        children: [
-                          if (plan.planDocumentoNombre != null &&
-                              plan.planDocumentoNombre!.isNotEmpty)
-                            ElevatedButton.icon(
-                              icon: const Icon(
-                                  Icons.download_for_offline_outlined),
-                              label: const Text('Descargar plan'),
-                              onPressed: () => _downloadAndOpenFile(
-                                  plan.codigo, plan.planDocumentoNombre!),
-                            ),
-                          OutlinedButton.icon(
-                            icon: const Icon(Icons.add_circle_outline),
-                            label: const Text('Añadir actividad'),
-                            onPressed: () {
-                              Navigator.of(context)
-                                  .push(
-                                    MaterialPageRoute(
-                                      builder: (context) =>
-                                          EntrenamientoEditScreen(
-                                        planFitId: plan.codigo,
-                                      ),
+
+                      // Botones URL + descarga (misma linea)
+                      if ((plan.url != null && plan.url!.isNotEmpty) ||
+                          (plan.planDocumentoNombre != null &&
+                              plan.planDocumentoNombre!.isNotEmpty))
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12.0),
+                          child: Row(
+                            children: [
+                              if (plan.url != null && plan.url!.isNotEmpty)
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    onPressed:
+                                        null, // () => _launchUrlExternal(plan.url ?? ''),
+                                    icon: const Icon(Icons.open_in_browser),
+                                    label: const Text('Web'),
+                                  ),
+                                ),
+                              if (plan.url != null && plan.url!.isNotEmpty)
+                                const SizedBox(width: 12),
+                              if (plan.planDocumentoNombre != null &&
+                                  plan.planDocumentoNombre!.isNotEmpty)
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    icon: const Icon(
+                                      Icons.download_for_offline_outlined,
                                     ),
-                                  )
-                                  .then((_) => _refreshPlanes());
-                            },
+                                    label: const Text('Descargar'),
+                                    onPressed: () => _downloadAndOpenFile(
+                                      plan.codigo,
+                                      plan.planDocumentoNombre!,
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
-                          OutlinedButton.icon(
-                            icon: const Icon(Icons.fitness_center),
-                            label: Text(
-                              (_mostrarEjercicios[plan.codigo] ?? false)
-                                  ? 'Ocultar ejercicios'
-                                  : 'Mostrar ejercicios',
+                        ),
+
+                      // Botones de accion
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              icon: const Icon(Icons.add_circle_outline),
+                              label: const Text('Actividad'),
+                              onPressed: () {
+                                Navigator.of(context)
+                                    .push(
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            EntrenamientoEditScreen(
+                                          planFitId: plan.codigo,
+                                        ),
+                                      ),
+                                    )
+                                    .then((_) => _refreshPlanes());
+                              },
                             ),
-                            onPressed: () {
-                              setState(() {
-                                final current =
-                                    _mostrarEjercicios[plan.codigo] ?? false;
-                                _mostrarEjercicios[plan.codigo] = !current;
-                              });
-                              if ((_mostrarEjercicios[plan.codigo] ?? false) &&
-                                  !_ejerciciosFutures
-                                      .containsKey(plan.codigo)) {
-                                _getEjerciciosPlan(plan.codigo);
-                              }
-                            },
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              icon: const Icon(Icons.fitness_center),
+                              label: const Text('Ejercicios'),
+                              onPressed: () {
+                                setState(() {
+                                  final current =
+                                      _mostrarEjercicios[plan.codigo] ?? false;
+                                  _mostrarEjercicios[plan.codigo] = !current;
+                                });
+                                if ((_mostrarEjercicios[plan.codigo] ??
+                                        false) &&
+                                    !_ejerciciosFutures
+                                        .containsKey(plan.codigo)) {
+                                  _getEjerciciosPlan(plan.codigo);
+                                }
+                              },
+                            ),
                           ),
                         ],
                       ),
@@ -443,10 +487,24 @@ class _PlanesFitPacienteListScreenState
                                 child: Text('Este plan no tiene ejercicios.'),
                               );
                             }
-                            return Column(
-                              children: ejercicios
-                                  .map((e) => _buildEjercicioCard(e))
-                                  .toList(),
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8.0, vertical: 4.0),
+                              child: GridView.builder(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                gridDelegate:
+                                    const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 2,
+                                  childAspectRatio: 0.65,
+                                  crossAxisSpacing: 8,
+                                  mainAxisSpacing: 8,
+                                ),
+                                itemCount: ejercicios.length,
+                                itemBuilder: (context, index) {
+                                  return _buildEjercicioCard(ejercicios[index]);
+                                },
+                              ),
                             );
                           },
                         ),
@@ -461,4 +519,26 @@ class _PlanesFitPacienteListScreenState
       ),
     );
   }
+
+  // Future<void> _launchUrlExternal(String url) async {
+  //   final trimmed = url.trim();
+  //   if (trimmed.isEmpty) return;
+  //   Uri? uri = Uri.tryParse(trimmed);
+  //   if (uri == null) return;
+  //   if (uri.scheme.isEmpty) {
+  //     uri = Uri.tryParse('https://$trimmed');
+  //   }
+  //   if (uri == null) return;
+  //   final launched = await launchUrl(
+  //     uri,
+  //     mode: LaunchMode.externalApplication,
+  //   );
+  //   if (!launched && mounted) {
+  //     ScaffoldMessenger.of(context).showSnackBar(
+  //       const SnackBar(
+  //         content: Text('No se pudo abrir el enlace'),
+  //       ),
+  //     );
+  //   }
+  // }
 }

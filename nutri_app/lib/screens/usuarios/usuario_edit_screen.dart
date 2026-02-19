@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'package:image/image.dart' as img;
 import 'package:nutri_app/models/paciente.dart';
 import 'package:nutri_app/models/usuario.dart';
 import 'package:nutri_app/services/api_service.dart';
@@ -22,6 +24,8 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
   late Future<List<Paciente>> _pacientesFuture;
   bool _isLoadingDefaults = true;
   bool _hasChanges = false;
+  int _maxImageWidth = 400;
+  int _maxImageHeight = 400;
 
   // Controllers
   late String _nick = '';
@@ -40,6 +44,7 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
   void initState() {
     super.initState();
     _pacientesFuture = _apiService.getPacientes();
+    _loadMaxImageDimensions();
 
     if (widget.usuario != null) {
       final u = widget.usuario!;
@@ -55,6 +60,25 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
     } else {
       // Si es nuevo usuario, cargar valores por defecto locales
       _loadDefaults();
+    }
+  }
+
+  Future<void> _loadMaxImageDimensions() async {
+    try {
+      final dimParam =
+          await _apiService.getParametro('usuario_max_imagen_tamaño');
+      if (dimParam != null && mounted) {
+        final width = int.tryParse(dimParam['valor'] ?? '400');
+        final height = int.tryParse(dimParam['valor2'] ?? '400');
+        if (width != null && height != null) {
+          setState(() {
+            _maxImageWidth = width;
+            _maxImageHeight = height;
+          });
+        }
+      }
+    } catch (e) {
+      // Si no existe el parámetro, mantener los valores por defecto
     }
   }
 
@@ -92,9 +116,66 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
     });
   }
 
+  /// Redimensiona la imagen de perfil si supera las dimensiones máximas
+  Future<void> _resizeImageIfNeeded() async {
+    if (_imageBase64 == null || _imageBase64!.isEmpty) {
+      return;
+    }
+
+    try {
+      // Decodificar base64 a bytes
+      final imageBytes = base64Decode(_imageBase64!);
+      final image = img.decodeImage(imageBytes);
+
+      if (image == null) {
+        return;
+      }
+
+      // Verificar si la imagen supera los límites
+      if (image.width <= _maxImageWidth && image.height <= _maxImageHeight) {
+        return; // La imagen ya está dentro de los límites
+      }
+
+      // Calcular el factor de escala manteniendo la relación de aspecto
+      double scale = 1.0;
+
+      if (image.width > _maxImageWidth) {
+        scale = _maxImageWidth / image.width;
+      }
+
+      if (image.height > _maxImageHeight) {
+        final scaleHeight = _maxImageHeight / image.height;
+        if (scaleHeight < scale) {
+          scale = scaleHeight;
+        }
+      }
+
+      // Redimensionar la imagen
+      final newWidth = (image.width * scale).toInt();
+      final newHeight = (image.height * scale).toInt();
+
+      final resizedImage = img.copyResize(
+        image,
+        width: newWidth,
+        height: newHeight,
+        interpolation: img.Interpolation.linear,
+      );
+
+      // Convertir a PNG y luego a base64
+      final resizedBytes = img.encodePng(resizedImage);
+      _imageBase64 = base64Encode(resizedBytes);
+    } catch (e) {
+      // Si hay error al redimensionar, mantener la imagen original
+      // debugPrint('Error redimensionando imagen: $e');
+    }
+  }
+
   void _submitForm() async {
     if (_formKey.currentState!.validate()) {
       _formKey.currentState!.save();
+
+      // Redimensionar la imagen si excede los límites
+      await _resizeImageIfNeeded();
 
       // Si se asocia un paciente y el tipo no es Nutricionista, cambiar a Paciente
       if (_codigoPaciente != null && _tipo != 'Nutricionista') {

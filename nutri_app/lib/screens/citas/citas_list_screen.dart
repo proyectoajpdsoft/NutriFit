@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:nutri_app/models/cita.dart';
@@ -6,8 +9,10 @@ import 'package:nutri_app/screens/citas/cita_edit_screen.dart';
 import 'package:nutri_app/screens/citas/citas_calendar_screen.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
+import 'package:nutri_app/services/citas_pdf_service.dart';
 import 'package:nutri_app/mixins/auth_error_handler_mixin.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class CitasListScreen extends StatefulWidget {
   final Paciente? paciente;
@@ -24,11 +29,13 @@ class _CitasListScreenState extends State<CitasListScreen>
   final TextEditingController _searchController = TextEditingController();
   String _searchText = '';
   bool _showSearchField = false;
+  bool _showFilterCitas = false;
+  bool _openCalendarOnStart = false;
 
   @override
   void initState() {
     super.initState();
-    _loadCitas();
+    _initStateAsync();
     _searchController.addListener(() {
       setState(() {
         _searchText = _searchController.text.toLowerCase();
@@ -40,6 +47,52 @@ class _CitasListScreenState extends State<CitasListScreen>
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _initStateAsync() async {
+    await _loadUiState();
+    _loadCitas();
+    if (_openCalendarOnStart && mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _openCalendarView();
+      });
+    }
+  }
+
+  Future<void> _loadUiState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final filtro = prefs.getString('citas_filtro_estado') ?? 'Pendiente';
+    final showSearch = prefs.getBool('citas_show_search_field') ?? false;
+    final showFilter = prefs.getBool('citas_list_show_filter') ?? false;
+    final defaultView = prefs.getString('citas_default_view') ?? 'list';
+    if (!mounted) return;
+    setState(() {
+      _filtroEstado = filtro;
+      _showSearchField = showSearch;
+      _showFilterCitas = showFilter;
+      _openCalendarOnStart = defaultView == 'calendar';
+    });
+  }
+
+  Future<void> _saveUiState() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('citas_filtro_estado', _filtroEstado);
+    await prefs.setBool('citas_show_search_field', _showSearchField);
+    await prefs.setBool('citas_list_show_filter', _showFilterCitas);
+  }
+
+  void _openCalendarView() {
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (context) => CitasCalendarScreen(
+              paciente: widget.paciente,
+              fromListView: true,
+            ),
+          ),
+        )
+        .then((_) => _loadCitas());
   }
 
   void _loadCitas() {
@@ -233,6 +286,101 @@ class _CitasListScreenState extends State<CitasListScreen>
     }
   }
 
+  Future<void> _generarPdfCitas() async {
+    try {
+      final apiService = context.read<ApiService>();
+
+      // Obtener las citas del estado actual
+      final citasFuture = apiService.getCitas(
+        estado: _filtroEstado == 'Todas' ? null : _filtroEstado,
+        codigoPaciente: widget.paciente?.codigo,
+      );
+
+      final citas = await citasFuture;
+
+      if (citas.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No hay citas para exportar'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Obtener parámetros del nutricionista
+      final nutricionistaParam =
+          await apiService.getParametro('nutricionista_nombre');
+      final nutricionistaNombre =
+          nutricionistaParam?['valor']?.toString() ?? 'Nutricionista';
+      final nutricionistaSubtitulo =
+          nutricionistaParam?['valor2']?.toString() ?? '';
+
+      final logoParam =
+          await apiService.getParametro('logotipo_dietista_documentos');
+      final logoBase64 = logoParam?['valor']?.toString() ?? '';
+      final logoSizeStr = logoParam?['valor2']?.toString() ?? '';
+      Uint8List? logoBytes;
+      if (logoBase64.isNotEmpty) {
+        try {
+          logoBytes = _decodeBase64Image(logoBase64);
+        } catch (_) {
+          logoBytes = null;
+        }
+      }
+
+      // Obtener color de acento
+      final accentColorParam =
+          await apiService.getParametro('color_fondo_banda_encabezado_pie_pdf');
+      final accentColorStr = accentColorParam?['valor']?.toString() ?? '';
+
+      if (!mounted) return;
+
+      await CitasPdfService.generateCitasPdf(
+        context: context,
+        nutricionistaNombre: nutricionistaNombre,
+        nutricionistaSubtitulo: nutricionistaSubtitulo,
+        logoBytes: logoBytes,
+        logoSizeStr: logoSizeStr,
+        accentColorStr: accentColorStr,
+        citas: citas,
+        filtroEstado: _filtroEstado,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al generar PDF: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  static Uint8List? _decodeBase64Image(String base64String) {
+    final raw = base64String.trim();
+    if (raw.isEmpty) {
+      return null;
+    }
+    var data = raw;
+    const marker = 'base64,';
+    final index = raw.indexOf(marker);
+    if (index >= 0) {
+      data = raw.substring(index + marker.length);
+    }
+    while (data.length % 4 != 0) {
+      data += '=';
+    }
+    try {
+      return Uint8List.fromList(base64Decode(data));
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -251,16 +399,25 @@ class _CitasListScreenState extends State<CitasListScreen>
             icon: const Icon(Icons.calendar_today),
             tooltip: 'Ver en calendario',
             onPressed: () {
-              Navigator.of(context)
-                  .push(
-                    MaterialPageRoute(
-                      builder: (context) => CitasCalendarScreen(
-                        paciente: widget.paciente,
-                      ),
-                    ),
-                  )
-                  .then((_) => _loadCitas());
+              _openCalendarView();
             },
+          ),
+          IconButton(
+            icon: Icon(_showFilterCitas
+                ? Icons.filter_alt
+                : Icons.filter_alt_outlined),
+            tooltip: _showFilterCitas ? 'Ocultar filtro' : 'Mostrar filtro',
+            onPressed: () {
+              setState(() {
+                _showFilterCitas = !_showFilterCitas;
+              });
+              _saveUiState();
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.picture_as_pdf),
+            tooltip: 'Generar PDF',
+            onPressed: () => _generarPdfCitas(),
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -288,47 +445,50 @@ class _CitasListScreenState extends State<CitasListScreen>
                   ],
                 ),
               ),
-            Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment(
-                            value: "Pendiente", label: Text('Pendientes')),
-                        ButtonSegment(value: "Todas", label: Text('Todas')),
-                      ],
-                      selected: {_filtroEstado},
-                      onSelectionChanged: (Set<String> newSelection) {
-                        setState(() {
-                          _filtroEstado = newSelection.first;
+            if (_showFilterCitas)
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: SegmentedButton<String>(
+                        segments: const [
+                          ButtonSegment(
+                              value: "Pendiente", label: Text('Pend.')),
+                          ButtonSegment(value: "Todas", label: Text('Todas')),
+                        ],
+                        selected: {_filtroEstado},
+                        onSelectionChanged: (Set<String> newSelection) {
+                          setState(() {
+                            _filtroEstado = newSelection.first;
+                          });
+                          _saveUiState();
                           _loadCitas();
-                        });
-                      },
+                        },
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: Icon(
-                        _showSearchField ? Icons.search_off : Icons.search),
-                    onPressed: () {
-                      setState(() {
-                        _showSearchField = !_showSearchField;
-                        if (!_showSearchField) {
-                          _searchController.clear();
-                        }
-                      });
-                    },
-                    tooltip: _showSearchField
-                        ? 'Ocultar búsqueda'
-                        : 'Mostrar búsqueda',
-                  ),
-                ],
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: Icon(
+                          _showSearchField ? Icons.search_off : Icons.search),
+                      onPressed: () {
+                        setState(() {
+                          _showSearchField = !_showSearchField;
+                          if (!_showSearchField) {
+                            _searchController.clear();
+                          }
+                        });
+                        _saveUiState();
+                      },
+                      tooltip: _showSearchField
+                          ? 'Ocultar búsqueda'
+                          : 'Mostrar búsqueda',
+                    ),
+                  ],
+                ),
               ),
-            ),
             if (_showSearchField)
               Padding(
                 padding:
@@ -410,25 +570,69 @@ class _CitasListScreenState extends State<CitasListScreen>
                                 ),
                               ),
                               const SizedBox(height: 8),
-                              // Línea 2: Empieza y Acaba
+                              // Línea 2: Empieza y Acaba (tags con icono)
                               Wrap(
-                                spacing: 4,
-                                runSpacing: 2,
+                                spacing: 8,
+                                runSpacing: 6,
                                 children: [
-                                  if (cita.comienzo != null) ...[
-                                    Text(
-                                      'Empieza: $fechaTexto',
-                                      style: const TextStyle(fontSize: 12),
-                                    ),
-                                    if (cita.fin != null)
-                                      Text(
-                                        '• Acaba: ${DateFormat("dd/MM/yyyy HH:mm").format(cita.fin!)}',
-                                        style: const TextStyle(fontSize: 12),
+                                  if (cita.comienzo != null)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
                                       ),
-                                  ] else
-                                    const Text(
-                                      'Sin fecha',
-                                      style: TextStyle(fontSize: 12),
+                                      decoration: BoxDecoration(
+                                        color: Colors.green[50],
+                                        borderRadius: BorderRadius.circular(4),
+                                        border: Border.all(
+                                          color: Colors.green[200]!,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.play_circle_outline,
+                                              size: 14, color: Colors.green),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            fechaTexto,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: Colors.green[700],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  if (cita.fin != null)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.red[50],
+                                        borderRadius: BorderRadius.circular(4),
+                                        border: Border.all(
+                                          color: Colors.red[200]!,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.stop_circle_outlined,
+                                              size: 14, color: Colors.red),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            DateFormat("dd/MM/yyyy HH:mm")
+                                                .format(cita.fin!),
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: Colors.red[700],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
                                 ],
                               ),
@@ -484,9 +688,21 @@ class _CitasListScreenState extends State<CitasListScreen>
                               ),
                               const SizedBox(height: 8),
                               // Línea 4: Asunto/Cita
-                              Text(
-                                'Cita: ${cita.asunto}',
-                                style: const TextStyle(fontSize: 12),
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.amber[100],
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: Colors.amber[300]!),
+                                ),
+                                child: Text(
+                                  cita.asunto,
+                                  style: const TextStyle(fontSize: 12),
+                                ),
                               ),
                               const SizedBox(height: 12),
                               // Botones

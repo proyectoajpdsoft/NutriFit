@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:nutri_app/models/entrevista.dart';
@@ -9,6 +12,7 @@ import 'package:provider/provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class EntrevistasListScreen extends StatefulWidget {
   final Paciente? paciente;
@@ -21,18 +25,24 @@ class EntrevistasListScreen extends StatefulWidget {
 }
 
 class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
+  static const PdfColor _accentPink = PdfColor.fromInt(0xFFFFC0F4);
+
   final ApiService _apiService = ApiService();
   late Future<List<Entrevista>> _entrevistasFuture;
   late String _filtroActivo;
   final TextEditingController _searchController = TextEditingController();
   String _searchText = '';
   bool _showSearchField = false;
+  bool _showFilterEntrevistas = false;
   String _filtroCompletado = 'No completadas';
+  final Map<int, Paciente> _pacientesCache = {};
+  final Map<int, List<Entrevista>> _entrevistasPacienteCache = {};
 
   @override
   void initState() {
     super.initState();
     _filtroActivo = widget.filtroActivo ?? "S";
+    _loadUiState();
     _refreshEntrevistas();
     _searchController.addListener(() {
       setState(() {
@@ -56,6 +66,157 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
         _entrevistasFuture = _apiService.getEntrevistas(null);
       }
     });
+  }
+
+  Future<void> _loadUiState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final showSearch = prefs.getBool('entrevistas_show_search_field') ?? false;
+    final showFilter = prefs.getBool('entrevistas_show_filter') ?? false;
+    final filtroCompletado =
+        prefs.getString('entrevistas_filtro_completada') ?? 'No completadas';
+    if (!mounted) return;
+    setState(() {
+      _showSearchField = showSearch;
+      _showFilterEntrevistas = showFilter;
+      _filtroCompletado = filtroCompletado;
+    });
+  }
+
+  Future<void> _saveUiState() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('entrevistas_show_search_field', _showSearchField);
+    await prefs.setBool('entrevistas_show_filter', _showFilterEntrevistas);
+    await prefs.setString('entrevistas_filtro_completada', _filtroCompletado);
+  }
+
+  DateTime _getFechaBase(Entrevista entrevista) {
+    return entrevista.fechaRealizacion ??
+        entrevista.fechaPrevista ??
+        DateTime(0);
+  }
+
+  Future<Paciente?> _getPacienteData(int codigoPaciente) async {
+    if (_pacientesCache.containsKey(codigoPaciente)) {
+      return _pacientesCache[codigoPaciente];
+    }
+
+    try {
+      final pacientes = await _apiService.getPacientes();
+      final paciente = pacientes.firstWhere(
+        (p) => p.codigo == codigoPaciente,
+        orElse: () => throw Exception('Paciente no encontrado'),
+      );
+      _pacientesCache[codigoPaciente] = paciente;
+      return paciente;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  Future<List<Entrevista>> _getEntrevistasPaciente(int codigoPaciente) async {
+    if (_entrevistasPacienteCache.containsKey(codigoPaciente)) {
+      return _entrevistasPacienteCache[codigoPaciente]!;
+    }
+
+    try {
+      final entrevistas = await _apiService.getEntrevistas(codigoPaciente);
+      entrevistas.sort((a, b) => _getFechaBase(b).compareTo(_getFechaBase(a)));
+      _entrevistasPacienteCache[codigoPaciente] = entrevistas;
+      return entrevistas;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  String _getBmiCategory(double bmi) {
+    if (bmi < 16.0) return 'Infrapeso: Delgadez Severa';
+    if (bmi < 17.0) return 'Infrapeso: Delgadez moderada';
+    if (bmi < 18.5) return 'Infrapeso: Delgadez aceptable';
+    if (bmi < 25.0) return 'Peso Normal';
+    if (bmi < 30.0) return 'Sobrepeso';
+    if (bmi < 35.0) return 'Obeso: Tipo I';
+    if (bmi < 40.0) return 'Obeso: Tipo II';
+    return 'Obeso: Tipo III';
+  }
+
+  Color _getBmiColor(double bmi) {
+    if (bmi < 16.0) return Colors.red.shade800;
+    if (bmi < 17.0) return Colors.deepOrange;
+    if (bmi < 18.5) return Colors.orange;
+    if (bmi < 25.0) return Colors.green;
+    if (bmi < 30.0) return Colors.lime.shade700;
+    if (bmi < 35.0) return Colors.deepOrange;
+    if (bmi < 40.0) return Colors.red;
+    return Colors.red.shade800;
+  }
+
+  void _showBmiInfoDialog(double bmi) {
+    final bmiColor = _getBmiColor(bmi);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('IMC (OMS)'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: bmiColor.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: bmiColor.withOpacity(0.6)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.monitor_weight, size: 18, color: bmiColor),
+                  const SizedBox(width: 6),
+                  Text(
+                    'IMC ${bmi.toStringAsFixed(1)}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: bmiColor,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _getBmiCategory(bmi),
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 10),
+            const Text('Tipos:'),
+            const SizedBox(height: 6),
+            const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('- Infrapeso: Delgadez Severa'),
+                Text('- Infrapeso: Delgadez moderada'),
+                Text('- Infrapeso: Delgadez aceptable'),
+                Text('- Peso Normal'),
+                Text('- Sobrepeso'),
+                Text('- Obeso: Tipo I'),
+                Text('- Obeso: Tipo II'),
+                Text('- Obeso: Tipo III'),
+              ],
+            ),
+            const SizedBox(height: 10),
+            const Text('Formula:'),
+            const SizedBox(height: 4),
+            const Text('IMC = peso (kg) / [altura (m)]²'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
   }
 
   List<Entrevista> _filterEntrevistas(List<Entrevista> entrevistas) {
@@ -188,9 +349,10 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
         );
       } catch (e) {
         if (mounted) {
+          final errorMessage = e.toString().replaceFirst('Exception: ', '');
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Error al cargar el paciente: $e'),
+              content: Text('Error al cargar el paciente. $errorMessage'),
               backgroundColor: Colors.red,
             ),
           );
@@ -263,53 +425,69 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
             : 'Todas las Entrevistas Nutri'),
         actions: [
           IconButton(
+            icon: Icon(_showFilterEntrevistas
+                ? Icons.filter_alt
+                : Icons.filter_alt_outlined),
+            tooltip:
+                _showFilterEntrevistas ? 'Ocultar filtro' : 'Mostrar filtro',
+            onPressed: () {
+              setState(() {
+                _showFilterEntrevistas = !_showFilterEntrevistas;
+              });
+              _saveUiState();
+            },
+          ),
+          IconButton(
               icon: const Icon(Icons.refresh), onPressed: _refreshEntrevistas),
         ],
       ),
       body: SafeArea(
         child: Column(
           children: [
-            Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment(
-                            value: "No completadas",
-                            label: Text('No completadas')),
-                        ButtonSegment(value: "Todas", label: Text('Todas')),
-                      ],
-                      selected: {_filtroCompletado},
-                      onSelectionChanged: (Set<String> newSelection) {
-                        setState(() {
-                          _filtroCompletado = newSelection.first;
-                        });
-                      },
+            if (_showFilterEntrevistas)
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: SegmentedButton<String>(
+                        segments: const [
+                          ButtonSegment(
+                              value: "No completadas",
+                              label: Text('No compl.')),
+                          ButtonSegment(value: "Todas", label: Text('Todas')),
+                        ],
+                        selected: {_filtroCompletado},
+                        onSelectionChanged: (Set<String> newSelection) {
+                          setState(() {
+                            _filtroCompletado = newSelection.first;
+                          });
+                          _saveUiState();
+                        },
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: Icon(
-                        _showSearchField ? Icons.search_off : Icons.search),
-                    onPressed: () {
-                      setState(() {
-                        _showSearchField = !_showSearchField;
-                        if (!_showSearchField) {
-                          _searchController.clear();
-                        }
-                      });
-                    },
-                    tooltip: _showSearchField
-                        ? 'Ocultar búsqueda'
-                        : 'Mostrar búsqueda',
-                  ),
-                ],
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: Icon(
+                          _showSearchField ? Icons.search_off : Icons.search),
+                      onPressed: () {
+                        setState(() {
+                          _showSearchField = !_showSearchField;
+                          if (!_showSearchField) {
+                            _searchController.clear();
+                          }
+                        });
+                        _saveUiState();
+                      },
+                      tooltip: _showSearchField
+                          ? 'Ocultar búsqueda'
+                          : 'Mostrar búsqueda',
+                    ),
+                  ],
+                ),
               ),
-            ),
             if (_showSearchField)
               Padding(
                 padding:
@@ -348,7 +526,7 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
                     // --- LÓGICA DE ERROR DUAL (DEBUG/NORMAL) ---
                     final errorMessage = snapshot.error.toString();
                     // DEBUG: Imprime el error completo en la consola
-                    debugPrint('Error al cargar entrevistas: $errorMessage');
+                    // debugPrint('Error al cargar entrevistas: $errorMessage');
                     if (configService.appMode == AppMode.debug) {
                       return Center(
                           child: Padding(
@@ -407,24 +585,6 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
                     itemBuilder: (context, index) {
                       final entrevista = entrevistas[index];
 
-                      // --- MANEJO SEGURO DE FECHAS NULAS ---
-                      final String fechaLineaTexto;
-                      if (entrevista.fechaRealizacion != null) {
-                        fechaLineaTexto =
-                            'Realizada: ${DateFormat('dd/MM/yyyy').format(entrevista.fechaRealizacion!)}';
-                      } else if (entrevista.fechaPrevista != null) {
-                        fechaLineaTexto =
-                            'Prevista: ${DateFormat('dd/MM/yyyy HH:mm').format(entrevista.fechaPrevista!)}';
-                      } else {
-                        fechaLineaTexto = 'Sin fecha';
-                      }
-
-                      // Limitar el motivo a 200 caracteres
-                      final motivoLimitado = entrevista.motivo != null &&
-                              entrevista.motivo!.length > 200
-                          ? '${entrevista.motivo!.substring(0, 200)}...'
-                          : entrevista.motivo ?? '';
-
                       return Card(
                         elevation: 4,
                         margin: const EdgeInsets.symmetric(vertical: 8),
@@ -433,128 +593,345 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Row(
+                              if ((entrevista.nombrePaciente ??
+                                      widget.paciente?.nombre) !=
+                                  null) ...[
+                                Text(
+                                  entrevista.nombrePaciente ??
+                                      widget.paciente!.nombre,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleMedium
+                                      ?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .primary,
+                                      ),
+                                ),
+                                const SizedBox(height: 8),
+                              ],
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 6,
                                 children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        if ((entrevista.nombrePaciente ??
-                                                widget.paciente?.nombre) !=
-                                            null) ...[
-                                          Text(
-                                            entrevista.nombrePaciente ??
-                                                widget.paciente!.nombre,
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .titleMedium
-                                                ?.copyWith(
-                                                  fontWeight: FontWeight.bold,
-                                                  color: Theme.of(context)
-                                                      .colorScheme
-                                                      .primary,
-                                                ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                        ],
-                                        Text(
-                                          fechaLineaTexto,
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodyMedium
-                                              ?.copyWith(
-                                                color: Colors.grey[700],
-                                              ),
+                                  if (entrevista.fechaPrevista != null)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 10, vertical: 5),
+                                      decoration: BoxDecoration(
+                                        color: Colors.orange[50],
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color: Colors.orange[200]!,
                                         ),
-                                        if (motivoLimitado.isNotEmpty) ...[
-                                          const SizedBox(height: 8),
-                                          RichText(
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                            text: TextSpan(
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .bodyMedium,
-                                              children: [
-                                                TextSpan(
-                                                  text: 'Motivo: ',
-                                                  style: TextStyle(
-                                                    fontWeight: FontWeight.bold,
-                                                    color: Theme.of(context)
-                                                        .colorScheme
-                                                        .onSurface,
-                                                  ),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.calendar_month,
+                                              size: 16,
+                                              color: Colors.orange[700]),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            DateFormat('dd/MM/yyyy HH:mm')
+                                                .format(
+                                                    entrevista.fechaPrevista!),
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.orange[700],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  if (entrevista.fechaRealizacion != null)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 10, vertical: 5),
+                                      decoration: BoxDecoration(
+                                        color: Colors.green[50],
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color: Colors.green[200]!,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.check_circle,
+                                              size: 16,
+                                              color: Colors.green[700]),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            DateFormat('dd/MM/yyyy').format(
+                                                entrevista.fechaRealizacion!),
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.green[700],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  if ((entrevista.motivo ?? '').isNotEmpty)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 10, vertical: 5),
+                                      decoration: BoxDecoration(
+                                        color: Colors.orange[100],
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color: Colors.orange[300]!,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        'Motivo: ${entrevista.motivo}',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.orange[800],
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              if (entrevista.peso != null) ...[
+                                const SizedBox(height: 8),
+                                FutureBuilder<List<dynamic>>(
+                                  future: Future.wait([
+                                    _getPacienteData(entrevista.codigoPaciente),
+                                    _getEntrevistasPaciente(
+                                        entrevista.codigoPaciente),
+                                  ]),
+                                  builder: (context, snapshot) {
+                                    final paciente =
+                                        snapshot.data?[0] as Paciente?;
+                                    final entrevistasPaciente = snapshot
+                                            .data?[1] as List<Entrevista>? ??
+                                        [];
+                                    final pesoActual = entrevista.peso!;
+                                    double? bmi;
+                                    double? pesoAnterior;
+                                    double? diferencia;
+
+                                    if (paciente?.altura != null &&
+                                        paciente!.altura! > 0) {
+                                      final alturaMetros =
+                                          paciente.altura! / 100;
+                                      bmi = pesoActual /
+                                          (alturaMetros * alturaMetros);
+                                    }
+
+                                    final fechaActual =
+                                        _getFechaBase(entrevista);
+                                    final entrevistasConPeso =
+                                        entrevistasPaciente
+                                            .where((e) =>
+                                                e.peso != null &&
+                                                e.codigo != entrevista.codigo)
+                                            .toList();
+                                    if (entrevistasConPeso.isNotEmpty) {
+                                      entrevistasConPeso.sort((a, b) =>
+                                          _getFechaBase(b)
+                                              .compareTo(_getFechaBase(a)));
+                                      final anteriores = entrevistasConPeso
+                                          .where((e) => _getFechaBase(e)
+                                              .isBefore(fechaActual))
+                                          .toList();
+                                      if (anteriores.isNotEmpty) {
+                                        anteriores.sort((a, b) =>
+                                            _getFechaBase(b)
+                                                .compareTo(_getFechaBase(a)));
+                                        pesoAnterior = anteriores.first.peso;
+                                        diferencia = pesoActual - pesoAnterior!;
+                                      }
+                                    }
+
+                                    return Wrap(
+                                      spacing: 8,
+                                      runSpacing: 6,
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 10, vertical: 5),
+                                          decoration: BoxDecoration(
+                                            color: Colors.purple[50],
+                                            borderRadius:
+                                                BorderRadius.circular(6),
+                                            border: Border.all(
+                                              color: Colors.purple[200]!,
+                                            ),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              const Icon(Icons.scale,
+                                                  size: 16,
+                                                  color: Colors.purple),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                pesoActual.toStringAsFixed(1),
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.purple[700],
+                                                  fontWeight: FontWeight.w600,
                                                 ),
-                                                TextSpan(
-                                                  text: motivoLimitado,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        if (bmi != null)
+                                          InkWell(
+                                            onTap: () =>
+                                                _showBmiInfoDialog(bmi!),
+                                            child: Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 10,
+                                                      vertical: 5),
+                                              decoration: BoxDecoration(
+                                                color: _getBmiColor(bmi)
+                                                    .withOpacity(0.15),
+                                                borderRadius:
+                                                    BorderRadius.circular(6),
+                                                border: Border.all(
+                                                  color: _getBmiColor(bmi)
+                                                      .withOpacity(0.6),
+                                                ),
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(Icons.analytics,
+                                                      size: 16,
+                                                      color: _getBmiColor(bmi)),
+                                                  const SizedBox(width: 4),
+                                                  Text(
+                                                    'IMC ${bmi.toStringAsFixed(1)}',
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      color: _getBmiColor(bmi),
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        if (pesoAnterior != null)
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 10, vertical: 5),
+                                            decoration: BoxDecoration(
+                                              color: Colors.grey[100],
+                                              borderRadius:
+                                                  BorderRadius.circular(6),
+                                              border: Border.all(
+                                                color: Colors.grey[300]!,
+                                              ),
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(Icons.history,
+                                                    size: 16,
+                                                    color: Colors.grey[600]),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  pesoAnterior
+                                                      .toStringAsFixed(1),
                                                   style: TextStyle(
-                                                    color: Theme.of(context)
-                                                        .colorScheme
-                                                        .onSurface,
+                                                    fontSize: 12,
+                                                    color: Colors.grey[700],
                                                   ),
                                                 ),
                                               ],
                                             ),
                                           ),
-                                        ],
+                                        if (diferencia != null)
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 10, vertical: 5),
+                                            decoration: BoxDecoration(
+                                              color: diferencia < 0
+                                                  ? Colors.green[50]
+                                                  : Colors.red[50],
+                                              borderRadius:
+                                                  BorderRadius.circular(6),
+                                              border: Border.all(
+                                                color: diferencia < 0
+                                                    ? Colors.green[200]!
+                                                    : Colors.red[200]!,
+                                              ),
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(
+                                                  diferencia < 0
+                                                      ? Icons.trending_down
+                                                      : Icons.trending_up,
+                                                  size: 16,
+                                                  color: diferencia < 0
+                                                      ? Colors.green
+                                                      : Colors.red,
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  '${diferencia > 0 ? '+' : ''}${diferencia.toStringAsFixed(1)}',
+                                                  style: TextStyle(
+                                                    fontSize: 12,
+                                                    color: diferencia < 0
+                                                        ? Colors.green[700]
+                                                        : Colors.red[700],
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
                                       ],
-                                    ),
-                                  ),
-                                ],
-                              ),
+                                    );
+                                  },
+                                ),
+                              ],
                               const SizedBox(height: 12),
                               Row(
+                                mainAxisAlignment: MainAxisAlignment.start,
                                 children: [
-                                  Flexible(
-                                    child: Wrap(
-                                      spacing: 8,
-                                      runSpacing: 6,
-                                      children: [
-                                        ElevatedButton.icon(
-                                          icon:
-                                              const Icon(Icons.picture_as_pdf),
-                                          label: const Text('PDF'),
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: Colors.orange,
-                                            foregroundColor: Colors.white,
-                                          ),
-                                          onPressed: () =>
-                                              _generarPDF(entrevista),
-                                        ),
-                                        if (entrevista.completada != 'S')
-                                          ElevatedButton.icon(
-                                            icon: const Icon(Icons.check),
-                                            label: const Text('Completar'),
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: Colors.green,
-                                              foregroundColor: Colors.white,
-                                            ),
-                                            onPressed: () =>
-                                                _showCompletarEntrevistaDialog(
-                                                    entrevista),
-                                          ),
-                                      ],
-                                    ),
+                                  IconButton(
+                                    icon: const Icon(Icons.picture_as_pdf),
+                                    color: Colors.red,
+                                    iconSize: 28,
+                                    onPressed: () => _generarPDF(entrevista),
+                                    tooltip: 'Descargar PDF',
                                   ),
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      IconButton(
-                                        icon: const Icon(Icons.edit),
-                                        color: Colors.blue,
-                                        onPressed: () =>
-                                            _navigateToEditScreen(entrevista),
-                                        tooltip: 'Editar',
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(Icons.delete),
-                                        color: Colors.red,
-                                        onPressed: () =>
-                                            _showDeleteConfirmation(entrevista),
-                                        tooltip: 'Eliminar',
-                                      ),
-                                    ],
+                                  if (entrevista.completada != 'S')
+                                    IconButton(
+                                      icon: const Icon(Icons.check),
+                                      color: Colors.green,
+                                      iconSize: 28,
+                                      onPressed: () =>
+                                          _showCompletarEntrevistaDialog(
+                                              entrevista),
+                                      tooltip: 'Completar',
+                                    ),
+                                  IconButton(
+                                    icon: const Icon(Icons.edit),
+                                    color: Colors.blue,
+                                    iconSize: 28,
+                                    onPressed: () =>
+                                        _navigateToEditScreen(entrevista),
+                                    tooltip: 'Editar',
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete),
+                                    color: Colors.red,
+                                    iconSize: 28,
+                                    onPressed: () =>
+                                        _showDeleteConfirmation(entrevista),
+                                    tooltip: 'Eliminar',
                                   ),
                                 ],
                               ),
@@ -899,6 +1276,34 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
     final nutricionistaFacebookLabel =
         nutricionistaFacebookParam?['valor2']?.toString() ?? '';
 
+    final logoParam =
+        await _apiService.getParametro('logotipo_dietista_documentos');
+    final logoBytes = _decodeBase64Image(logoParam?['valor']?.toString() ?? '');
+    final logoSize = _parseLogoSize(logoParam?['valor2']?.toString() ?? '');
+
+    final accentColorParam =
+        await _apiService.getParametro('color_fondo_banda_encabezado_pie_pdf');
+    final accentColor = _parsePdfColor(
+          accentColorParam?['valor']?.toString(),
+        ) ??
+        _accentPink;
+
+    final tituloParam =
+        await _apiService.getParametro('texto_titulo_pdf_entrevistas_fit');
+    final tituloTexto = tituloParam?['valor']?.toString().trim();
+    final tituloPdfTexto = (tituloTexto != null && tituloTexto.isNotEmpty)
+        ? tituloTexto
+        : 'ENTREVISTA PARA PLAN NUTRICIONAL';
+    final tituloPdfFontSize =
+        _parseFontSize(tituloParam?['valor2']?.toString()) ?? 16.0;
+
+    final pieTituloParam =
+        await _apiService.getParametro('titulo_pdf_entrevistas_nutri');
+    final pieTituloTexto = pieTituloParam?['valor']?.toString().trim();
+    final pieRightText = (pieTituloTexto != null && pieTituloTexto.isNotEmpty)
+        ? pieTituloTexto
+        : tituloPdfTexto;
+
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
@@ -906,9 +1311,19 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
         header: (context) => _buildPdfHeader(
           nutricionistaNombre: nutricionistaNombre,
           nutricionistaSubtitulo: nutricionistaSubtitulo,
-          title: 'ENTREVISTA NUTRICIONAL',
+          logoBytes: logoBytes,
+          logoSize: logoSize,
+          tituloTexto: tituloPdfTexto,
+          tituloFontSize: tituloPdfFontSize,
+          accentColor: accentColor,
+          pageNumber: context.pageNumber,
+        ),
+        footer: (context) => _buildPdfFooter(
+          leftText: nutricionistaNombre,
           pageNumber: context.pageNumber,
           pageCount: context.pagesCount,
+          accentColor: accentColor,
+          rightText: pieRightText,
         ),
         build: (context) => [
           pw.SizedBox(height: 4),
@@ -1014,19 +1429,18 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
             nutricionistaInstagramLabel: nutricionistaInstagramLabel,
             nutricionistaFacebookUrl: nutricionistaFacebookUrl,
             nutricionistaFacebookLabel: nutricionistaFacebookLabel,
+            accentColor: accentColor,
           ),
         ],
       ),
     );
 
-    final nombrePaciente =
+    final nombrePaciente = _buildSafeFileName(
         (entrevista.nombrePaciente ?? widget.paciente?.nombre ?? 'Paciente')
-            .trim()
-            .replaceAll(' ', '_');
-    final fechaStr = entrevista.fechaPrevista != null
-        ? DateFormat('dd-MM-yyyy').format(entrevista.fechaPrevista!)
-        : DateFormat('dd-MM-yyyy').format(DateTime.now());
-    final fileName = 'EntrevistaNutri_${nombrePaciente}_$fechaStr.pdf';
+            .trim());
+    final fechaStr = _formatDateForFileName(entrevista.fechaPrevista);
+    final fileName =
+        _buildEntrevistaNutriFileName(nombrePaciente, fechaStr, '');
 
     try {
       await Printing.sharePdf(
@@ -1042,6 +1456,43 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
           ),
         );
       }
+    }
+  }
+
+  static String _buildSafeFileName(String text) {
+    final normalized = text
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u')
+        .replaceAll('ñ', 'n')
+        .replaceAll('Á', 'A')
+        .replaceAll('É', 'E')
+        .replaceAll('Í', 'I')
+        .replaceAll('Ó', 'O')
+        .replaceAll('Ú', 'U')
+        .replaceAll('Ñ', 'N')
+        .replaceAll(' ', '_')
+        .replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '');
+    return normalized;
+  }
+
+  static String _formatDateForFileName(DateTime? date) {
+    if (date == null) return '';
+    final formatter = DateFormat('dd_MM_yyyy');
+    return formatter.format(date);
+  }
+
+  static String _buildEntrevistaNutriFileName(
+    String pacienteNombre,
+    String fechaStr,
+    String suffix,
+  ) {
+    if (fechaStr.isEmpty) {
+      return 'Entrevista_Nutricion_$pacienteNombre$suffix.pdf';
+    } else {
+      return 'Entrevista_Nutricion_${pacienteNombre}_$fechaStr$suffix.pdf';
     }
   }
 
@@ -1115,9 +1566,12 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
   pw.Widget _buildPdfHeader({
     required String nutricionistaNombre,
     required String nutricionistaSubtitulo,
-    required String title,
+    required List<int>? logoBytes,
+    required PdfPoint? logoSize,
+    required String tituloTexto,
+    required double tituloFontSize,
+    required PdfColor accentColor,
     required int pageNumber,
-    required int pageCount,
   }) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -1125,7 +1579,7 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
         pw.Container(
           width: double.infinity,
           padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          decoration: const pw.BoxDecoration(color: PdfColors.pink100),
+          decoration: pw.BoxDecoration(color: accentColor),
           child: pw.Row(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
@@ -1138,7 +1592,8 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
                       style: pw.TextStyle(
                           fontSize: 12, fontWeight: pw.FontWeight.bold),
                     ),
-                    if (nutricionistaSubtitulo.trim().isNotEmpty)
+                    if (pageNumber == 1 &&
+                        nutricionistaSubtitulo.trim().isNotEmpty)
                       pw.Text(
                         nutricionistaSubtitulo,
                         style: const pw.TextStyle(fontSize: 9),
@@ -1146,22 +1601,75 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
                   ],
                 ),
               ),
-              pw.Text(
-                '$pageNumber/$pageCount',
-                style: const pw.TextStyle(fontSize: 9),
-              ),
+              if (logoBytes != null)
+                pw.Container(
+                  width: logoSize?.x ?? 42,
+                  height: logoSize?.y ?? 30,
+                  alignment: pw.Alignment.centerRight,
+                  child: pw.Image(
+                    pw.MemoryImage(Uint8List.fromList(logoBytes)),
+                    fit: pw.BoxFit.contain,
+                  ),
+                )
+              else
+                pw.SizedBox(
+                    width: logoSize?.x ?? 42, height: logoSize?.y ?? 30),
             ],
           ),
         ),
         pw.SizedBox(height: 6),
         pw.Center(
           child: pw.Text(
-            title,
-            style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
+            tituloTexto,
+            style: pw.TextStyle(
+                fontSize: tituloFontSize, fontWeight: pw.FontWeight.bold),
           ),
         ),
         pw.SizedBox(height: 10),
       ],
+    );
+  }
+
+  pw.Widget _buildPdfFooter({
+    required String leftText,
+    required int pageNumber,
+    required int pageCount,
+    required PdfColor accentColor,
+    required String rightText,
+  }) {
+    const footerStyle = pw.TextStyle(fontSize: 9);
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: pw.BoxDecoration(color: accentColor),
+      child: pw.Row(
+        children: [
+          pw.Expanded(
+            child: pw.Align(
+              alignment: pw.Alignment.centerLeft,
+              child: pw.Text(leftText, style: footerStyle),
+            ),
+          ),
+          pw.Expanded(
+            child: pw.Center(
+              child: pw.Text(
+                '$pageNumber/$pageCount',
+                style: footerStyle,
+              ),
+            ),
+          ),
+          pw.Expanded(
+            child: pw.Align(
+              alignment: pw.Alignment.centerRight,
+              child: pw.Text(
+                rightText,
+                style: footerStyle,
+                textAlign: pw.TextAlign.right,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1174,11 +1682,12 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
     required String nutricionistaInstagramLabel,
     required String nutricionistaFacebookUrl,
     required String nutricionistaFacebookLabel,
+    required PdfColor accentColor,
   }) {
     return pw.Container(
       width: double.infinity,
       padding: const pw.EdgeInsets.all(8),
-      decoration: const pw.BoxDecoration(color: PdfColors.pink100),
+      decoration: pw.BoxDecoration(color: accentColor),
       child: pw.Table(
         columnWidths: const {
           0: pw.FlexColumnWidth(),
@@ -1313,5 +1822,57 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
         style: pw.TextStyle(fontSize: 6, fontWeight: pw.FontWeight.bold),
       ),
     );
+  }
+
+  PdfPoint? _parseLogoSize(String value) {
+    final raw = value.trim();
+    if (raw.isEmpty) return null;
+    final match =
+        RegExp(r'^(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)$').firstMatch(raw);
+    if (match == null) return null;
+    final height = double.tryParse(match.group(1) ?? '');
+    final width = double.tryParse(match.group(2) ?? '');
+    if (height == null || width == null) return null;
+    return PdfPoint(width, height);
+  }
+
+  PdfColor? _parsePdfColor(String? value) {
+    if (value == null) return null;
+    var raw = value.trim();
+    if (raw.isEmpty) return null;
+    if (raw.startsWith('#')) {
+      raw = raw.substring(1);
+    }
+    if (raw.length != 6 && raw.length != 8) return null;
+    final parsed = int.tryParse(raw, radix: 16);
+    if (parsed == null) return null;
+    final argb = raw.length == 6 ? (0xFF000000 | parsed) : parsed;
+    return PdfColor.fromInt(argb);
+  }
+
+  double? _parseFontSize(String? value) {
+    if (value == null) return null;
+    final raw = value.trim().replaceAll(',', '.');
+    if (raw.isEmpty) return null;
+    return double.tryParse(raw);
+  }
+
+  List<int>? _decodeBase64Image(String value) {
+    final raw = value.trim();
+    if (raw.isEmpty) return null;
+    var data = raw;
+    const marker = 'base64,';
+    final index = raw.indexOf(marker);
+    if (index >= 0) {
+      data = raw.substring(index + marker.length);
+    }
+    while (data.length % 4 != 0) {
+      data += '=';
+    }
+    try {
+      return base64Decode(data);
+    } catch (_) {
+      return null;
+    }
   }
 }

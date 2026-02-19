@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:auto_size_text/auto_size_text.dart';
 import 'package:intl/intl.dart';
 import 'package:nutri_app/models/cita.dart';
 import 'package:nutri_app/models/revision.dart';
@@ -290,6 +291,41 @@ class _NotificationsPendingScreenState
                                 ),
                               ),
                             ),
+                            if (cita.online != null && cita.online == 'S') ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey[100],
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color: Colors.grey[300]!,
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.videocam,
+                                      size: 12,
+                                      color: Colors.grey[700],
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'Online',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey[700],
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ],
                         ],
                       ),
@@ -299,16 +335,68 @@ class _NotificationsPendingScreenState
               ],
             ),
             const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.edit),
-                  label: const Text('Editar'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    foregroundColor: Colors.white,
+            if (comienzoFormato != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(
+                  children: [
+                    Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        comienzoFormato,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey[700],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            if (cita.asunto.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: Colors.orange[200]!,
                   ),
+                ),
+                child: AutoSizeText(
+                  cita.asunto,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.orange[700],
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 1,
+                  minFontSize: 10,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.start,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.check_circle),
+                  iconSize: 28,
+                  tooltip: 'Realizar',
+                  onPressed: () => _showRealizarCitaDialog(cita),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(Icons.edit),
+                  iconSize: 28,
+                  tooltip: 'Editar',
                   onPressed: () {
                     Navigator.push(
                       context,
@@ -322,47 +410,8 @@ class _NotificationsPendingScreenState
                     });
                   },
                 ),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.check_circle),
-                  label: const Text('Realizar'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: () => _showRealizarCitaDialog(cita),
-                ),
               ],
             ),
-            const SizedBox(height: 12),
-            if (comienzoFormato != null)
-              _buildDetailRow(
-                icon: Icons.access_time,
-                label: 'Empieza',
-                value: comienzoFormato,
-              ),
-            if (cita.asunto.isNotEmpty)
-              _buildDetailRow(
-                icon: Icons.subject,
-                label: 'Asunto',
-                value: cita.asunto,
-              ),
-            if (cita.online != null && cita.online == 'S')
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Row(
-                  children: [
-                    Icon(Icons.videocam, size: 16, color: Colors.grey[600]),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Cita Online',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
           ],
         ),
       ),
@@ -402,78 +451,97 @@ class _NotificationsPendingScreenState
                         ),
                         const SizedBox(height: 4),
                       ],
-                      if (revision.asunto.isNotEmpty)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.orange[50],
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(
-                              color: Colors.orange[200]!,
-                            ),
-                          ),
-                          child: Text(
-                            revision.asunto,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.orange[700],
-                              fontWeight: FontWeight.w500,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
                     ],
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.edit, color: Colors.blue),
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) =>
-                            RevisionEditScreen(revision: revision),
-                      ),
-                    ).then((_) {
-                      setState(() {
-                        _loadPendingData();
-                      });
-                    });
-                  },
-                  tooltip: 'Editar revisión',
-                ),
               ],
             ),
+            if (revision.asunto.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: Colors.orange[200]!,
+                  ),
+                ),
+                child: AutoSizeText(
+                  revision.asunto,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.orange[700],
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 1,
+                  minFontSize: 10,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             // Detalles
             if (fechaPrevista != null)
-              _buildDetailRow(
-                icon: Icons.calendar_today_outlined,
-                label: 'Fecha prevista',
-                value: fechaPrevista,
-              ),
-            if (revision.semanas.isNotEmpty)
-              _buildDetailRow(
-                icon: Icons.access_time,
-                label: 'Semanas',
-                value: revision.semanas,
-              ),
-            if (revision.online != null && revision.online == 'S')
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Row(
                   children: [
-                    Icon(Icons.videocam, size: 16, color: Colors.grey[600]),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Revisión Online',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey[600],
+                    Icon(Icons.calendar_today_outlined,
+                        size: 16, color: Colors.grey[600]),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        fechaPrevista,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey[700],
+                        ),
+                      ),
+                    ),
+                    if (revision.online != null && revision.online == 'S')
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: Colors.grey[300]!,
+                          ),
+                        ),
+                        child: Text(
+                          'Online',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey[700],
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            if (revision.semanas.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(
+                  children: [
+                    Icon(Icons.access_time, size: 16, color: Colors.grey[600]),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        revision.semanas,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey[700],
+                        ),
                       ),
                     ),
                   ],
@@ -514,10 +582,189 @@ class _NotificationsPendingScreenState
                   ],
                 ),
               ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.start,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.check),
+                  color: Colors.green,
+                  iconSize: 28,
+                  onPressed: () => _showCompletarRevisionDialog(revision),
+                  tooltip: 'Completar',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.edit),
+                  color: Colors.blue,
+                  iconSize: 28,
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) =>
+                            RevisionEditScreen(revision: revision),
+                      ),
+                    ).then((_) {
+                      setState(() {
+                        _loadPendingData();
+                      });
+                    });
+                  },
+                  tooltip: 'Editar revision',
+                ),
+              ],
+            ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _showCompletarRevisionDialog(Revision revision) async {
+    DateTime selectedDate = revision.fechaRealizacion ?? DateTime.now();
+    TimeOfDay selectedTime = TimeOfDay.now();
+    final TextEditingController modificacionController =
+        TextEditingController(text: revision.modificacionDieta ?? '');
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Completar Revision'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(
+                          'Fecha: ${DateFormat('dd/MM/yyyy HH:mm').format(selectedDate.copyWith(hour: selectedTime.hour, minute: selectedTime.minute))}'),
+                      trailing: const Icon(Icons.calendar_today),
+                      onTap: () async {
+                        final pickedDate = await showDatePicker(
+                          context: context,
+                          initialDate: selectedDate,
+                          firstDate: DateTime(2000),
+                          lastDate: DateTime(2101),
+                          locale: const Locale('es', 'ES'),
+                          keyboardType: TextInputType.datetime,
+                          helpText: 'Introduzca la fecha (dd/mm/yyyy)',
+                        );
+                        if (pickedDate != null) {
+                          setState(() => selectedDate = pickedDate);
+                        }
+                      },
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text('Hora: ${selectedTime.format(context)}'),
+                      trailing: const Icon(Icons.access_time),
+                      onTap: () async {
+                        final pickedTime = await showTimePicker(
+                          context: context,
+                          initialTime: selectedTime,
+                        );
+                        if (pickedTime != null) {
+                          setState(() => selectedTime = pickedTime);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    const Text('Modificacion de la dieta:',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: modificacionController,
+                      maxLines: 4,
+                      minLines: 2,
+                      decoration: const InputDecoration(
+                        hintText: 'Modificacion de la dieta...',
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.all(12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    _completarRevision(
+                      revision,
+                      selectedDate.copyWith(
+                        hour: selectedTime.hour,
+                        minute: selectedTime.minute,
+                      ),
+                      modificacionController.text,
+                    );
+                  },
+                  icon: const Icon(Icons.check),
+                  label: const Text('Completar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _completarRevision(
+    Revision revision,
+    DateTime fechaRealizacion,
+    String modificacionDieta,
+  ) async {
+    try {
+      final apiService = context.read<ApiService>();
+      final authService = context.read<AuthService>();
+      final codusuario = authService.userCode;
+
+      final revisionActualizada = Revision(
+        codigo: revision.codigo,
+        codigoPaciente: revision.codigoPaciente,
+        nombrePaciente: revision.nombrePaciente,
+        pacienteActivo: revision.pacienteActivo,
+        asunto: revision.asunto,
+        fechaPrevista: revision.fechaPrevista,
+        fechaRealizacion: fechaRealizacion,
+        semanas: revision.semanas,
+        modificacionDieta: modificacionDieta,
+        completada: 'S',
+        online: revision.online,
+        peso: revision.peso,
+      );
+
+      await apiService.updateRevision(revisionActualizada);
+
+      setState(() {
+        _loadPendingData();
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Revision completada correctamente'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   void _showRealizarCitaDialog(Cita cita) {

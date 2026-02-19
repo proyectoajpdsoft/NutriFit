@@ -139,8 +139,10 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
         _isLoading = false;
       });
       if (mounted) {
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
+          SnackBar(
+              content: Text('Error al cargar lista de compra. $errorMessage')),
         );
       }
     }
@@ -166,8 +168,9 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
         _loadItems();
       }
     } catch (e) {
+      final errorMessage = e.toString().replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: ${e.toString()}')),
+        SnackBar(content: Text('Error al actualizar item. $errorMessage')),
       );
     }
   }
@@ -205,8 +208,9 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
           _loadItems();
         }
       } catch (e) {
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
+          SnackBar(content: Text('Error al eliminar item. $errorMessage')),
         );
       }
     }
@@ -258,8 +262,9 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
           _loadItems();
         }
       } catch (e) {
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
+          SnackBar(content: Text('Error al eliminar items. $errorMessage')),
         );
       }
     }

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:nutri_app/services/api_service.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 class ContactNutricionistaDialog extends StatefulWidget {
   const ContactNutricionistaDialog({super.key});
@@ -28,7 +27,7 @@ class _ContactNutricionistaDialogState
     if (!mounted) return;
 
     try {
-      debugPrint('Cargando información de contacto del dietista...');
+      // debugPrint('Cargando información de contacto del dietista...');
 
       // Cargar cada parámetro individualmente con timeout
       final email = await _getParametroSafe('nutricionista_email');
@@ -38,8 +37,8 @@ class _ContactNutricionistaDialogState
       final youtube = await _getParametroSafe('nutricionista_url_youtube');
       final web = await _getParametroSafe('nutricionista_web');
 
-      debugPrint(
-          'Parámetros cargados: email=$email, telefono=$telefono, web=$web');
+      // debugPrint(
+      //     'Parámetros cargados: email=$email, telefono=$telefono, web=$web');
 
       _contactInfo = {
         'email': email ?? '',
@@ -57,7 +56,7 @@ class _ContactNutricionistaDialogState
         });
       }
     } catch (e) {
-      debugPrint('Error al cargar información de contacto: $e');
+      // debugPrint('Error al cargar información de contacto: $e');
 
       if (mounted) {
         setState(() {
@@ -71,57 +70,57 @@ class _ContactNutricionistaDialogState
 
   Future<String?> _getParametroSafe(String nombre) async {
     try {
-      debugPrint('Obteniendo parámetro: $nombre');
+      // debugPrint('Obteniendo parámetro: $nombre');
 
       final resultado = await _apiService
           .getParametro(nombre)
           .timeout(const Duration(seconds: 10), onTimeout: () {
-        debugPrint('Timeout al obtener parámetro $nombre');
+        // debugPrint('Timeout al obtener parámetro $nombre');
         return null;
       });
 
       if (resultado != null && resultado['valor'] != null) {
         final valor = resultado['valor'] as String?;
-        debugPrint('Parámetro $nombre obtenido: $valor');
+        // debugPrint('Parámetro $nombre obtenido: $valor');
         return valor;
       }
 
-      debugPrint('Parámetro $nombre no encontrado o sin valor');
+      // debugPrint('Parámetro $nombre no encontrado o sin valor');
       return null;
     } catch (e) {
-      debugPrint('Error al cargar parámetro $nombre: $e');
+      // debugPrint('Error al cargar parámetro $nombre: $e');
       return null;
     }
   }
 
-  Future<void> _launchUrl(String url) async {
-    if (url.isEmpty) return;
-
-    try {
-      final uri = Uri.parse(url);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No se puede abrir el enlace'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al abrir el enlace: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
+  // URL Launcher disabled - feature temporarily disabled
+  // Future<void> _launchUrl(String url) async {
+  //   if (url.isEmpty) return;
+  //   try {
+  //     final uri = Uri.parse(url);
+  //     if (await canLaunchUrl(uri)) {
+  //       await launchUrl(uri, mode: LaunchMode.externalApplication);
+  //     } else {
+  //       if (mounted) {
+  //         ScaffoldMessenger.of(context).showSnackBar(
+  //           const SnackBar(
+  //             content: Text('No se puede abrir el enlace'),
+  //             backgroundColor: Colors.red,
+  //           ),
+  //         );
+  //       }
+  //     }
+  //   } catch (e) {
+  //     if (mounted) {
+  //       ScaffoldMessenger.of(context).showSnackBar(
+  //         SnackBar(
+  //           content: Text('Error al abrir el enlace: $e'),
+  //           backgroundColor: Colors.red,
+  //         ),
+  //       );
+  //     }
+  //   }
+  // }
 
   Widget _buildContactItem(
       IconData icon, String label, String value, String url) {
@@ -132,7 +131,9 @@ class _ContactNutricionistaDialogState
         leading: Icon(icon, color: Theme.of(context).colorScheme.primary),
         title: Text('Contactar por $label'),
         trailing: const Icon(Icons.open_in_new),
-        onTap: () => _launchUrl(url),
+        // URL Launcher disabled - feature temporarily disabled
+        // onTap: () => _launchUrl(url),
+        onTap: () {},
       ),
     );
   }
@@ -260,31 +261,59 @@ class _ContactNutricionistaDialogState
                         ),
                       ),
                       const SizedBox(height: 12),
-                      // Contactos principales
+                      // Email URL disabled - feature temporarily disabled
+                      // _buildContactItem(
+                      //   Icons.email,
+                      //   'Email',
+                      //   _contactInfo['email'] ?? '',
+                      //   'mailto:${_contactInfo['email'] ?? ''}',
+                      // ),
                       _buildContactItem(
                         Icons.email,
                         'Email',
                         _contactInfo['email'] ?? '',
-                        'mailto:${_contactInfo['email'] ?? ''}',
+                        '', // URL disabled
                       ),
+                      // Phone URL disabled - feature temporarily disabled
+                      // _buildContactItem(
+                      //   Icons.phone,
+                      //   'Teléfono',
+                      //   _contactInfo['telefono'] ?? '',
+                      //   'tel:${_contactInfo['telefono'] ?? ''}',
+                      // ),
                       _buildContactItem(
                         Icons.phone,
                         'Teléfono',
                         _contactInfo['telefono'] ?? '',
-                        'tel:${_contactInfo['telefono'] ?? ''}',
+                        '', // URL disabled
                       ),
+                      // WhatsApp URL disabled - feature temporarily disabled
+                      // _buildContactItem(
+                      //   Icons.chat,
+                      //   'WhatsApp',
+                      //   _contactInfo['telefono'] ?? '',
+                      //   'https://wa.me/${_contactInfo['telefono']?.replaceAll(RegExp(r'[^\d]'), '') ?? ''}',
+                      // ),
                       _buildContactItem(
                         Icons.chat,
                         'WhatsApp',
                         _contactInfo['telefono'] ?? '',
-                        'https://wa.me/${_contactInfo['telefono']?.replaceAll(RegExp(r'[^\d]'), '') ?? ''}',
+                        '', // URL disabled
                       ),
+                      // Telegram URL disabled - feature temporarily disabled
+                      // if ((_contactInfo['telefono'] ?? '').isNotEmpty)
+                      //   _buildContactItem(
+                      //     Icons.send,
+                      //     'Telegram',
+                      //     _contactInfo['telefono'] ?? '',
+                      //     'https://t.me/${_contactInfo['telefono']?.replaceAll(RegExp(r'[^\d+]'), '') ?? ''}',
+                      //   ),
                       if ((_contactInfo['telefono'] ?? '').isNotEmpty)
                         _buildContactItem(
                           Icons.send,
                           'Telegram',
                           _contactInfo['telefono'] ?? '',
-                          'https://t.me/${_contactInfo['telefono']?.replaceAll(RegExp(r'[^\d+]'), '') ?? ''}',
+                          '', // URL disabled
                         ),
                       const SizedBox(height: 16),
                       // Acordeón para más datos

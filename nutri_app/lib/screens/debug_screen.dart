@@ -54,28 +54,33 @@ class _DebugScreenState extends State<DebugScreen> {
                   onPressed: _isLoading
                       ? null
                       : () => _runTest(
-                          () => _apiService.getRawData('pacientes.php')),
+                            () => _apiService.getRawData('pacientes.php'),
+                          ),
                   child: const Text('2. Get Pacientes (Raw)'),
                 ),
                 ElevatedButton(
                   onPressed: _isLoading
                       ? null
                       : () => _runTest(
-                          () => _apiService.getRawData('clientes.php')),
+                            () => _apiService.getRawData('clientes.php'),
+                          ),
                   child: const Text('3. Get Clientes (Raw)'),
                 ),
                 ElevatedButton(
                   onPressed: _isLoading
                       ? null
                       : () => _runTest(
-                          () => _apiService.getRawData('usuarios.php')),
+                            () => _apiService.getRawData('usuarios.php'),
+                          ),
                   child: const Text('4. Get Usuarios (Raw)'),
                 ),
               ],
             ),
             const SizedBox(height: 20),
-            const Text('Resultado:',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'Resultado:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 8),
             Expanded(
               child: Container(
@@ -87,7 +92,9 @@ class _DebugScreenState extends State<DebugScreen> {
                         child: SelectableText(
                           _result,
                           style: const TextStyle(
-                              fontFamily: 'monospace', fontSize: 12),
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                          ),
                         ),
                       ),
               ),

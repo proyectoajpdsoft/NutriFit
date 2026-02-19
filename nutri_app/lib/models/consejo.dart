@@ -9,6 +9,7 @@ class Consejo {
   String visibleParaTodos;
   String? imagenPortada; // Base64
   String? imagenPortadaNombre;
+  String? imagenMiniatura; // Base64 thumbnail
   DateTime? fechaa;
   int? codusuarioa;
   DateTime? fecham;
@@ -31,6 +32,7 @@ class Consejo {
     this.visibleParaTodos = 'N',
     this.imagenPortada,
     this.imagenPortadaNombre,
+    this.imagenMiniatura,
     this.fechaa,
     this.codusuarioa,
     this.fecham,
@@ -60,6 +62,7 @@ class Consejo {
       visibleParaTodos: json['visible_para_todos'] ?? 'N',
       imagenPortada: json['imagen_portada'],
       imagenPortadaNombre: json['imagen_portada_nombre'],
+      imagenMiniatura: json['imagen_miniatura'],
       fechaa: json['fechaa'] != null ? DateTime.parse(json['fechaa']) : null,
       codusuarioa: json['codusuarioa'] != null
           ? int.parse(json['codusuarioa'].toString())
@@ -120,6 +123,7 @@ class Consejo {
       'visible_para_todos': visibleParaTodos,
       'imagen_portada': imagenPortada,
       'imagen_portada_nombre': imagenPortadaNombre,
+      'imagen_miniatura': imagenMiniatura,
       'codusuarioa': codusuarioa,
       'codusuariom': codusuariom,
       'categorias': categoriaIds,

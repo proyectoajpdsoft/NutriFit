@@ -15,11 +15,13 @@ import 'package:nutri_app/screens/planes_fit/planes_fit_pacientes_list_screen.da
 import 'package:nutri_app/screens/planes_fit/plan_fit_ejercicios_catalog_screen.dart';
 import 'package:nutri_app/screens/revisiones/revisiones_pacientes_list_screen.dart';
 import 'package:nutri_app/screens/usuarios/usuarios_list_screen.dart';
+import 'package:nutri_app/screens/entrenamientos_screen.dart';
 import 'package:nutri_app/widgets/app_drawer.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/mixins/auth_error_handler_mixin.dart';
 import 'package:provider/provider.dart';
+// import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -335,6 +337,15 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
                     MaterialPageRoute(
                         builder: (context) =>
                             const PlanFitEjerciciosCatalogScreen())),
+              ),
+              _buildDashboardCard(
+                context,
+                icon: Icons.directions_run,
+                label: 'Actividades',
+                onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const EntrenamientosScreen())),
               ),
               _buildDashboardCard(
                 context,

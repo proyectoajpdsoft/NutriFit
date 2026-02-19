@@ -49,11 +49,8 @@ dependencies:
   # Procesamiento de imágenes (redimensionamiento)
   image: ^4.1.0
 
-  # Realizar llamadas y enviar emails
-  url_launcher: ^6.2.5
-
-  # Reproductor de videos de YouTube incrustado
-  # youtube_player_flutter: ^9.0.3  # Deshabilitado temporalmente para compatibilidad web
+  # Gestor de permisos para Android, iOS, Windows
+  permission_handler: ^11.3.1
 
   # Información del dispositivo
   # (Retirado para evitar conflictos de compilación)
@@ -71,6 +68,14 @@ dependencies:
 
   # Audio para el metrónomo
   audioplayers: ^6.0.0
+
+  # Gestion de ventana en escritorio (guardar/restaurar tamaño)
+  window_manager: ^0.4.2
+
+  # Portapapeles nativo (imagen) en escritorio
+  super_clipboard: ^0.8.0
+  super_native_extensions: ^0.8.0
+  auto_size_text: ^3.0.0
 
 
 dev_dependencies:

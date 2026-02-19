@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:nutri_app/models/entrevista_fit.dart';
@@ -7,6 +10,7 @@ import 'package:nutri_app/services/api_service.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class EntrevistasFitListScreen extends StatefulWidget {
   final Paciente? paciente;
@@ -19,16 +23,20 @@ class EntrevistasFitListScreen extends StatefulWidget {
 }
 
 class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
+  static const PdfColor _accentPink = PdfColor.fromInt(0xFFFFC0F4);
+
   final ApiService _apiService = ApiService();
   late Future<List<EntrevistaFit>> _entrevistasFuture;
   final TextEditingController _searchController = TextEditingController();
   String _searchText = '';
   bool _showSearchField = false;
+  bool _showFilterEntrevistas = false;
   String _filtroCompletado = 'No completadas';
 
   @override
   void initState() {
     super.initState();
+    _loadUiState();
     _refreshEntrevistas();
     _searchController.addListener(() {
       setState(() {
@@ -52,6 +60,30 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
         _entrevistasFuture = _apiService.getEntrevistasFit(null);
       }
     });
+  }
+
+  Future<void> _loadUiState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final showSearch =
+        prefs.getBool('entrevistas_fit_show_search_field') ?? false;
+    final showFilter = prefs.getBool('entrevistas_fit_show_filter') ?? false;
+    final filtroCompletado =
+        prefs.getString('entrevistas_fit_filtro_completada') ??
+            'No completadas';
+    if (!mounted) return;
+    setState(() {
+      _showSearchField = showSearch;
+      _showFilterEntrevistas = showFilter;
+      _filtroCompletado = filtroCompletado;
+    });
+  }
+
+  Future<void> _saveUiState() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('entrevistas_fit_show_search_field', _showSearchField);
+    await prefs.setBool('entrevistas_fit_show_filter', _showFilterEntrevistas);
+    await prefs.setString(
+        'entrevistas_fit_filtro_completada', _filtroCompletado);
   }
 
   List<EntrevistaFit> _filterEntrevistas(List<EntrevistaFit> entrevistas) {
@@ -101,7 +133,7 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
 
   String _buildFechaLinea(EntrevistaFit entrevista) {
     if (entrevista.fechaPrevista != null) {
-      return 'Prevista: ${DateFormat('dd/MM/yyyy HH:mm').format(entrevista.fechaPrevista!)}';
+      return DateFormat('dd/MM/yyyy HH:mm').format(entrevista.fechaPrevista!);
     }
     if (entrevista.fechaRealizacion != null) {
       return 'Realización: ${DateFormat('dd/MM/yyyy HH:mm').format(entrevista.fechaRealizacion!)}';
@@ -120,6 +152,19 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
         title: const Text('Entrevistas Fit'),
         actions: [
           IconButton(
+            icon: Icon(_showFilterEntrevistas
+                ? Icons.filter_alt
+                : Icons.filter_alt_outlined),
+            tooltip:
+                _showFilterEntrevistas ? 'Ocultar filtro' : 'Mostrar filtro',
+            onPressed: () {
+              setState(() {
+                _showFilterEntrevistas = !_showFilterEntrevistas;
+              });
+              _saveUiState();
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _refreshEntrevistas,
             tooltip: 'Actualizar',
@@ -135,42 +180,47 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
             ),
       body: Column(
         children: [
-          Padding(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: SegmentedButton<String>(
-                    segments: const [
-                      ButtonSegment(
-                          value: "No completadas",
-                          label: Text('No completadas')),
-                      ButtonSegment(value: "Todas", label: Text('Todas')),
-                    ],
-                    selected: {_filtroCompletado},
-                    onSelectionChanged: (Set<String> newSelection) {
-                      setState(() {
-                        _filtroCompletado = newSelection.first;
-                      });
-                    },
+          if (_showFilterEntrevistas)
+            Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(
+                            value: "No completadas", label: Text('No compl.')),
+                        ButtonSegment(value: "Todas", label: Text('Todas')),
+                      ],
+                      selected: {_filtroCompletado},
+                      onSelectionChanged: (Set<String> newSelection) {
+                        setState(() {
+                          _filtroCompletado = newSelection.first;
+                        });
+                        _saveUiState();
+                      },
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  icon: Icon(_showSearchField ? Icons.close : Icons.search),
-                  onPressed: () {
-                    setState(() {
-                      _showSearchField = !_showSearchField;
-                      if (!_showSearchField) _searchController.clear();
-                    });
-                  },
-                  tooltip: _showSearchField ? 'Cerrar búsqueda' : 'Buscar',
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: Icon(
+                        _showSearchField ? Icons.search_off : Icons.search),
+                    onPressed: () {
+                      setState(() {
+                        _showSearchField = !_showSearchField;
+                        if (!_showSearchField) _searchController.clear();
+                      });
+                      _saveUiState();
+                    },
+                    tooltip: _showSearchField
+                        ? 'Ocultar búsqueda'
+                        : 'Mostrar búsqueda',
+                  ),
+                ],
+              ),
             ),
-          ),
           if (_showSearchField)
             Padding(
               padding: const EdgeInsets.all(8.0),
@@ -206,7 +256,6 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
                   itemCount: filtered.length,
                   itemBuilder: (context, index) {
                     final entrevista = filtered[index];
-                    final fechaLineaTexto = _buildFechaLinea(entrevista);
 
                     return Card(
                       elevation: 4,
@@ -217,134 +266,168 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Row(
+                            if ((entrevista.nombrePaciente ??
+                                    widget.paciente?.nombre) !=
+                                null) ...[
+                              Text(
+                                entrevista.nombrePaciente ??
+                                    widget.paciente!.nombre,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleMedium
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                      color:
+                                          Theme.of(context).colorScheme.primary,
+                                    ),
+                              ),
+                              const SizedBox(height: 8),
+                            ],
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 6,
                               children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      if ((entrevista.nombrePaciente ??
-                                              widget.paciente?.nombre) !=
-                                          null) ...[
-                                        Text(
-                                          entrevista.nombrePaciente ??
-                                              widget.paciente!.nombre,
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .titleMedium
-                                              ?.copyWith(
-                                                fontWeight: FontWeight.bold,
-                                                color: Theme.of(context)
-                                                    .colorScheme
-                                                    .primary,
-                                              ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                      ],
-                                      if ((entrevista.motivo ?? '')
-                                          .isNotEmpty) ...[
-                                        Text(
-                                          entrevista.motivo!,
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodyMedium,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        const SizedBox(height: 4),
-                                      ],
-                                      Text(
-                                        fechaLineaTexto,
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall
-                                            ?.copyWith(color: Colors.grey[700]),
+                                if (entrevista.fechaPrevista != null)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 5),
+                                    decoration: BoxDecoration(
+                                      color: Colors.orange[50],
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(
+                                        color: Colors.orange[200]!,
                                       ),
-                                    ],
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.calendar_month,
+                                            size: 16,
+                                            color: Colors.orange[700]),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          DateFormat('dd/MM/yyyy HH:mm').format(
+                                              entrevista.fechaPrevista!),
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.orange[700],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                ),
+                                if (entrevista.fechaRealizacion != null)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 5),
+                                    decoration: BoxDecoration(
+                                      color: Colors.green[50],
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(
+                                        color: Colors.green[200]!,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.check_circle,
+                                            size: 16, color: Colors.green[700]),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          DateFormat('dd/MM/yyyy').format(
+                                              entrevista.fechaRealizacion!),
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.green[700],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                if ((entrevista.motivo ?? '').isNotEmpty)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 5),
+                                    decoration: BoxDecoration(
+                                      color: Colors.orange[100],
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(
+                                        color: Colors.orange[300]!,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      'Motivo: ${entrevista.motivo}',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.orange[800],
+                                      ),
+                                    ),
+                                  ),
                               ],
                             ),
                             const SizedBox(height: 12),
                             Row(
+                              mainAxisAlignment: MainAxisAlignment.start,
                               children: [
-                                Flexible(
-                                  child: Wrap(
-                                    spacing: 8,
-                                    runSpacing: 6,
-                                    children: [
-                                      ElevatedButton.icon(
-                                        icon: const Icon(Icons.picture_as_pdf),
-                                        label: const Text('PDF'),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: Colors.orange,
-                                          foregroundColor: Colors.white,
-                                        ),
-                                        onPressed: () =>
-                                            _generarPDF(entrevista),
-                                      ),
-                                      if (entrevista.completada != 'S')
-                                        ElevatedButton.icon(
-                                          icon: const Icon(Icons.check),
-                                          label: const Text('Completar'),
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: Colors.green,
-                                            foregroundColor: Colors.white,
-                                          ),
-                                          onPressed: () =>
-                                              _showCompletarEntrevistaDialog(
-                                                  entrevista),
-                                        ),
-                                    ],
-                                  ),
+                                IconButton(
+                                  icon: const Icon(Icons.picture_as_pdf),
+                                  color: Colors.red,
+                                  iconSize: 28,
+                                  onPressed: () => _generarPDF(entrevista),
+                                  tooltip: 'Descargar PDF',
                                 ),
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(Icons.edit),
-                                      color: Colors.blue,
-                                      onPressed: () =>
-                                          _navigateToEditScreen(entrevista),
-                                      tooltip: 'Editar',
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.delete),
-                                      color: Colors.red,
-                                      onPressed: () async {
-                                        final confirm = await showDialog<bool>(
-                                          context: context,
-                                          builder: (context) => AlertDialog(
-                                            title: const Text(
-                                                'Eliminar entrevista'),
-                                            content: const Text(
-                                                '¿Seguro que deseas eliminar esta entrevista?'),
-                                            actions: [
-                                              TextButton(
-                                                onPressed: () =>
-                                                    Navigator.of(context)
-                                                        .pop(false),
-                                                child: const Text('Cancelar'),
-                                              ),
-                                              TextButton(
-                                                onPressed: () =>
-                                                    Navigator.of(context)
-                                                        .pop(true),
-                                                child: const Text('Eliminar'),
-                                              ),
-                                            ],
+                                if (entrevista.completada != 'S')
+                                  IconButton(
+                                    icon: const Icon(Icons.check),
+                                    color: Colors.green,
+                                    iconSize: 28,
+                                    onPressed: () =>
+                                        _showCompletarEntrevistaDialog(
+                                            entrevista),
+                                    tooltip: 'Completar',
+                                  ),
+                                IconButton(
+                                  icon: const Icon(Icons.edit),
+                                  color: Colors.blue,
+                                  iconSize: 28,
+                                  onPressed: () =>
+                                      _navigateToEditScreen(entrevista),
+                                  tooltip: 'Editar',
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete),
+                                  color: Colors.red,
+                                  iconSize: 28,
+                                  onPressed: () async {
+                                    final confirm = await showDialog<bool>(
+                                      context: context,
+                                      builder: (context) => AlertDialog(
+                                        title:
+                                            const Text('Eliminar entrevista'),
+                                        content: const Text(
+                                            '¿Seguro que deseas eliminar esta entrevista?'),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () =>
+                                                Navigator.of(context)
+                                                    .pop(false),
+                                            child: const Text('Cancelar'),
                                           ),
-                                        );
-                                        if (confirm == true) {
-                                          await _apiService.deleteEntrevistaFit(
-                                              entrevista.codigo);
-                                          _refreshEntrevistas();
-                                        }
-                                      },
-                                      tooltip: 'Eliminar',
-                                    ),
-                                  ],
+                                          TextButton(
+                                            onPressed: () =>
+                                                Navigator.of(context).pop(true),
+                                            child: const Text('Eliminar'),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                    if (confirm == true) {
+                                      await _apiService.deleteEntrevistaFit(
+                                          entrevista.codigo);
+                                      _refreshEntrevistas();
+                                    }
+                                  },
+                                  tooltip: 'Eliminar',
                                 ),
                               ],
                             ),
@@ -424,6 +507,34 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
     final nutricionistaFacebookLabel =
         nutricionistaFacebookParam?['valor2']?.toString() ?? '';
 
+    final logoParam =
+        await _apiService.getParametro('logotipo_dietista_documentos');
+    final logoBytes = _decodeBase64Image(logoParam?['valor']?.toString() ?? '');
+    final logoSize = _parseLogoSize(logoParam?['valor2']?.toString() ?? '');
+
+    final accentColorParam =
+        await _apiService.getParametro('color_fondo_banda_encabezado_pie_pdf');
+    final accentColor = _parsePdfColor(
+          accentColorParam?['valor']?.toString(),
+        ) ??
+        _accentPink;
+
+    final tituloParam =
+        await _apiService.getParametro('texto_titulo_pdf_entrevistas_fit');
+    final tituloTexto = tituloParam?['valor']?.toString().trim();
+    final tituloPdfTexto = (tituloTexto != null && tituloTexto.isNotEmpty)
+        ? tituloTexto
+        : 'ENTREVISTA PARA PLAN HIIT';
+    final tituloPdfFontSize =
+        _parseFontSize(tituloParam?['valor2']?.toString()) ?? 16.0;
+
+    final pieTituloParam =
+        await _apiService.getParametro('titulo_pdf_entrevistas_fit');
+    final pieTituloTexto = pieTituloParam?['valor']?.toString().trim();
+    final pieRightText = (pieTituloTexto != null && pieTituloTexto.isNotEmpty)
+        ? pieTituloTexto
+        : tituloPdfTexto;
+
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
@@ -431,9 +542,19 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
         header: (context) => _buildPdfHeader(
           nutricionistaNombre: nutricionistaNombre,
           nutricionistaSubtitulo: nutricionistaSubtitulo,
-          title: 'ENTREVISTA FIT',
+          logoBytes: logoBytes,
+          logoSize: logoSize,
+          tituloTexto: tituloPdfTexto,
+          tituloFontSize: tituloPdfFontSize,
+          accentColor: accentColor,
+          pageNumber: context.pageNumber,
+        ),
+        footer: (context) => _buildPdfFooter(
+          leftText: nutricionistaNombre,
           pageNumber: context.pageNumber,
           pageCount: context.pagesCount,
+          accentColor: accentColor,
+          rightText: pieRightText,
         ),
         build: (context) => [
           // Información del paciente
@@ -629,20 +750,18 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
             nutricionistaInstagramLabel: nutricionistaInstagramLabel,
             nutricionistaFacebookUrl: nutricionistaFacebookUrl,
             nutricionistaFacebookLabel: nutricionistaFacebookLabel,
+            accentColor: accentColor,
           ),
         ],
       ),
     );
 
     // Generar nombre del archivo
-    final nombrePaciente =
+    final nombrePaciente = _buildSafeFileName(
         (entrevista.nombrePaciente ?? widget.paciente?.nombre ?? 'Paciente')
-            .trim()
-            .replaceAll(' ', '_');
-    final fechaStr = entrevista.fechaPrevista != null
-        ? DateFormat('dd-MM-yyyy').format(entrevista.fechaPrevista!)
-        : DateFormat('dd-MM-yyyy').format(DateTime.now());
-    final fileName = 'EntrevistaFit_${nombrePaciente}_$fechaStr.pdf';
+            .trim());
+    final fechaStr = _formatDateForFileName(entrevista.fechaPrevista);
+    final fileName = _buildEntrevistaHiitFileName(nombrePaciente, fechaStr, '');
 
     // Compartir el PDF
     try {
@@ -659,6 +778,43 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
           ),
         );
       }
+    }
+  }
+
+  static String _buildSafeFileName(String text) {
+    final normalized = text
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u')
+        .replaceAll('ñ', 'n')
+        .replaceAll('Á', 'A')
+        .replaceAll('É', 'E')
+        .replaceAll('Í', 'I')
+        .replaceAll('Ó', 'O')
+        .replaceAll('Ú', 'U')
+        .replaceAll('Ñ', 'N')
+        .replaceAll(' ', '_')
+        .replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '');
+    return normalized;
+  }
+
+  static String _formatDateForFileName(DateTime? date) {
+    if (date == null) return '';
+    final formatter = DateFormat('dd_MM_yyyy');
+    return formatter.format(date);
+  }
+
+  static String _buildEntrevistaHiitFileName(
+    String pacienteNombre,
+    String fechaStr,
+    String suffix,
+  ) {
+    if (fechaStr.isEmpty) {
+      return 'Entrevista_HIIT_$pacienteNombre$suffix.pdf';
+    } else {
+      return 'Entrevista_HIIT_${pacienteNombre}_$fechaStr$suffix.pdf';
     }
   }
 
@@ -710,9 +866,12 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
   pw.Widget _buildPdfHeader({
     required String nutricionistaNombre,
     required String nutricionistaSubtitulo,
-    required String title,
+    required List<int>? logoBytes,
+    required PdfPoint? logoSize,
+    required String tituloTexto,
+    required double tituloFontSize,
+    required PdfColor accentColor,
     required int pageNumber,
-    required int pageCount,
   }) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -720,7 +879,7 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
         pw.Container(
           width: double.infinity,
           padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          decoration: const pw.BoxDecoration(color: PdfColors.pink100),
+          decoration: pw.BoxDecoration(color: accentColor),
           child: pw.Row(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
@@ -733,7 +892,8 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
                       style: pw.TextStyle(
                           fontSize: 12, fontWeight: pw.FontWeight.bold),
                     ),
-                    if (nutricionistaSubtitulo.trim().isNotEmpty)
+                    if (pageNumber == 1 &&
+                        nutricionistaSubtitulo.trim().isNotEmpty)
                       pw.Text(
                         nutricionistaSubtitulo,
                         style: const pw.TextStyle(fontSize: 9),
@@ -741,22 +901,75 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
                   ],
                 ),
               ),
-              pw.Text(
-                '$pageNumber/$pageCount',
-                style: const pw.TextStyle(fontSize: 9),
-              ),
+              if (logoBytes != null)
+                pw.Container(
+                  width: logoSize?.x ?? 42,
+                  height: logoSize?.y ?? 30,
+                  alignment: pw.Alignment.centerRight,
+                  child: pw.Image(
+                    pw.MemoryImage(Uint8List.fromList(logoBytes)),
+                    fit: pw.BoxFit.contain,
+                  ),
+                )
+              else
+                pw.SizedBox(
+                    width: logoSize?.x ?? 42, height: logoSize?.y ?? 30),
             ],
           ),
         ),
         pw.SizedBox(height: 6),
         pw.Center(
           child: pw.Text(
-            title,
-            style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
+            tituloTexto,
+            style: pw.TextStyle(
+                fontSize: tituloFontSize, fontWeight: pw.FontWeight.bold),
           ),
         ),
         pw.SizedBox(height: 10),
       ],
+    );
+  }
+
+  pw.Widget _buildPdfFooter({
+    required String leftText,
+    required int pageNumber,
+    required int pageCount,
+    required PdfColor accentColor,
+    required String rightText,
+  }) {
+    const footerStyle = pw.TextStyle(fontSize: 9);
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: pw.BoxDecoration(color: accentColor),
+      child: pw.Row(
+        children: [
+          pw.Expanded(
+            child: pw.Align(
+              alignment: pw.Alignment.centerLeft,
+              child: pw.Text(leftText, style: footerStyle),
+            ),
+          ),
+          pw.Expanded(
+            child: pw.Center(
+              child: pw.Text(
+                '$pageNumber/$pageCount',
+                style: footerStyle,
+              ),
+            ),
+          ),
+          pw.Expanded(
+            child: pw.Align(
+              alignment: pw.Alignment.centerRight,
+              child: pw.Text(
+                rightText,
+                style: footerStyle,
+                textAlign: pw.TextAlign.right,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -769,11 +982,12 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
     required String nutricionistaInstagramLabel,
     required String nutricionistaFacebookUrl,
     required String nutricionistaFacebookLabel,
+    required PdfColor accentColor,
   }) {
     return pw.Container(
       width: double.infinity,
       padding: const pw.EdgeInsets.all(8),
-      decoration: const pw.BoxDecoration(color: PdfColors.pink100),
+      decoration: pw.BoxDecoration(color: accentColor),
       child: pw.Table(
         columnWidths: const {
           0: pw.FlexColumnWidth(),
@@ -1104,6 +1318,58 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
           ),
         );
       }
+    }
+  }
+
+  PdfPoint? _parseLogoSize(String value) {
+    final raw = value.trim();
+    if (raw.isEmpty) return null;
+    final match =
+        RegExp(r'^(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)$').firstMatch(raw);
+    if (match == null) return null;
+    final height = double.tryParse(match.group(1) ?? '');
+    final width = double.tryParse(match.group(2) ?? '');
+    if (height == null || width == null) return null;
+    return PdfPoint(width, height);
+  }
+
+  PdfColor? _parsePdfColor(String? value) {
+    if (value == null) return null;
+    var raw = value.trim();
+    if (raw.isEmpty) return null;
+    if (raw.startsWith('#')) {
+      raw = raw.substring(1);
+    }
+    if (raw.length != 6 && raw.length != 8) return null;
+    final parsed = int.tryParse(raw, radix: 16);
+    if (parsed == null) return null;
+    final argb = raw.length == 6 ? (0xFF000000 | parsed) : parsed;
+    return PdfColor.fromInt(argb);
+  }
+
+  double? _parseFontSize(String? value) {
+    if (value == null) return null;
+    final raw = value.trim().replaceAll(',', '.');
+    if (raw.isEmpty) return null;
+    return double.tryParse(raw);
+  }
+
+  List<int>? _decodeBase64Image(String value) {
+    final raw = value.trim();
+    if (raw.isEmpty) return null;
+    var data = raw;
+    const marker = 'base64,';
+    final index = raw.indexOf(marker);
+    if (index >= 0) {
+      data = raw.substring(index + marker.length);
+    }
+    while (data.length % 4 != 0) {
+      data += '=';
+    }
+    try {
+      return base64Decode(data);
+    } catch (_) {
+      return null;
     }
   }
 }

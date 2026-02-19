@@ -95,6 +95,10 @@ function get_medicion($codigo) {
 function bind_medicion_params($stmt, $data) {
     // Convertir strings vacíos a null y strings numéricos a números
     $data->peso = ($data->peso === '' || $data->peso === null) ? null : floatval($data->peso);
+    $data->cadera = ($data->cadera === '' || $data->cadera === null) ? null : floatval($data->cadera);
+    $data->cintura = ($data->cintura === '' || $data->cintura === null) ? null : floatval($data->cintura);
+    $data->muslo = ($data->muslo === '' || $data->muslo === null) ? null : floatval($data->muslo);
+    $data->brazo = ($data->brazo === '' || $data->brazo === null) ? null : floatval($data->brazo);
     $data->pliegue_abdominal = ($data->pliegue_abdominal === '' || $data->pliegue_abdominal === null) ? null : floatval($data->pliegue_abdominal);
     $data->pliegue_cuadricipital = ($data->pliegue_cuadricipital === '' || $data->pliegue_cuadricipital === null) ? null : floatval($data->pliegue_cuadricipital);
     $data->pliegue_peroneal = ($data->pliegue_peroneal === '' || $data->pliegue_peroneal === null) ? null : floatval($data->pliegue_peroneal);
@@ -105,6 +109,10 @@ function bind_medicion_params($stmt, $data) {
     $stmt->bindParam(":codigo_paciente", $data->codigo_paciente);
     $stmt->bindParam(":fecha", $data->fecha);
     $stmt->bindParam(":peso", $data->peso);
+    $stmt->bindParam(":cadera", $data->cadera);
+    $stmt->bindParam(":cintura", $data->cintura);
+    $stmt->bindParam(":muslo", $data->muslo);
+    $stmt->bindParam(":brazo", $data->brazo);
     $stmt->bindParam(":actividad_fisica", $data->actividad_fisica);
     $stmt->bindParam(":pliegue_abdominal", $data->pliegue_abdominal);
     $stmt->bindParam(":pliegue_cuadricipital", $data->pliegue_cuadricipital);
@@ -124,6 +132,7 @@ function create_medicion() {
 
     $query = "INSERT INTO nu_paciente_medicion SET
                 codigo_paciente = :codigo_paciente, fecha = :fecha, peso = :peso,
+                cadera = :cadera, cintura = :cintura, muslo = :muslo, brazo = :brazo,
                 actividad_fisica = :actividad_fisica, pliegue_abdominal = :pliegue_abdominal,
                 pliegue_cuadricipital = :pliegue_cuadricipital, pliegue_peroneal = :pliegue_peroneal,
                 pliegue_subescapular = :pliegue_subescapular, pligue_tricipital = :pligue_tricipital,
@@ -157,6 +166,7 @@ function update_medicion() {
 
     $query = "UPDATE nu_paciente_medicion SET
                 codigo_paciente = :codigo_paciente, fecha = :fecha, peso = :peso,
+                cadera = :cadera, cintura = :cintura, muslo = :muslo, brazo = :brazo,
                 actividad_fisica = :actividad_fisica, pliegue_abdominal = :pliegue_abdominal,
                 pliegue_cuadricipital = :pliegue_cuadricipital, pliegue_peroneal = :pliegue_peroneal,
                 pliegue_subescapular = :pliegue_subescapular, pligue_tricipital = :pligue_tricipital,

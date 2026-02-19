@@ -1,17 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
+// import 'package:url_launcher/url_launcher.dart';
 // import 'package:youtube_player_flutter/youtube_player_flutter.dart'; // Deshabilitado para web
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../services/consejo_receta_pdf_service.dart';
 import '../models/receta.dart';
 import '../models/receta_documento.dart';
+import '../widgets/image_viewer_dialog.dart';
 
 class RecetasPacienteScreen extends StatefulWidget {
   const RecetasPacienteScreen({super.key});
@@ -416,9 +418,11 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
       }
     } catch (e) {
       if (mounted) {
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+        ).showSnackBar(SnackBar(
+            content: Text('Error al cambiar me gusta. $errorMessage')));
       }
     }
   }
@@ -471,9 +475,11 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
       }
     } catch (e) {
       if (mounted) {
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+        ).showSnackBar(SnackBar(
+            content: Text('Error al cambiar favorito. $errorMessage')));
       }
     }
   }
@@ -531,7 +537,7 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
                 ),
               ),
 
-            // Acciones (like y favorito)
+            // Acciones (like, favorito, copiar, pdf)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               child: Row(
@@ -560,6 +566,16 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
                     onPressed: () => _toggleFavorito(receta),
                   ),
                   const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.copy, size: 18),
+                    onPressed: () => _copyRecetaToClipboard(receta),
+                    tooltip: 'Copiar',
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.picture_as_pdf, size: 18),
+                    onPressed: () => _generateRecetaPdfFromCard(receta),
+                    tooltip: 'PDF',
+                  ),
                   if (receta.mostrarPortada == 'S')
                     const Icon(Icons.star, color: Colors.amber, size: 20),
                 ],
@@ -589,8 +605,9 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
                   if (receta.texto.length > 100) const SizedBox(height: 4),
                   if (receta.texto.length > 100)
                     const Text(
-                      'Toca para ver más',
+                      'Toca para ver el detalle completo',
                       style: TextStyle(color: Colors.blue, fontSize: 12),
+                      textAlign: TextAlign.center,
                     ),
                 ],
               ),
@@ -787,6 +804,52 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
     );
   }
 
+  Future<void> _copyRecetaToClipboard(Receta receta) async {
+    try {
+      final textToCopy = '${receta.titulo}\n\n${receta.texto}';
+      await Clipboard.setData(ClipboardData(text: textToCopy));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Copiado al portapapeles'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al copiar: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _generateRecetaPdfFromCard(Receta receta) async {
+    try {
+      final apiService = Provider.of<ApiService>(context, listen: false);
+      await ConsejoRecetaPdfService.generatePdf(
+        context: context,
+        apiService: apiService,
+        titulo: receta.titulo,
+        contenido: receta.texto,
+        tipo: 'receta',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al generar PDF: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   void dispose() {
     _tabController.dispose();
@@ -923,9 +986,11 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
         });
       }
     } catch (e) {
+      final errorMessage = e.toString().replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+      ).showSnackBar(
+          SnackBar(content: Text('Error al cambiar me gusta. $errorMessage')));
     }
   }
 
@@ -989,48 +1054,76 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+        ).showSnackBar(SnackBar(
+            content: Text('Error al cambiar favorito. $errorMessage')));
       }
     }
   }
 
-  String? _extractYouTubeVideoId(String url) {
-    final regExp = RegExp(
-      r'(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]+)',
-      caseSensitive: false,
-    );
-    final match = regExp.firstMatch(url);
-    return match?.group(1);
-  }
-
-  Future<void> _launchUrl(String url) async {
+  Future<void> _copyToClipboard() async {
     try {
-      final videoId = _extractYouTubeVideoId(url);
-      if (videoId != null) {
-        if (mounted) {
-          showDialog(
-            context: context,
-            builder: (context) =>
-                Dialog(child: YoutubePlayerDialog(videoId: videoId)),
-          );
-        }
-        return;
-      }
-
-      final uri = Uri.parse(url);
-      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-        throw Exception('No se pudo abrir el enlace');
+      final textToCopy = '${_receta.titulo}\n\n${_receta.texto}';
+      await Clipboard.setData(ClipboardData(text: textToCopy));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Copiado al portapapeles'),
+            duration: Duration(seconds: 2),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al abrir enlace: ${e.toString()}')),
+          SnackBar(
+            content: Text('Error al copiar: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
   }
+
+  Future<void> _generateRecetaPdf() async {
+    try {
+      final apiService = Provider.of<ApiService>(context, listen: false);
+      await ConsejoRecetaPdfService.generatePdf(
+        context: context,
+        apiService: apiService,
+        titulo: _receta.titulo,
+        contenido: _receta.texto,
+        tipo: 'receta',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al generar PDF: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // Future<void> _launchUrl(String url) async {
+  //   try {
+  //     final uri = Uri.parse(url);
+  //     if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+  //       throw Exception('No se pudo abrir el enlace');
+  //     }
+  //   } catch (e) {
+  //     if (mounted) {
+  //       final errorMessage = e.toString().replaceFirst('Exception: ', '');
+  //       ScaffoldMessenger.of(context).showSnackBar(
+  //         SnackBar(content: Text('Error al abrir enlace. $errorMessage')),
+  //       );
+  //     }
+  //   }
+  // }
 
   Future<void> _openDocumento(RecetaDocumento doc) async {
     try {
@@ -1096,8 +1189,11 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
         } catch (e2) {
           if (mounted) Navigator.of(context).pop();
           if (mounted) {
+            final errorMessage = e2.toString().replaceFirst('Exception: ', '');
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Error al decodificar: ${e2.toString()}')),
+              SnackBar(
+                  content:
+                      Text('Error al decodificar documento. $errorMessage')),
             );
           }
           return;
@@ -1141,8 +1237,9 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
     } catch (e) {
       if (mounted) Navigator.of(context).pop();
       if (mounted) {
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al abrir documento: ${e.toString()}')),
+          SnackBar(content: Text('Error al abrir documento. $errorMessage')),
         );
       }
     }
@@ -1204,24 +1301,50 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
                 ),
               ),
             if (_receta.imagenPortada != null)
-              Image.memory(
-                base64Decode(_receta.imagenPortada!),
-                width: double.infinity,
-                height: 300,
-                fit: BoxFit.cover,
+              GestureDetector(
+                onTap: () => showImageViewerDialog(
+                  context: context,
+                  base64Image: _receta.imagenPortada!,
+                  title: _receta.titulo,
+                ),
+                child: Image.memory(
+                  base64Decode(_receta.imagenPortada!),
+                  width: double.infinity,
+                  height: 300,
+                  fit: BoxFit.contain,
+                ),
               ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 32.0),
+              padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 48.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.favorite, color: Colors.red, size: 20),
-                      const SizedBox(width: 4),
+                      IconButton(
+                        icon: Icon(
+                          _receta.meGusta == 'S'
+                              ? Icons.favorite
+                              : Icons.favorite_border,
+                          color: _receta.meGusta == 'S' ? Colors.red : null,
+                          size: 20,
+                        ),
+                        onPressed: _toggleLike,
+                      ),
                       Text(
                         '${_receta.totalLikes ?? 0} me gusta',
                         style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.copy, size: 20),
+                        onPressed: _copyToClipboard,
+                        tooltip: 'Copiar',
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.picture_as_pdf, size: 20),
+                        onPressed: _generateRecetaPdf,
+                        tooltip: 'Generar PDF',
                       ),
                     ],
                   ),
@@ -1264,7 +1387,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
                               return GestureDetector(
                                 onTap: () {
                                   if (doc.tipo == 'url' && doc.url != null) {
-                                    _launchUrl(doc.url!);
+                                    // _launchUrl(doc.url!);
                                   } else {
                                     _openDocumento(doc);
                                   }
@@ -1431,7 +1554,7 @@ class _RecetasHashtagScreenState extends State<RecetasHashtagScreen> {
                                     base64Decode(receta.imagenPortada!),
                                     height: 200,
                                     width: double.infinity,
-                                    fit: BoxFit.cover,
+                                    fit: BoxFit.contain,
                                   ),
                                 ),
                               Padding(
@@ -1576,71 +1699,6 @@ class HashtagText extends StatelessWidget {
       text: TextSpan(style: baseStyleWithColor, children: spans),
       maxLines: maxLines,
       overflow: overflow ?? TextOverflow.clip,
-    );
-  }
-}
-
-class YoutubePlayerDialog extends StatefulWidget {
-  final String videoId;
-
-  const YoutubePlayerDialog({super.key, required this.videoId});
-
-  @override
-  State<YoutubePlayerDialog> createState() => _YoutubePlayerDialogState();
-}
-
-class _YoutubePlayerDialogState extends State<YoutubePlayerDialog> {
-  // Reproductor de YouTube deshabilitado para web
-  // Se abre el enlace directamente en el navegador
-
-  @override
-  void initState() {
-    super.initState();
-    // Abrir automáticamente el video en el navegador
-    _openYoutubeVideo();
-  }
-
-  Future<void> _openYoutubeVideo() async {
-    final url = Uri.parse('https://www.youtube.com/watch?v=${widget.videoId}');
-    if (await canLaunchUrl(url)) {
-      await launchUrl(url, mode: LaunchMode.externalApplication);
-      if (mounted) {
-        Navigator.of(context).pop();
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Padding(
-          padding: EdgeInsets.all(16.0),
-          child: Column(
-            children: [
-              Icon(Icons.video_library, size: 64, color: Colors.red),
-              SizedBox(height: 16),
-              Text(
-                'Abriendo video en YouTube...',
-                style: TextStyle(fontSize: 16),
-              ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Cerrar'),
-              ),
-            ],
-          ),
-        ),
-      ],
     );
   }
 }

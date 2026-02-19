@@ -376,7 +376,7 @@ class ConfigService with ChangeNotifier {
 
       notifyListeners();
     } catch (e) {
-      debugPrint('Error al cargar políticas de contraseña desde BD: $e');
+      // debugPrint('Error al cargar políticas de contraseña desde BD: $e');
       // Mantener los valores locales si hay error
     }
   }

@@ -1,4 +1,4 @@
-import 'dart:convert'; // <-- IMPORT AÑADIDO
+// <-- IMPORT AÑADIDO
 import 'package:flutter/material.dart';
 import 'package:nutri_app/models/entrevista.dart';
 import 'package:nutri_app/models/paciente.dart';
@@ -128,8 +128,8 @@ class _PlanEditScreenState extends State<PlanEditScreen> {
       );
 
       // --- INICIO DEPURACIÓN ---
-      debugPrint("DEBUG PLAN: Enviando JSON a la API:");
-      debugPrint(jsonEncode(planData.toJson()));
+      // debugPrint("DEBUG PLAN: Enviando JSON a la API:");
+      // debugPrint(jsonEncode(planData.toJson()));
       // --- FIN DEPURACIÓN ---
 
       try {

@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../models/chat_message.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../widgets/image_viewer_dialog.dart';
 
 class ChatScreen extends StatefulWidget {
   final int? otherUserId;
@@ -44,6 +45,12 @@ class _ChatScreenState extends State<ChatScreen> {
       const Duration(seconds: 10),
       (_) => _loadMessages(),
     );
+    _messageController.addListener(() {
+      // Cuando el usuario empieza a escribir, baja el scroll
+      if (_scrollController.hasClients) {
+        Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
+      }
+    });
   }
 
   Future<void> _ensureNotGuest() async {
@@ -53,7 +60,8 @@ class _ChatScreenState extends State<ChatScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Registro requerido'),
-        content: const Text('Para usar el chat necesitas registrarte.'),
+        content: const Text(
+            'Para chatear con tu dietista online, por favor, regístrate (es gratis)'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -183,8 +191,9 @@ class _ChatScreenState extends State<ChatScreen> {
       await _loadMessages();
     } catch (e) {
       if (mounted) {
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al enviar: $e')),
+          SnackBar(content: Text('Error al enviar mensaje. $errorMessage')),
         );
       }
     } finally {
@@ -295,13 +304,20 @@ class _ChatScreenState extends State<ChatScreen> {
               crossAxisAlignment: align,
               children: [
                 if (hasImage)
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: Image.memory(
-                      base64Decode(message.imageBase64!),
-                      width: 220,
-                      height: 180,
-                      fit: BoxFit.cover,
+                  GestureDetector(
+                    onTap: () => showImageViewerDialog(
+                      context: context,
+                      base64Image: message.imageBase64!,
+                      title: 'Imagen',
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: Image.memory(
+                        base64Decode(message.imageBase64!),
+                        width: 220,
+                        height: 180,
+                        fit: BoxFit.cover,
+                      ),
                     ),
                   ),
                 if (hasText) ...[
@@ -351,72 +367,83 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
       body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : ListView.builder(
-                      controller: _scrollController,
-                      padding: const EdgeInsets.all(12),
-                      itemCount: _messages.length,
-                      itemBuilder: (context, index) {
-                        final message = _messages[index];
-                        return _buildMessageBubble(message, myId);
-                      },
-                    ),
-            ),
-            AnimatedPadding(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOut,
-              padding: EdgeInsets.only(
-                left: 12,
-                right: 12,
-                top: 6,
-                bottom: 12 + MediaQuery.of(context).viewInsets.bottom,
-              ),
-              child: Column(
-                children: [
-                  _buildImagePreview(),
-                  Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.photo_outlined),
-                        onPressed: _pickImage,
-                      ),
-                      Expanded(
-                        child: TextField(
-                          controller: _messageController,
-                          minLines: 1,
-                          maxLines: 4,
-                          decoration: InputDecoration(
-                            hintText: 'Escribe un mensaje',
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
-                          ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final viewInsets = MediaQuery.of(context).viewInsets.bottom;
+            final inputHeight = 80.0 +
+                (_selectedImageBytes != null ? 70.0 : 0.0); // Ajuste estimado
+            final listViewHeight =
+                constraints.maxHeight - inputHeight - viewInsets;
+            return Column(
+              children: [
+                SizedBox(
+                  height: listViewHeight > 0 ? listViewHeight : 0,
+                  child: _isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.all(12),
+                          itemCount: _messages.length,
+                          // Orden original: más antiguos arriba, más recientes abajo
+                          itemBuilder: (context, index) {
+                            final message = _messages[index];
+                            return _buildMessageBubble(message, myId);
+                          },
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        icon: _isSending
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.send),
-                        onPressed: _isSending ? null : _sendMessage,
+                ),
+                AnimatedPadding(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOut,
+                  padding: EdgeInsets.only(
+                    left: 12,
+                    right: 12,
+                    top: 6,
+                    bottom: 12 + viewInsets,
+                  ),
+                  child: Column(
+                    children: [
+                      _buildImagePreview(),
+                      Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.photo_outlined),
+                            onPressed: _pickImage,
+                          ),
+                          Expanded(
+                            child: TextField(
+                              controller: _messageController,
+                              minLines: 1,
+                              maxLines: 4,
+                              decoration: InputDecoration(
+                                hintText: 'Escribe un mensaje',
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 8),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            icon: _isSending
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.send),
+                            onPressed: _isSending ? null : _sendMessage,
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ],
-              ),
-            ),
-          ],
+                ),
+              ],
+            );
+          },
         ),
       ),
     );

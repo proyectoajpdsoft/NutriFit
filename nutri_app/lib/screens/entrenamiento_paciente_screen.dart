@@ -63,8 +63,10 @@ class _EntrenamientoPacienteScreenState
         _isLoading = false;
       });
       if (mounted) {
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al cargar entrenamientos: $e')),
+          SnackBar(
+              content: Text('Error al cargar entrenamientos. $errorMessage')),
         );
       }
     }

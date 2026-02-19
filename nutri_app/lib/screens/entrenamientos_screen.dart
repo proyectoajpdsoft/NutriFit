@@ -22,10 +22,11 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
     with SingleTickerProviderStateMixin {
   List<Entrenamiento> _entrenamientos = [];
   bool _isLoading = true;
-  String _filtroActual = 'semana'; // 'semana', 'mes', 'todos'
+  String _filtroActual = 'semana'; // 'semana', 'mes', 'ano', 'todos'
   late TabController _tabController;
   final Map<int, int> _ejerciciosCountCache = {};
   final Map<String, String> _customActivityIcons = {};
+  final ScrollController _tabsScrollController = ScrollController();
   late bool _isNutri;
   int _sensacionesPendientes = 0;
 
@@ -35,7 +36,7 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
     final authService = Provider.of<AuthService>(context, listen: false);
     _isNutri = authService.userType == 'Nutricionista' ||
         authService.userType == 'Administrador';
-    _tabController = TabController(length: _isNutri ? 5 : 4, vsync: this);
+    _tabController = TabController(length: _isNutri ? 6 : 5, vsync: this);
     _tabController.addListener(() {
       if (!_tabController.indexIsChanging) {
         _cambiarPeriodo();
@@ -57,7 +58,7 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
         _sensacionesPendientes = items.length;
       });
     } catch (e) {
-      debugPrint('Error cargando sensaciones pendientes: $e');
+      // debugPrint('Error cargando sensaciones pendientes: $e');
     }
   }
 
@@ -78,7 +79,7 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
           ..addEntries(items.map((e) => MapEntry(e.nombre, e.icono)));
       });
     } catch (e) {
-      debugPrint('Error cargando iconos custom: $e');
+      // debugPrint('Error cargando iconos custom: $e');
     }
   }
 
@@ -90,6 +91,7 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
   @override
   void dispose() {
     _tabController.dispose();
+    _tabsScrollController.dispose();
     super.dispose();
   }
 
@@ -137,10 +139,12 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
   }
 
   void _cambiarPeriodo() {
-    final periodos = ['semana', 'mes', 'todos'];
-    if (_tabController.index < periodos.length) {
+    final periodos = ['semana', 'mes', 'ano', 'todos'];
+    final adjustedIndex =
+        _isNutri ? _tabController.index - 1 : _tabController.index;
+    if (adjustedIndex >= 0 && adjustedIndex < periodos.length) {
       setState(() {
-        _filtroActual = periodos[_tabController.index];
+        _filtroActual = periodos[adjustedIndex];
       });
       _loadEntrenamientos();
     }
@@ -187,8 +191,9 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
         _isLoading = false;
       });
       if (mounted) {
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al cargar actividades: $e')),
+          SnackBar(content: Text('Error al cargar actividades. $errorMessage')),
         );
       }
     }
@@ -224,6 +229,10 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
       final hace7Dias = ahora.subtract(const Duration(days: 7));
       return _entrenamientos.where((e) => e.fecha.isAfter(hace7Dias)).toList();
     } else if (_filtroActual == 'mes') {
+      final hace365Dias = ahora.subtract(const Duration(days: 365));
+      return _entrenamientos
+          .where((e) => e.fecha.isAfter(hace365Dias))
+          .toList();
       final hace30Dias = ahora.subtract(const Duration(days: 30));
       return _entrenamientos.where((e) => e.fecha.isAfter(hace30Dias)).toList();
     }
@@ -342,16 +351,23 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(kToolbarHeight),
           child: Scrollbar(
+            controller: _tabsScrollController,
             thumbVisibility: true,
-            child: TabBar(
-              controller: _tabController,
-              tabs: [
-                const Tab(text: 'Semana'),
-                const Tab(text: 'Mes'),
-                const Tab(text: 'Todos'),
-                const Tab(text: 'Estadísticas'),
-                if (_isNutri) const Tab(text: 'Pacientes'),
-              ],
+            child: SingleChildScrollView(
+              controller: _tabsScrollController,
+              scrollDirection: Axis.horizontal,
+              child: TabBar(
+                controller: _tabController,
+                isScrollable: true,
+                tabs: [
+                  if (_isNutri) const Tab(text: 'Pacientes'),
+                  const Tab(text: 'Semana'),
+                  const Tab(text: 'Mes'),
+                  const Tab(text: 'Año'),
+                  const Tab(text: 'Todos'),
+                  const Tab(text: 'Estadisticas'),
+                ],
+              ),
             ),
           ),
         ),
@@ -368,15 +384,17 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
               controller: _tabController,
               physics: const NeverScrollableScrollPhysics(),
               children: [
+                if (_isNutri) const EntrenamientosPacientesPlanFitScreen(),
                 // Pestaña 1: Esta semana
                 _buildListView('semana'),
                 // Pestaña 2: Este mes
                 _buildListView('mes'),
-                // Pestaña 3: Todos
+                // Pestaña 3: Este año
+                _buildListView('ano'),
+                // Pestaña 4: Todos
                 _buildListView('todos'),
-                // Pestaña 4: Estadísticas
+                // Pestaña 4: Estadisticas
                 EntrenamientoStatsChart(entrenamientos: _entrenamientos),
-                if (_isNutri) const EntrenamientosPacientesPlanFitScreen(),
               ],
             ),
     );

@@ -1,9 +1,11 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../models/entrenamiento.dart';
 import '../screens/entrenamiento_view_screen.dart';
 import '../services/api_service.dart';
+import '../widgets/image_viewer_dialog.dart' show showImageViewerDialog;
 
 class EntrenamientoComentariosPendientesScreen extends StatefulWidget {
   const EntrenamientoComentariosPendientesScreen({super.key});
@@ -119,6 +121,10 @@ class _EntrenamientoComentariosPendientesScreenState
               final codigoEntrenamiento = int.tryParse(
                       item['codigo_entrenamiento']?.toString() ?? '') ??
                   0;
+              final fotoMiniatura = item['foto_miniatura']?.toString() ?? '';
+              final fotoCompleta = item['foto']?.toString() ?? '';
+              final hasMiniatura = fotoMiniatura.isNotEmpty;
+              final hasImagenCompleta = fotoCompleta.isNotEmpty;
 
               final tiempoActividad = '${horas}h ${minutos}m';
 
@@ -141,61 +147,107 @@ class _EntrenamientoComentariosPendientesScreenState
                         ),
                       ),
                       const SizedBox(height: 6),
-                      Wrap(
-                        spacing: 12,
-                        runSpacing: 6,
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          if (fecha.isNotEmpty)
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
+                          if (hasMiniatura)
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: GestureDetector(
+                                onTap: hasImagenCompleta
+                                    ? () => showImageViewerDialog(
+                                          context: context,
+                                          base64Image: fotoCompleta,
+                                          title: actividad,
+                                        )
+                                    : null,
+                                child: Image.memory(
+                                  base64Decode(fotoMiniatura),
+                                  width: 70,
+                                  height: 70,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                            )
+                          else
+                            Container(
+                              width: 70,
+                              height: 70,
+                              decoration: BoxDecoration(
+                                color: Colors.grey[300],
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(Icons.fitness_center,
+                                  size: 36, color: Colors.grey),
+                            ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Icon(Icons.event, size: 16),
-                                const SizedBox(width: 4),
-                                Text(fecha,
-                                    style: const TextStyle(fontSize: 12)),
+                                Wrap(
+                                  spacing: 12,
+                                  runSpacing: 6,
+                                  children: [
+                                    if (fecha.isNotEmpty)
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.event, size: 16),
+                                          const SizedBox(width: 4),
+                                          Text(fecha,
+                                              style: const TextStyle(
+                                                  fontSize: 12)),
+                                        ],
+                                      ),
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.timer, size: 16),
+                                        const SizedBox(width: 4),
+                                        Text(tiempoActividad,
+                                            style:
+                                                const TextStyle(fontSize: 12)),
+                                      ],
+                                    ),
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.flash_on, size: 16),
+                                        const SizedBox(width: 4),
+                                        Text('Esfuerzo: $esfuerzo',
+                                            style:
+                                                const TextStyle(fontSize: 12)),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .primary
+                                        .withOpacity(0.08),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .primary
+                                          .withOpacity(0.2),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    comentario,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                ),
                               ],
                             ),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.timer, size: 16),
-                              const SizedBox(width: 4),
-                              Text(tiempoActividad,
-                                  style: const TextStyle(fontSize: 12)),
-                            ],
-                          ),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.flash_on, size: 16),
-                              const SizedBox(width: 4),
-                              Text('Esfuerzo: $esfuerzo',
-                                  style: const TextStyle(fontSize: 12)),
-                            ],
                           ),
                         ],
-                      ),
-                      const SizedBox(height: 12),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .primary
-                              .withOpacity(0.08),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .primary
-                                .withOpacity(0.2),
-                          ),
-                        ),
-                        child: Text(
-                          comentario,
-                          style: const TextStyle(fontSize: 13),
-                        ),
                       ),
                       const SizedBox(height: 12),
                       Row(

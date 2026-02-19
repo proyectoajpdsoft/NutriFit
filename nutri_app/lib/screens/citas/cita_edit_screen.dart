@@ -143,7 +143,7 @@ class _CitaEditScreenState extends State<CitaEditScreen> {
         _setDefaultTipos();
       }
     } catch (e) {
-      debugPrint('Error al cargar tipos de citas: $e');
+      // debugPrint('Error al cargar tipos de citas: $e');
       // Usar valores por defecto en caso de error
       _setDefaultTipos();
     }

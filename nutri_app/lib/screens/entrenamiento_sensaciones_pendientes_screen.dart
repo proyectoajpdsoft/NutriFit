@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 import '../models/entrenamiento.dart';
 import '../screens/entrenamientos_pacientes_plan_fit_screen.dart';
 import '../services/api_service.dart';
+import '../widgets/image_viewer_dialog.dart' show showImageViewerDialog;
+import 'dart:convert';
 
 class EntrenamientoSensacionesPendientesScreen extends StatefulWidget {
   const EntrenamientoSensacionesPendientesScreen({super.key});
@@ -114,6 +116,47 @@ class _EntrenamientoSensacionesPendientesScreenState
               final codigoEntrenamiento = int.tryParse(
                       item['codigo_entrenamiento']?.toString() ?? '') ??
                   0;
+              final nombreEjercicio =
+                  item['nombre_ejercicio']?.toString() ?? '';
+              final fotoMiniatura = item['foto_miniatura']?.toString() ?? '';
+              final fotoCompleta = item['foto']?.toString() ?? '';
+              final hasMiniatura = fotoMiniatura.isNotEmpty;
+              final hasImagenCompleta = fotoCompleta.isNotEmpty;
+
+              // Widget para mostrar la miniatura
+              Widget buildThumbnail() {
+                if (hasMiniatura) {
+                  return ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: GestureDetector(
+                      onTap: hasImagenCompleta
+                          ? () => showImageViewerDialog(
+                                context: context,
+                                base64Image: fotoCompleta,
+                                title: nombreEjercicio,
+                              )
+                          : null,
+                      child: Image.memory(
+                        base64Decode(fotoMiniatura),
+                        width: 70,
+                        height: 70,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  );
+                } else {
+                  return Container(
+                    width: 70,
+                    height: 70,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.fitness_center,
+                        size: 36, color: Colors.grey),
+                  );
+                }
+              }
 
               return Card(
                 margin: const EdgeInsets.only(bottom: 16),
@@ -122,10 +165,11 @@ class _EntrenamientoSensacionesPendientesScreenState
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // Encabezado: Actividad
                       Text(
                         actividad,
                         style: const TextStyle(
@@ -133,53 +177,92 @@ class _EntrenamientoSensacionesPendientesScreenState
                           fontSize: 16,
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      Wrap(
-                        spacing: 12,
-                        runSpacing: 6,
+                      const SizedBox(height: 10),
+                      // Fila con miniatura y contenido
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          if (paciente.isNotEmpty)
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
+                          // Miniatura a la izquierda
+                          buildThumbnail(),
+                          const SizedBox(width: 12),
+                          // Contenido a la derecha
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Icon(Icons.person, size: 16),
-                                const SizedBox(width: 4),
-                                Text(paciente,
-                                    style: const TextStyle(fontSize: 12)),
+                                // Nombre del ejercicio
+                                Text(
+                                  nombreEjercicio,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 6),
+                                // Paciente y fecha
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 4,
+                                  children: [
+                                    if (paciente.isNotEmpty)
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.person,
+                                              size: 14, color: Colors.grey),
+                                          const SizedBox(width: 3),
+                                          Text(paciente,
+                                              style: const TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.grey)),
+                                        ],
+                                      ),
+                                    if (fecha.isNotEmpty)
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.event,
+                                              size: 14, color: Colors.grey),
+                                          const SizedBox(width: 3),
+                                          Text(fecha,
+                                              style: const TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.grey)),
+                                        ],
+                                      ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                // Sensaciones
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.amber.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                        color: Colors.amber.withOpacity(0.4)),
+                                  ),
+                                  child: Text(
+                                    sensaciones,
+                                    style: const TextStyle(fontSize: 13),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
                               ],
                             ),
-                          if (fecha.isNotEmpty)
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(Icons.event, size: 16),
-                                const SizedBox(width: 4),
-                                Text(fecha,
-                                    style: const TextStyle(fontSize: 12)),
-                              ],
-                            ),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 12),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.amber.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(8),
-                          border:
-                              Border.all(color: Colors.amber.withOpacity(0.4)),
-                        ),
-                        child: Text(
-                          sensaciones,
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
+                      // Botones
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
+                        mainAxisAlignment: MainAxisAlignment.start,
                         children: [
-                          TextButton.icon(
+                          IconButton(
                             onPressed: codigoEntrenamiento == 0
                                 ? null
                                 : () {
@@ -203,14 +286,16 @@ class _EntrenamientoSensacionesPendientesScreenState
                                     );
                                   },
                             icon: const Icon(Icons.visibility_outlined),
-                            label: const Text('Ver actividad'),
+                            iconSize: 28,
+                            tooltip: 'Ver actividad',
                           ),
                           const SizedBox(width: 8),
                           ElevatedButton.icon(
                             onPressed: codigoEjercicio == 0
                                 ? null
                                 : () => _markAsRead(codigoEjercicio),
-                            icon: const Icon(Icons.mark_chat_read_outlined),
+                            icon: const Icon(Icons.mark_chat_read_outlined,
+                                size: 28),
                             label: const Text('Leido'),
                           ),
                         ],

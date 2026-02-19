@@ -12,18 +12,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image/image.dart' as img;
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:audioplayers/audioplayers.dart';
-import 'package:url_launcher/url_launcher.dart';
+// import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import '../models/entrenamiento.dart';
 import '../models/plan_fit.dart';
-import '../models/plan_fit_ejercicio.dart';
 import '../models/plan_fit_dia.dart';
 import '../models/entrenamiento_ejercicio.dart';
 import '../models/entrenamiento_actividad_custom.dart';
 import '../widgets/esfuerzo_slider.dart';
 import '../widgets/sport_icon_picker.dart';
 import '../widgets/unsaved_changes_dialog.dart';
+import '../widgets/image_viewer_dialog.dart' show showImageViewerDialog;
 
 class EntrenamientoEditScreen extends StatefulWidget {
   final Entrenamiento? entrenamiento;
@@ -102,8 +102,50 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
   List<EntrenamientoEjercicio> _entrenamientoEjercicios = [];
   bool _loadingEjerciciosPlanFit = false;
   int _selectedEjercicioIndex = 0;
+  static const int _planFitDiaAddAllCodigo = -1;
   final ScrollController _planFitEjerciciosScrollController =
       ScrollController();
+  final List<TextEditingController> _ejercicioTiempoControllers = [];
+  final List<TextEditingController> _ejercicioRondasControllers = [];
+  final List<TextEditingController> _ejercicioKilosControllers = [];
+
+  void _syncEjercicioControllers() {
+    final total = _entrenamientoEjercicios.length;
+    while (_ejercicioTiempoControllers.length < total) {
+      _ejercicioTiempoControllers.add(TextEditingController());
+      _ejercicioRondasControllers.add(TextEditingController());
+      _ejercicioKilosControllers.add(TextEditingController());
+    }
+    while (_ejercicioTiempoControllers.length > total) {
+      _ejercicioTiempoControllers.removeLast().dispose();
+      _ejercicioRondasControllers.removeLast().dispose();
+      _ejercicioKilosControllers.removeLast().dispose();
+    }
+
+    for (var i = 0; i < total; i++) {
+      final ejercicio = _entrenamientoEjercicios[i];
+      final tiempo = ejercicio.tiempoRealizado ?? ejercicio.tiempoPlan ?? 0;
+      final rondas =
+          ejercicio.repeticionesRealizadas ?? ejercicio.repeticionesPlan ?? 0;
+      final kilos = ejercicio.kilosPlan ?? 0;
+      _ejercicioTiempoControllers[i].text = tiempo.toString();
+      _ejercicioRondasControllers[i].text = rondas.toString();
+      _ejercicioKilosControllers[i].text = kilos.toString();
+    }
+  }
+
+  void _updateEjercicioControllersAt(int index) {
+    if (index < 0 || index >= _entrenamientoEjercicios.length) return;
+    if (index >= _ejercicioTiempoControllers.length) return;
+    final ejercicio = _entrenamientoEjercicios[index];
+    final tiempo = ejercicio.tiempoRealizado ?? ejercicio.tiempoPlan ?? 0;
+    final rondas =
+        ejercicio.repeticionesRealizadas ?? ejercicio.repeticionesPlan ?? 0;
+    final kilos = ejercicio.kilosPlan ?? 0;
+    _ejercicioTiempoControllers[index].text = tiempo.toString();
+    _ejercicioRondasControllers[index].text = rondas.toString();
+    _ejercicioKilosControllers[index].text = kilos.toString();
+  }
 
   @override
   void initState() {
@@ -208,7 +250,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         }
       });
     } catch (e) {
-      debugPrint('Error cargando actividades custom: $e');
+      // debugPrint('Error cargando actividades custom: $e');
     }
   }
 
@@ -244,7 +286,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         // No seleccionar plan por defecto salvo que venga de un plan concreto.
       });
     } catch (e) {
-      debugPrint('Error cargando planes fit: $e');
+      // debugPrint('Error cargando planes fit: $e');
     }
   }
 
@@ -269,6 +311,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                     urlVideo: e.urlVideo,
                     fotoBase64: e.fotoBase64,
                     fotoNombre: e.fotoNombre,
+                    fotoMiniatura: e.fotoMiniatura,
                     tiempoPlan: e.tiempo,
                     descansoPlan: e.descanso,
                     repeticionesPlan: e.repeticiones,
@@ -286,12 +329,13 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         }
         _loadingEjerciciosPlanFit = false;
       });
+      _syncEjercicioControllers();
       if (mounted) {
         _recalculateActividadFromEjercicios();
       }
     } catch (e) {
       setState(() => _loadingEjerciciosPlanFit = false);
-      debugPrint('Error cargando ejercicios del plan fit: $e');
+      // debugPrint('Error cargando ejercicios del plan fit: $e');
     }
   }
 
@@ -304,6 +348,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         _entrenamientoEjercicios = ejercicios;
         _selectedEjercicioIndex = 0;
       });
+      _syncEjercicioControllers();
       if (mounted) {
         _recalculateActividadFromEjercicios();
       }
@@ -311,7 +356,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         await _loadPlanFitEjercicios(_planFitSeleccionado!);
       }
     } catch (e) {
-      debugPrint('Error cargando ejercicios del entrenamiento: $e');
+      // debugPrint('Error cargando ejercicios del entrenamiento: $e');
     }
   }
 
@@ -371,6 +416,23 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancelar'),
           ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(
+                context,
+                PlanFitDia(
+                  codigo: _planFitDiaAddAllCodigo,
+                  codigoPlanFit: dias.first.codigoPlanFit,
+                  numeroDia: 0,
+                  titulo: 'Todos',
+                ),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+            ),
+            child: const Text('Añadir todos'),
+          ),
         ],
       ),
     );
@@ -379,6 +441,9 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
   Future<void> _handlePlanFitSelection(int? value) async {
     final prevPlan = _planFitSeleccionado;
     final prevDia = _planFitDiaSeleccionado;
+    final prevEjercicios =
+        List<EntrenamientoEjercicio>.from(_entrenamientoEjercicios);
+    final prevIndex = _selectedEjercicioIndex;
 
     if (_entrenamientoEjercicios.isNotEmpty && value != prevPlan) {
       final confirm = await _confirmReplaceEjercicios();
@@ -390,8 +455,6 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
 
     setState(() {
       _planFitSeleccionado = value;
-      _entrenamientoEjercicios = [];
-      _selectedEjercicioIndex = 0;
       _planFitDias = [];
       _planFitDiaSeleccionado = null;
     });
@@ -407,18 +470,26 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         setState(() {
           _planFitSeleccionado = prevPlan;
           _planFitDiaSeleccionado = prevDia;
+          _entrenamientoEjercicios = prevEjercicios;
+          _selectedEjercicioIndex = prevIndex;
         });
-        if (prevPlan != null) {
-          await _loadPlanFitEjercicios(
-            prevPlan,
-            codigoDia: prevDia?.codigo,
-          );
-        }
+        return;
+      }
+      if (selected.codigo == _planFitDiaAddAllCodigo) {
+        setState(() {
+          _planFitDias = dias;
+          _planFitDiaSeleccionado = null;
+          _entrenamientoEjercicios = [];
+          _selectedEjercicioIndex = 0;
+        });
+        await _loadPlanFitEjercicios(value);
         return;
       }
       setState(() {
         _planFitDias = dias;
         _planFitDiaSeleccionado = selected;
+        _entrenamientoEjercicios = [];
+        _selectedEjercicioIndex = 0;
       });
       await _loadPlanFitEjercicios(value, codigoDia: selected.codigo);
       return;
@@ -440,6 +511,15 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
 
     final selected = await _showPlanFitDiaDialog(_planFitDias);
     if (selected == null) return;
+    if (selected.codigo == _planFitDiaAddAllCodigo) {
+      setState(() {
+        _planFitDiaSeleccionado = null;
+        _entrenamientoEjercicios = [];
+        _selectedEjercicioIndex = 0;
+      });
+      await _loadPlanFitEjercicios(_planFitSeleccionado!);
+      return;
+    }
 
     setState(() {
       _planFitDiaSeleccionado = selected;
@@ -461,7 +541,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         _fotosBaseDatos = imagenes;
       });
     } catch (e) {
-      debugPrint('Error cargando imágenes de la actividad: $e');
+      // debugPrint('Error cargando imágenes de la actividad: $e');
     }
   }
 
@@ -486,6 +566,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     if (_vueltasNotifier.value != nextValue) {
       _vueltasNotifier.value = nextValue;
     }
+    _markDirty();
     if (notifyTimer && _timerVisible && _sheetSetState != null) {
       _sheetSetState!(() {});
     }
@@ -666,25 +747,28 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
               ),
             ),
           ),
-        const SizedBox(height: 6),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: List.generate(total, (index) {
-            final color =
-                _getEjercicioEstadoColor(_entrenamientoEjercicios[index]);
-            final isSelected = index == selectedIndex;
-            return Container(
-              width: dotSize,
-              height: dotSize,
-              decoration: BoxDecoration(
-                color: color,
-                shape: BoxShape.circle,
-                border: isSelected
-                    ? Border.all(color: Colors.black54, width: 1)
-                    : null,
-              ),
-            );
-          }),
+        const SizedBox(height: 4),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: List.generate(total, (index) {
+              final color =
+                  _getEjercicioEstadoColor(_entrenamientoEjercicios[index]);
+              final isSelected = index == selectedIndex;
+              return Container(
+                width: dotSize,
+                height: dotSize,
+                decoration: BoxDecoration(
+                  color: color,
+                  shape: BoxShape.circle,
+                  border: isSelected
+                      ? Border.all(color: Colors.black54, width: 1)
+                      : null,
+                ),
+              );
+            }),
+          ),
         ),
       ],
     );
@@ -711,32 +795,39 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     double buttonMinHeight = 18,
     EdgeInsetsGeometry buttonPadding = EdgeInsets.zero,
     VisualDensity buttonDensity = VisualDensity.compact,
+    bool showClearButton = false,
+    VoidCallback? onClear,
+    List<Widget>? trailingWidgets,
   }) {
-    void startAddTimer() {
+    int getCurrentValue() {
+      if (controller != null) {
+        return int.tryParse(controller.text) ?? value;
+      }
+      return value;
+    }
+
+    void applyValue(int nextValue) {
+      final clamped = _clampInt(nextValue, min, max);
+      if (controller != null) {
+        controller.text = clamped.toString();
+        controller.selection = TextSelection.fromPosition(
+          TextPosition(offset: controller.text.length),
+        );
+      }
+      onChanged(clamped);
+    }
+
+    void startIncrement() {
       _stopTimers();
-      _addTimer = Timer.periodic(const Duration(milliseconds: 80), (timer) {
-        final nextValue = _clampInt(value + 1, min, max);
-        if (controller != null) {
-          controller.text = nextValue.toString();
-          controller.selection = TextSelection.fromPosition(
-            TextPosition(offset: controller.text.length),
-          );
-        }
-        onChanged(nextValue);
+      _addTimer = Timer.periodic(const Duration(milliseconds: 80), (_) {
+        applyValue(getCurrentValue() + 1);
       });
     }
 
-    void startRemoveTimer() {
+    void startDecrement() {
       _stopTimers();
-      _removeTimer = Timer.periodic(const Duration(milliseconds: 80), (timer) {
-        final nextValue = _clampInt(value - 1, min, max);
-        if (controller != null) {
-          controller.text = nextValue.toString();
-          controller.selection = TextSelection.fromPosition(
-            TextPosition(offset: controller.text.length),
-          );
-        }
-        onChanged(nextValue);
+      _removeTimer = Timer.periodic(const Duration(milliseconds: 80), (_) {
+        applyValue(getCurrentValue() - 1);
       });
     }
 
@@ -756,7 +847,6 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
               width: fieldWidth,
               child: TextFormField(
                 controller: controller,
-                key: controller == null ? ValueKey('$label-$value') : null,
                 initialValue: controller == null ? value.toString() : null,
                 keyboardType: TextInputType.number,
                 style: TextStyle(color: textColor),
@@ -788,18 +878,10 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
               Column(
                 children: [
                   GestureDetector(
-                    onTap: () {
-                      final nextValue = _clampInt(value + 1, min, max);
-                      if (controller != null) {
-                        controller.text = nextValue.toString();
-                        controller.selection = TextSelection.fromPosition(
-                          TextPosition(offset: controller.text.length),
-                        );
-                      }
-                      onChanged(nextValue);
-                    },
-                    onLongPressStart: (_) => startAddTimer(),
+                    onTap: () => applyValue(getCurrentValue() + 1),
+                    onLongPressStart: (_) => startIncrement(),
                     onLongPressEnd: (_) => _stopTimers(),
+                    onLongPressCancel: _stopTimers,
                     child: IconButton(
                       icon: const Icon(Icons.add),
                       iconSize: buttonIconSize,
@@ -813,18 +895,10 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                     ),
                   ),
                   GestureDetector(
-                    onTap: () {
-                      final nextValue = _clampInt(value - 1, min, max);
-                      if (controller != null) {
-                        controller.text = nextValue.toString();
-                        controller.selection = TextSelection.fromPosition(
-                          TextPosition(offset: controller.text.length),
-                        );
-                      }
-                      onChanged(nextValue);
-                    },
-                    onLongPressStart: (_) => startRemoveTimer(),
+                    onTap: () => applyValue(getCurrentValue() - 1),
+                    onLongPressStart: (_) => startDecrement(),
                     onLongPressEnd: (_) => _stopTimers(),
+                    onLongPressCancel: _stopTimers,
                     child: IconButton(
                       icon: const Icon(Icons.remove),
                       iconSize: buttonIconSize,
@@ -839,6 +913,21 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                   ),
                 ],
               ),
+              if (showClearButton) ...[
+                const SizedBox(width: 6),
+                IconButton(
+                  onPressed: onClear,
+                  tooltip: 'Borrar',
+                  icon: const Icon(Icons.delete_sweep, size: 18),
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(minWidth: 32, minHeight: 32),
+                ),
+              ],
+              if (trailingWidgets != null) ...[
+                const SizedBox(width: 4),
+                ...trailingWidgets,
+              ],
             ],
           ],
         ),
@@ -850,21 +939,43 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     required String label,
     required double value,
     required ValueChanged<double> onChanged,
+    TextEditingController? controller,
     double min = 0,
     double max = 9999,
     double step = 0.1,
+    bool showClearButton = false,
+    VoidCallback? onClear,
+    List<Widget>? trailingWidgets,
   }) {
-    void startAddTimer() {
+    double getCurrentValue() {
+      if (controller != null) {
+        return double.tryParse(controller.text) ?? value;
+      }
+      return value;
+    }
+
+    void applyValue(double nextValue) {
+      final clamped = _clampDouble(nextValue, min, max);
+      if (controller != null) {
+        controller.text = clamped.toStringAsFixed(2);
+        controller.selection = TextSelection.fromPosition(
+          TextPosition(offset: controller.text.length),
+        );
+      }
+      onChanged(clamped);
+    }
+
+    void startIncrement() {
       _stopTimers();
-      _addTimer = Timer.periodic(const Duration(milliseconds: 80), (timer) {
-        onChanged(_clampDouble(value + step, min, max));
+      _addTimer = Timer.periodic(const Duration(milliseconds: 80), (_) {
+        applyValue(getCurrentValue() + step);
       });
     }
 
-    void startRemoveTimer() {
+    void startDecrement() {
       _stopTimers();
-      _removeTimer = Timer.periodic(const Duration(milliseconds: 80), (timer) {
-        onChanged(_clampDouble(value - step, min, max));
+      _removeTimer = Timer.periodic(const Duration(milliseconds: 80), (_) {
+        applyValue(getCurrentValue() - step);
       });
     }
 
@@ -878,8 +989,9 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
             SizedBox(
               width: 70,
               child: TextFormField(
-                key: ValueKey('$label-${value.toStringAsFixed(2)}'),
-                initialValue: value.toStringAsFixed(2),
+                controller: controller,
+                initialValue:
+                    controller == null ? value.toStringAsFixed(2) : null,
                 keyboardType:
                     const TextInputType.numberWithOptions(decimal: true),
                 decoration: const InputDecoration(
@@ -898,43 +1010,49 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
             Column(
               children: [
                 GestureDetector(
-                  onTap: () => onChanged(_clampDouble(value + step, min, max)),
-                  onLongPressStart: (_) => startAddTimer(),
+                  onTap: () => applyValue(getCurrentValue() + step),
+                  onLongPressStart: (_) => startIncrement(),
                   onLongPressEnd: (_) => _stopTimers(),
-                  child: IconButton(
-                    icon: const Icon(Icons.add),
-                    iconSize: 16,
+                  onLongPressCancel: _stopTimers,
+                  child: const IconButton(
+                    icon: Icon(Icons.add, size: 16),
                     padding: EdgeInsets.zero,
-                    constraints:
-                        const BoxConstraints(minWidth: 28, minHeight: 28),
+                    constraints: BoxConstraints(minWidth: 28, minHeight: 28),
                     onPressed: null,
                   ),
                 ),
                 GestureDetector(
-                  onTap: () => onChanged(_clampDouble(value - step, min, max)),
-                  onLongPressStart: (_) => startRemoveTimer(),
+                  onTap: () => applyValue(getCurrentValue() - step),
+                  onLongPressStart: (_) => startDecrement(),
                   onLongPressEnd: (_) => _stopTimers(),
-                  child: IconButton(
-                    icon: const Icon(Icons.remove),
-                    iconSize: 16,
+                  onLongPressCancel: _stopTimers,
+                  child: const IconButton(
+                    icon: Icon(Icons.remove, size: 16),
                     padding: EdgeInsets.zero,
-                    constraints:
-                        const BoxConstraints(minWidth: 28, minHeight: 28),
+                    constraints: BoxConstraints(minWidth: 28, minHeight: 28),
                     onPressed: null,
                   ),
                 ),
               ],
             ),
+            if (showClearButton) ...[
+              const SizedBox(width: 6),
+              IconButton(
+                onPressed: onClear,
+                tooltip: 'Borrar',
+                icon: const Icon(Icons.delete_sweep, size: 18),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+            ],
+            if (trailingWidgets != null) ...[
+              const SizedBox(width: 4),
+              ...trailingWidgets,
+            ],
           ],
         ),
       ],
     );
-    @override
-    void dispose() {
-      _stopTimers();
-      // ...existing code...
-      super.dispose();
-    }
   }
 
   void _recalculateActividadFromEjercicios() {
@@ -971,27 +1089,27 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     });
   }
 
-  Future<void> _launchUrlExternal(String url) async {
-    final trimmed = url.trim();
-    if (trimmed.isEmpty) return;
-    Uri? uri = Uri.tryParse(trimmed);
-    if (uri == null) return;
-    if (uri.scheme.isEmpty) {
-      uri = Uri.tryParse('https://$trimmed');
-    }
-    if (uri == null) return;
-    final launched = await launchUrl(
-      uri,
-      mode: LaunchMode.externalApplication,
-    );
-    if (!launched && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No se pudo abrir el enlace del video'),
-        ),
-      );
-    }
-  }
+  // Future<void> _launchUrlExternal(String url) async {
+  //   final trimmed = url.trim();
+  //   if (trimmed.isEmpty) return;
+  //   Uri? uri = Uri.tryParse(trimmed);
+  //   if (uri == null) return;
+  //   if (uri.scheme.isEmpty) {
+  //     uri = Uri.tryParse('https://$trimmed');
+  //   }
+  //   if (uri == null) return;
+  //   final launched = await launchUrl(
+  //     uri,
+  //     mode: LaunchMode.externalApplication,
+  //   );
+  //   if (!launched && mounted) {
+  //     ScaffoldMessenger.of(context).showSnackBar(
+  //       const SnackBar(
+  //         content: Text('No se pudo abrir el enlace del video'),
+  //       ),
+  //     );
+  //   }
+  // }
 
   void _markDirty() {
     if (_hasChanges) return;
@@ -1042,227 +1160,359 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         ejercicio.tiempoRealizado ?? ejercicio.tiempoPlan ?? 0;
     final rondasInicial =
         ejercicio.repeticionesRealizadas ?? ejercicio.repeticionesPlan ?? 0;
-    final sensacionesController =
-        TextEditingController(text: ejercicio.sensaciones ?? '');
+    final kilosInicial = ejercicio.kilosPlan ?? 0;
+    String sensaciones = ejercicio.sensaciones ?? '';
     final tiempoController =
         TextEditingController(text: tiempoInicial.toString());
     final rondasController =
         TextEditingController(text: rondasInicial.toString());
+    final kilosController =
+        TextEditingController(text: kilosInicial.toString());
     final descansoController =
         TextEditingController(text: (ejercicio.descansoPlan ?? 0).toString());
     int tiempo = tiempoInicial;
     int rondas = rondasInicial;
+    int kilos = kilosInicial;
     int descanso = ejercicio.descansoPlan ?? 0;
     int esfuerzo = ejercicio.esfuerzoPercibido ?? 5;
     bool realizado = ejercicio.realizado == 'S';
+    bool hasChanges = false;
+    Future<bool> confirmExit(BuildContext dialogContext) async {
+      if (!hasChanges) return true;
+      final shouldExit = await showDialog<bool>(
+        context: dialogContext,
+        builder: (context) => AlertDialog(
+          title: const Text('Cambios sin guardar'),
+          content:
+              const Text('Has realizado cambios. Si sales ahora, se perderan.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Salir'),
+            ),
+          ],
+        ),
+      );
+      return shouldExit ?? false;
+    }
+
     try {
       await showDialog(
         context: context,
+        barrierDismissible: false,
         builder: (context) => StatefulBuilder(
-          builder: (context, setStateDialog) => AlertDialog(
-            scrollable: false,
-            title: Text(ejercicio.nombre),
-            content: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      ElevatedButton.icon(
-                        onPressed: ejercicio.fotoBase64 != null &&
-                                ejercicio.fotoBase64!.isNotEmpty
-                            ? () => _showImagePreview(ejercicio.fotoBase64!)
-                            : null,
-                        icon: const Icon(Icons.image_outlined),
-                        label: const Text('Imagen'),
-                      ),
-                      const Spacer(),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Realizado',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              Switch.adaptive(
-                                value: realizado,
-                                activeColor: Colors.green.shade700,
-                                activeTrackColor:
-                                    Colors.green.withOpacity(0.75),
-                                inactiveThumbColor: Colors.red.shade700,
-                                inactiveTrackColor:
-                                    Colors.red.withOpacity(0.65),
-                                onChanged: (value) {
-                                  setStateDialog(() => realizado = value);
-                                },
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                realizado ? 'Si' : 'No',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  color: realizado
-                                      ? Colors.green.shade800
-                                      : Colors.red.shade800,
+          builder: (context, setStateDialog) => WillPopScope(
+            onWillPop: () => confirmExit(context),
+            child: AlertDialog(
+              scrollable: false,
+              title: Text(ejercicio.nombre),
+              content: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: (ejercicio.fotoMiniatura ?? '')
+                                  .trim()
+                                  .isNotEmpty
+                              ? GestureDetector(
+                                  onTap: ejercicio.fotoBase64 != null &&
+                                          ejercicio.fotoBase64!.isNotEmpty
+                                      ? () => showImageViewerDialog(
+                                            context: context,
+                                            base64Image: ejercicio.fotoBase64!,
+                                            title: ejercicio.nombre,
+                                          )
+                                      : null,
+                                  child: Image.memory(
+                                    base64Decode(ejercicio.fotoMiniatura!),
+                                    width: 80,
+                                    height: 80,
+                                    fit: BoxFit.cover,
+                                  ),
+                                )
+                              : Container(
+                                  width: 80,
+                                  height: 80,
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.shade200,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Icon(
+                                    Icons.fitness_center,
+                                    size: 32,
+                                    color: Colors.grey,
+                                  ),
                                 ),
-                              ),
-                            ],
+                        ),
+                        const Spacer(),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Realizado',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Switch.adaptive(
+                                  value: realizado,
+                                  activeColor: Colors.green.shade700,
+                                  activeTrackColor:
+                                      Colors.green.withOpacity(0.75),
+                                  inactiveThumbColor: Colors.red.shade700,
+                                  inactiveTrackColor:
+                                      Colors.red.withOpacity(0.65),
+                                  onChanged: (value) {
+                                    setStateDialog(() {
+                                      realizado = value;
+                                      hasChanges = true;
+                                    });
+                                  },
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  realizado ? 'Si' : 'No',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    color: realizado
+                                        ? Colors.green.shade800
+                                        : Colors.red.shade800,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildMiniIntInput(
+                            label: '',
+                            value: tiempo,
+                            controller: tiempoController,
+                            min: 0,
+                            max: 3600,
+                            labelSpacing: 0,
+                            prefixIcon: Icons.schedule,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 10),
+                            buttonIconSize: 18,
+                            buttonMinWidth: 32,
+                            buttonMinHeight: 28,
+                            buttonDensity: VisualDensity.standard,
+                            onChanged: (value) {
+                              setStateDialog(() {
+                                tiempo = value;
+                                realizado = true;
+                                hasChanges = true;
+                              });
+                            },
                           ),
-                        ],
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _buildMiniIntInput(
+                            label: '',
+                            value: rondas,
+                            controller: rondasController,
+                            min: 0,
+                            max: 500,
+                            labelSpacing: 0,
+                            prefixIcon: Icons.repeat,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 10),
+                            buttonIconSize: 18,
+                            buttonMinWidth: 32,
+                            buttonMinHeight: 28,
+                            buttonDensity: VisualDensity.standard,
+                            onChanged: (value) {
+                              setStateDialog(() {
+                                rondas = value;
+                                realizado = true;
+                                hasChanges = true;
+                              });
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildMiniIntInput(
+                            label: '',
+                            value: kilos,
+                            controller: kilosController,
+                            min: 0,
+                            max: 500,
+                            labelSpacing: 0,
+                            prefixIcon: Icons.fitness_center_outlined,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 10),
+                            buttonIconSize: 18,
+                            buttonMinWidth: 32,
+                            buttonMinHeight: 28,
+                            buttonDensity: VisualDensity.standard,
+                            onChanged: (value) {
+                              setStateDialog(() {
+                                kilos = value;
+                                realizado = true;
+                                hasChanges = true;
+                              });
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _buildMiniIntInput(
+                            label: '',
+                            value: descanso,
+                            controller: descansoController,
+                            min: 0,
+                            max: 3600,
+                            labelSpacing: 0,
+                            prefixIcon: Icons.bedtime_outlined,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 10),
+                            buttonIconSize: 18,
+                            buttonMinWidth: 32,
+                            buttonMinHeight: 28,
+                            buttonDensity: VisualDensity.standard,
+                            onChanged: (value) {
+                              setStateDialog(() {
+                                descanso = value;
+                                hasChanges = true;
+                              });
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Center(
+                      child: SizedBox(
+                        width: 260,
+                        child: EsfuerzoSlider(
+                          valor: esfuerzo,
+                          onChanged: (value) {
+                            setStateDialog(() {
+                              esfuerzo = value;
+                              realizado = true;
+                              hasChanges = true;
+                            });
+                          },
+                          showDescription: false,
+                          showIndicators: false,
+                          compact: true,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      initialValue: sensaciones,
+                      maxLines: 3,
+                      onChanged: (value) {
+                        setStateDialog(() {
+                          sensaciones = value;
+                          hasChanges = true;
+                        });
+                      },
+                      decoration: const InputDecoration(
+                        labelText: 'Sensaciones',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    if ((ejercicio.instrucciones ?? '').isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        'Instrucciones del dietista/entrenador',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(ejercicio.instrucciones ?? ''),
                       ),
                     ],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildMiniIntInput(
-                          label: '',
-                          value: tiempo,
-                          controller: tiempoController,
-                          min: 0,
-                          max: 3600,
-                          labelSpacing: 0,
-                          prefixIcon: Icons.schedule,
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 10),
-                          buttonIconSize: 18,
-                          buttonMinWidth: 32,
-                          buttonMinHeight: 28,
-                          buttonDensity: VisualDensity.standard,
-                          onChanged: (value) =>
-                              setStateDialog(() => tiempo = value),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _buildMiniIntInput(
-                          label: '',
-                          value: rondas,
-                          controller: rondasController,
-                          min: 0,
-                          max: 500,
-                          labelSpacing: 0,
-                          prefixIcon: Icons.repeat,
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 10),
-                          buttonIconSize: 18,
-                          buttonMinWidth: 32,
-                          buttonMinHeight: 28,
-                          buttonDensity: VisualDensity.standard,
-                          onChanged: (value) =>
-                              setStateDialog(() => rondas = value),
+                    if (false && (ejercicio.urlVideo ?? '').isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      InkWell(
+                        onTap: () {},
+                        child: Text(
+                          _getVideoLabel(ejercicio.urlVideo ?? ''),
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.primary,
+                            decoration: TextDecoration.underline,
+                          ),
                         ),
                       ),
                     ],
-                  ),
-                  const SizedBox(height: 12),
-                  Center(
-                    child: SizedBox(
-                      width: 260,
-                      child: EsfuerzoSlider(
-                        valor: esfuerzo,
-                        onChanged: (value) =>
-                            setStateDialog(() => esfuerzo = value),
-                        showDescription: false,
-                        showIndicators: false,
-                        compact: true,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  _buildMiniIntInput(
-                    label: '',
-                    value: descanso,
-                    controller: descansoController,
-                    min: 0,
-                    max: 3600,
-                    labelSpacing: 0,
-                    prefixIcon: Icons.bedtime_outlined,
-                    contentPadding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                    buttonIconSize: 18,
-                    buttonMinWidth: 32,
-                    buttonMinHeight: 28,
-                    buttonDensity: VisualDensity.standard,
-                    onChanged: (value) =>
-                        setStateDialog(() => descanso = value),
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: sensacionesController,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      labelText: 'Sensaciones',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  if ((ejercicio.instrucciones ?? '').isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    Text(
-                      'Instrucciones del dietista/entrenador',
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    const SizedBox(height: 6),
-                    Text(ejercicio.instrucciones ?? ''),
                   ],
-                  if ((ejercicio.urlVideo ?? '').isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    InkWell(
-                      onTap: () => _launchUrlExternal(ejercicio.urlVideo ?? ''),
-                      child: Text(
-                        _getVideoLabel(ejercicio.urlVideo ?? ''),
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.primary,
-                          decoration: TextDecoration.underline,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
+                ),
               ),
+              actions: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton.icon(
+                      onPressed: () async {
+                        if (await confirmExit(context)) {
+                          Navigator.pop(context);
+                        }
+                      },
+                      icon: const Icon(Icons.close),
+                      label: const Text('Cancelar'),
+                    ),
+                    const SizedBox(width: 16),
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        setState(() {
+                          ejercicio.tiempoRealizado = tiempo;
+                          ejercicio.repeticionesRealizadas = rondas;
+                          ejercicio.kilosPlan = kilos;
+                          ejercicio.sensaciones = sensaciones.trim();
+                          ejercicio.esfuerzoPercibido = esfuerzo;
+                          ejercicio.descansoPlan = descanso;
+                          ejercicio.realizado = realizado ? 'S' : 'N';
+                        });
+                        _updateEjercicioControllersAt(
+                          _entrenamientoEjercicios.indexOf(ejercicio),
+                        );
+                        _recalculateActividadFromEjercicios();
+                        Navigator.pop(context);
+                      },
+                      icon: const Icon(Icons.save),
+                      label: const Text('Guardar'),
+                    ),
+                  ],
+                ),
+              ],
             ),
-            actions: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton.icon(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close),
-                    label: const Text('Cancelar'),
-                  ),
-                  const SizedBox(width: 16),
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        ejercicio.tiempoRealizado = tiempo;
-                        ejercicio.repeticionesRealizadas = rondas;
-                        ejercicio.sensaciones =
-                            sensacionesController.text.trim();
-                        ejercicio.esfuerzoPercibido = esfuerzo;
-                        ejercicio.descansoPlan = descanso;
-                        ejercicio.realizado = realizado ? 'S' : 'N';
-                      });
-                      _recalculateActividadFromEjercicios();
-                      Navigator.pop(context);
-                    },
-                    icon: const Icon(Icons.save),
-                    label: const Text('Guardar'),
-                  ),
-                ],
-              ),
-            ],
           ),
         ),
       );
     } finally {
       tiempoController.dispose();
       rondasController.dispose();
+      kilosController.dispose();
       descansoController.dispose();
-      sensacionesController.dispose();
     }
   }
 
@@ -1286,7 +1536,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         ),
         const SizedBox(height: 8),
         SizedBox(
-          height: 260,
+          height: 288,
           child: Scrollbar(
             controller: _planFitEjerciciosScrollController,
             thumbVisibility: true,
@@ -1310,12 +1560,15 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                   final rondas = ejercicio.repeticionesRealizadas ??
                       ejercicio.repeticionesPlan ??
                       0;
+                  final kilos = ejercicio.kilosPlan ?? 0;
                   final esfuerzo = ejercicio.esfuerzoPercibido ?? 0;
                   final estadoColor = ejercicio.realizado == 'S'
                       ? Colors.green.withOpacity(0.75)
                       : ejercicio.realizado == 'N'
                           ? Colors.red.withOpacity(0.65)
                           : Colors.grey.shade800.withOpacity(0.7);
+                  const double overlayHeight = 104;
+                  final showInputs = tiempo > 0 || rondas > 0 || kilos > 0;
 
                   return SizedBox(
                     width: 200,
@@ -1346,10 +1599,10 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                           child: Stack(
                             children: [
                               Positioned.fill(
-                                child: ejercicio.fotoBase64 != null &&
-                                        ejercicio.fotoBase64!.isNotEmpty
+                                child: ejercicio.fotoMiniatura != null &&
+                                        ejercicio.fotoMiniatura!.isNotEmpty
                                     ? Image.memory(
-                                        base64Decode(ejercicio.fotoBase64!),
+                                        base64Decode(ejercicio.fotoMiniatura!),
                                         fit: BoxFit.cover,
                                       )
                                     : Container(
@@ -1359,10 +1612,16 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                                       ),
                               ),
                               Positioned(
+                                right: 8,
+                                bottom: overlayHeight,
+                                child: _buildEsfuerzoBadge(esfuerzo),
+                              ),
+                              Positioned(
                                 left: 0,
                                 right: 0,
                                 bottom: 0,
                                 child: Container(
+                                  height: overlayHeight,
                                   padding: const EdgeInsets.all(10),
                                   decoration: BoxDecoration(
                                     color: estadoColor,
@@ -1382,16 +1641,24 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                                         ),
                                       ),
                                       const SizedBox(height: 6),
-                                      if (tiempo > 0 || rondas > 0)
+                                      if (showInputs)
                                         Row(
                                           children: [
-                                            if (tiempo > 0)
-                                              _buildMiniIntInput(
+                                            Focus(
+                                              onFocusChange: (hasFocus) {
+                                                if (!hasFocus) {
+                                                  _recalculateActividadFromEjercicios();
+                                                }
+                                              },
+                                              child: _buildMiniIntInput(
                                                 label: 'Tiempo',
                                                 value: tiempo,
+                                                controller:
+                                                    _ejercicioTiempoControllers[
+                                                        index],
                                                 min: 0,
                                                 max: 3600,
-                                                fieldWidth: 44,
+                                                fieldWidth: 42,
                                                 showButtons: false,
                                                 labelSpacing: 1,
                                                 labelColor: Colors.white70,
@@ -1400,18 +1667,26 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                                                 onChanged: (value) {
                                                   ejercicio.tiempoRealizado =
                                                       value;
-                                                  _recalculateActividadFromEjercicios();
+                                                  _markDirty();
                                                 },
                                               ),
-                                            if (tiempo > 0 && rondas > 0)
-                                              const SizedBox(width: 8),
-                                            if (rondas > 0)
-                                              _buildMiniIntInput(
-                                                label: 'Repeticiones',
+                                            ),
+                                            const SizedBox(width: 6),
+                                            Focus(
+                                              onFocusChange: (hasFocus) {
+                                                if (!hasFocus) {
+                                                  _recalculateActividadFromEjercicios();
+                                                }
+                                              },
+                                              child: _buildMiniIntInput(
+                                                label: 'Repet.',
                                                 value: rondas,
+                                                controller:
+                                                    _ejercicioRondasControllers[
+                                                        index],
                                                 min: 0,
                                                 max: 500,
-                                                fieldWidth: 44,
+                                                fieldWidth: 42,
                                                 showButtons: false,
                                                 labelSpacing: 1,
                                                 labelColor: Colors.white70,
@@ -1421,11 +1696,37 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                                                   ejercicio
                                                           .repeticionesRealizadas =
                                                       value;
-                                                  _recalculateActividadFromEjercicios();
+                                                  _markDirty();
                                                 },
                                               ),
-                                            const Spacer(),
-                                            _buildEsfuerzoBadge(esfuerzo),
+                                            ),
+                                            const SizedBox(width: 6),
+                                            Focus(
+                                              onFocusChange: (hasFocus) {
+                                                if (!hasFocus) {
+                                                  _recalculateActividadFromEjercicios();
+                                                }
+                                              },
+                                              child: _buildMiniIntInput(
+                                                label: 'Kg',
+                                                value: kilos,
+                                                controller:
+                                                    _ejercicioKilosControllers[
+                                                        index],
+                                                min: 0,
+                                                max: 500,
+                                                fieldWidth: 42,
+                                                showButtons: false,
+                                                labelSpacing: 1,
+                                                labelColor: Colors.white70,
+                                                textColor: Colors.white,
+                                                borderColor: Colors.white70,
+                                                onChanged: (value) {
+                                                  ejercicio.kilosPlan = value;
+                                                  _markDirty();
+                                                },
+                                              ),
+                                            ),
                                           ],
                                         ),
                                     ],
@@ -1462,6 +1763,15 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     _actividadCustomController.dispose();
     _planFitEjerciciosScrollController.dispose();
     _vueltasNotifier.dispose();
+    for (final controller in _ejercicioTiempoControllers) {
+      controller.dispose();
+    }
+    for (final controller in _ejercicioRondasControllers) {
+      controller.dispose();
+    }
+    for (final controller in _ejercicioKilosControllers) {
+      controller.dispose();
+    }
     _hideTimerOverlay();
     super.dispose();
   }
@@ -1512,6 +1822,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
       setState(() {
         _fechaSeleccionada = picked;
       });
+      _markDirty();
     }
   }
 
@@ -1525,49 +1836,176 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
       setState(() {
         _horaSeleccionada = picked;
       });
+      _markDirty();
     }
   }
 
   Future<void> _showHorasDialog() async {
+    final controller = TextEditingController(text: _duracionHoras.toString());
+    int tempValue = _duracionHoras;
+    bool changed = false;
+    Timer? incrementTimer;
+    Timer? decrementTimer;
+
+    void stopTimers() {
+      incrementTimer?.cancel();
+      incrementTimer = null;
+      decrementTimer?.cancel();
+      decrementTimer = null;
+    }
+
     await showDialog(
       context: context,
       builder: (BuildContext context) {
         return StatefulBuilder(
           builder: (context, setStateDialog) => Dialog(
             child: Container(
-              padding: const EdgeInsets.all(20),
-              width: MediaQuery.of(context).size.width * 0.8,
+              padding: const EdgeInsets.all(12),
+              width: MediaQuery.of(context).size.width * 0.72,
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      'Seleccionar Horas',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleLarge
-                          ?.copyWith(fontWeight: FontWeight.bold),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Seleccionar Horas',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () {
+                            stopTimers();
+                            if (context.mounted) {
+                              Navigator.pop(context);
+                            }
+                          },
+                          tooltip: 'Cancelar',
+                          icon: const Icon(Icons.close, size: 18),
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 24),
-                    _buildMiniIntInput(
-                      label: 'Horas',
-                      value: _duracionHoras,
-                      min: 0,
-                      max: 24,
-                      onChanged: (value) {
-                        setStateDialog(() => _duracionHoras = value);
-                        if (mounted) {
-                          setState(() => _duracionHoras = value);
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 24),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('Aceptar'),
-                      ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            width: 70,
+                            child: TextFormField(
+                              controller: controller,
+                              readOnly: true,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                border: OutlineInputBorder(),
+                                contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 8),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Column(
+                          children: [
+                            GestureDetector(
+                              onTap: () {
+                                if (tempValue < 24) {
+                                  tempValue++;
+                                  controller.text = tempValue.toString();
+                                  setStateDialog(() {});
+                                }
+                              },
+                              onLongPressStart: (_) {
+                                stopTimers();
+                                incrementTimer = Timer.periodic(
+                                  const Duration(milliseconds: 80),
+                                  (timer) {
+                                    if (tempValue < 24) {
+                                      tempValue++;
+                                      controller.text = tempValue.toString();
+                                      setStateDialog(() {});
+                                    } else {
+                                      timer.cancel();
+                                    }
+                                  },
+                                );
+                              },
+                              onLongPressEnd: (_) => stopTimers(),
+                              onLongPressCancel: () => stopTimers(),
+                              child: const Icon(Icons.add, size: 20),
+                            ),
+                            const SizedBox(height: 4),
+                            GestureDetector(
+                              onTap: () {
+                                if (tempValue > 0) {
+                                  tempValue--;
+                                  controller.text = tempValue.toString();
+                                  setStateDialog(() {});
+                                }
+                              },
+                              onLongPressStart: (_) {
+                                stopTimers();
+                                decrementTimer = Timer.periodic(
+                                  const Duration(milliseconds: 80),
+                                  (timer) {
+                                    if (tempValue > 0) {
+                                      tempValue--;
+                                      controller.text = tempValue.toString();
+                                      setStateDialog(() {});
+                                    } else {
+                                      timer.cancel();
+                                    }
+                                  },
+                                );
+                              },
+                              onLongPressEnd: (_) => stopTimers(),
+                              onLongPressCancel: () => stopTimers(),
+                              child: const Icon(Icons.remove, size: 20),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          onPressed: () {
+                            tempValue = 0;
+                            controller.text = '0';
+                            setStateDialog(() {});
+                          },
+                          tooltip: 'Borrar',
+                          icon: const Icon(Icons.delete_sweep, size: 18),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          onPressed: () {
+                            stopTimers();
+                            _duracionHoras = tempValue;
+                            changed = true;
+                            Navigator.pop(context);
+                          },
+                          tooltip: 'Aceptar',
+                          icon: const Icon(Icons.check, size: 18),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -1577,48 +2015,181 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         );
       },
     );
+    stopTimers();
+    controller.dispose();
+    if (changed && mounted) {
+      setState(() {
+        _hasChanges = true;
+      });
+    }
   }
 
   Future<void> _showMinutosDialog() async {
+    final controller = TextEditingController(text: _duracionMinutos.toString());
+    int tempValue = _duracionMinutos;
+    bool changed = false;
+    Timer? incrementTimer;
+    Timer? decrementTimer;
+
+    void stopTimers() {
+      incrementTimer?.cancel();
+      incrementTimer = null;
+      decrementTimer?.cancel();
+      decrementTimer = null;
+    }
+
     await showDialog(
       context: context,
       builder: (BuildContext context) {
         return StatefulBuilder(
           builder: (context, setStateDialog) => Dialog(
             child: Container(
-              padding: const EdgeInsets.all(20),
-              width: MediaQuery.of(context).size.width * 0.8,
+              padding: const EdgeInsets.all(12),
+              width: MediaQuery.of(context).size.width * 0.72,
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      'Seleccionar Minutos',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleLarge
-                          ?.copyWith(fontWeight: FontWeight.bold),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Seleccionar Minutos',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () {
+                            stopTimers();
+                            if (context.mounted) {
+                              Navigator.pop(context);
+                            }
+                          },
+                          tooltip: 'Cancelar',
+                          icon: const Icon(Icons.close, size: 18),
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 24),
-                    _buildMiniIntInput(
-                      label: 'Minutos',
-                      value: _duracionMinutos,
-                      min: 0,
-                      max: 59,
-                      onChanged: (value) {
-                        setStateDialog(() => _duracionMinutos = value);
-                        if (mounted) {
-                          setState(() => _duracionMinutos = value);
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 24),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('Aceptar'),
-                      ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            width: 70,
+                            child: TextFormField(
+                              controller: controller,
+                              readOnly: true,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                border: OutlineInputBorder(),
+                                contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 8),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Column(
+                          children: [
+                            GestureDetector(
+                              onTap: () {
+                                if (tempValue < 59) {
+                                  tempValue++;
+                                  controller.text = tempValue.toString();
+                                  setStateDialog(() {});
+                                }
+                              },
+                              onLongPressStart: (_) {
+                                stopTimers();
+                                incrementTimer = Timer.periodic(
+                                  const Duration(milliseconds: 80),
+                                  (timer) {
+                                    if (tempValue < 59) {
+                                      tempValue++;
+                                      controller.text = tempValue.toString();
+                                      setStateDialog(() {});
+                                    } else {
+                                      timer.cancel();
+                                    }
+                                  },
+                                );
+                              },
+                              onLongPressEnd: (_) => stopTimers(),
+                              onLongPressCancel: () => stopTimers(),
+                              child: const Icon(Icons.add, size: 20),
+                            ),
+                            const SizedBox(height: 4),
+                            GestureDetector(
+                              onTap: () {
+                                if (tempValue > 0) {
+                                  tempValue--;
+                                  controller.text = tempValue.toString();
+                                  setStateDialog(() {});
+                                }
+                              },
+                              onLongPressStart: (_) {
+                                stopTimers();
+                                decrementTimer = Timer.periodic(
+                                  const Duration(milliseconds: 80),
+                                  (timer) {
+                                    if (tempValue > 0) {
+                                      tempValue--;
+                                      controller.text = tempValue.toString();
+                                      setStateDialog(() {});
+                                    } else {
+                                      timer.cancel();
+                                    }
+                                  },
+                                );
+                              },
+                              onLongPressEnd: (_) => stopTimers(),
+                              onLongPressCancel: () => stopTimers(),
+                              child: const Icon(Icons.remove, size: 20),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          onPressed: () {
+                            tempValue = 0;
+                            controller.text = '0';
+                            setStateDialog(() {});
+                          },
+                          tooltip: 'Borrar',
+                          icon: const Icon(Icons.delete_sweep, size: 18),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          onPressed: () {
+                            stopTimers();
+                            _duracionMinutos = tempValue;
+                            changed = true;
+                            Navigator.pop(context);
+                          },
+                          tooltip: 'Aceptar',
+                          icon: const Icon(Icons.check, size: 18),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -1628,49 +2199,189 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         );
       },
     );
+    stopTimers();
+    controller.dispose();
+    if (changed && mounted) {
+      setState(() {
+        _hasChanges = true;
+      });
+    }
   }
 
   Future<void> _showKilometrosDialog() async {
+    final controller = TextEditingController(
+      text: _duracionKilometros.toStringAsFixed(2),
+    );
+    double tempValue = _duracionKilometros;
+    bool changed = false;
+    Timer? incrementTimer;
+    Timer? decrementTimer;
+
+    void stopTimers() {
+      incrementTimer?.cancel();
+      incrementTimer = null;
+      decrementTimer?.cancel();
+      decrementTimer = null;
+    }
+
     await showDialog(
       context: context,
       builder: (BuildContext context) {
         return StatefulBuilder(
           builder: (context, setStateDialog) => Dialog(
             child: Container(
-              padding: const EdgeInsets.all(20),
-              width: MediaQuery.of(context).size.width * 0.8,
+              padding: const EdgeInsets.all(12),
+              width: MediaQuery.of(context).size.width * 0.72,
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      'Seleccionar Kilómetros',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleLarge
-                          ?.copyWith(fontWeight: FontWeight.bold),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Seleccionar Kilómetros',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () {
+                            stopTimers();
+                            if (context.mounted) {
+                              Navigator.pop(context);
+                            }
+                          },
+                          tooltip: 'Cancelar',
+                          icon: const Icon(Icons.close, size: 18),
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 24),
-                    _buildMiniDoubleInput(
-                      label: 'Kilómetros',
-                      value: _duracionKilometros,
-                      min: 0,
-                      max: 999,
-                      step: 0.1,
-                      onChanged: (value) {
-                        setStateDialog(() => _duracionKilometros = value);
-                        if (mounted) {
-                          setState(() => _duracionKilometros = value);
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 24),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('Aceptar'),
-                      ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            width: 70,
+                            child: TextFormField(
+                              controller: controller,
+                              readOnly: true,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                      decimal: true),
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                border: OutlineInputBorder(),
+                                contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 8),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Column(
+                          children: [
+                            GestureDetector(
+                              onTap: () {
+                                if (tempValue < 999) {
+                                  tempValue += 0.1;
+                                  controller.text =
+                                      tempValue.toStringAsFixed(2);
+                                  setStateDialog(() {});
+                                }
+                              },
+                              onLongPressStart: (_) {
+                                stopTimers();
+                                incrementTimer = Timer.periodic(
+                                  const Duration(milliseconds: 80),
+                                  (timer) {
+                                    if (tempValue < 999) {
+                                      tempValue += 0.1;
+                                      controller.text =
+                                          tempValue.toStringAsFixed(2);
+                                      setStateDialog(() {});
+                                    } else {
+                                      timer.cancel();
+                                    }
+                                  },
+                                );
+                              },
+                              onLongPressEnd: (_) => stopTimers(),
+                              onLongPressCancel: () => stopTimers(),
+                              child: const Icon(Icons.add, size: 20),
+                            ),
+                            const SizedBox(height: 4),
+                            GestureDetector(
+                              onTap: () {
+                                if (tempValue > 0) {
+                                  tempValue -= 0.1;
+                                  controller.text =
+                                      tempValue.toStringAsFixed(2);
+                                  setStateDialog(() {});
+                                }
+                              },
+                              onLongPressStart: (_) {
+                                stopTimers();
+                                decrementTimer = Timer.periodic(
+                                  const Duration(milliseconds: 80),
+                                  (timer) {
+                                    if (tempValue > 0) {
+                                      tempValue -= 0.1;
+                                      controller.text =
+                                          tempValue.toStringAsFixed(2);
+                                      setStateDialog(() {});
+                                    } else {
+                                      timer.cancel();
+                                    }
+                                  },
+                                );
+                              },
+                              onLongPressEnd: (_) => stopTimers(),
+                              onLongPressCancel: () => stopTimers(),
+                              child: const Icon(Icons.remove, size: 20),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          onPressed: () {
+                            tempValue = 0;
+                            controller.text = '0.00';
+                            setStateDialog(() {});
+                          },
+                          tooltip: 'Borrar',
+                          icon: const Icon(Icons.delete_sweep, size: 18),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          onPressed: () {
+                            stopTimers();
+                            _duracionKilometros = tempValue;
+                            changed = true;
+                            Navigator.pop(context);
+                          },
+                          tooltip: 'Aceptar',
+                          icon: const Icon(Icons.check, size: 18),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -1680,46 +2391,181 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         );
       },
     );
+    stopTimers();
+    controller.dispose();
+    if (changed && mounted) {
+      setState(() {
+        _hasChanges = true;
+      });
+    }
   }
 
   Future<void> _showRondasDialog() async {
+    final controller = TextEditingController(text: _vueltas.toString());
+    int tempValue = _vueltas;
+    bool changed = false;
+    Timer? incrementTimer;
+    Timer? decrementTimer;
+
+    void stopTimers() {
+      incrementTimer?.cancel();
+      incrementTimer = null;
+      decrementTimer?.cancel();
+      decrementTimer = null;
+    }
+
     await showDialog(
       context: context,
       builder: (BuildContext context) {
         return StatefulBuilder(
           builder: (context, setStateDialog) => Dialog(
             child: Container(
-              padding: const EdgeInsets.all(20),
-              width: MediaQuery.of(context).size.width * 0.8,
+              padding: const EdgeInsets.all(12),
+              width: MediaQuery.of(context).size.width * 0.72,
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      'Seleccionar Rondas',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleLarge
-                          ?.copyWith(fontWeight: FontWeight.bold),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Seleccionar Rondas',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () {
+                            stopTimers();
+                            if (context.mounted) {
+                              Navigator.pop(context);
+                            }
+                          },
+                          tooltip: 'Cancelar',
+                          icon: const Icon(Icons.close, size: 18),
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 24),
-                    _buildMiniIntInput(
-                      label: 'Rondas',
-                      value: _vueltas,
-                      min: 0,
-                      max: 999,
-                      fieldWidth: 90,
-                      onChanged: (value) {
-                        setStateDialog(() => _setVueltas(value));
-                      },
-                    ),
-                    const SizedBox(height: 24),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('Aceptar'),
-                      ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            width: 90,
+                            child: TextFormField(
+                              controller: controller,
+                              readOnly: true,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                border: OutlineInputBorder(),
+                                contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 8),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Column(
+                          children: [
+                            GestureDetector(
+                              onTap: () {
+                                if (tempValue < 999) {
+                                  tempValue++;
+                                  controller.text = tempValue.toString();
+                                  setStateDialog(() {});
+                                }
+                              },
+                              onLongPressStart: (_) {
+                                stopTimers();
+                                incrementTimer = Timer.periodic(
+                                  const Duration(milliseconds: 80),
+                                  (timer) {
+                                    if (tempValue < 999) {
+                                      tempValue++;
+                                      controller.text = tempValue.toString();
+                                      setStateDialog(() {});
+                                    } else {
+                                      timer.cancel();
+                                    }
+                                  },
+                                );
+                              },
+                              onLongPressEnd: (_) => stopTimers(),
+                              onLongPressCancel: () => stopTimers(),
+                              child: const Icon(Icons.add, size: 20),
+                            ),
+                            const SizedBox(height: 4),
+                            GestureDetector(
+                              onTap: () {
+                                if (tempValue > 0) {
+                                  tempValue--;
+                                  controller.text = tempValue.toString();
+                                  setStateDialog(() {});
+                                }
+                              },
+                              onLongPressStart: (_) {
+                                stopTimers();
+                                decrementTimer = Timer.periodic(
+                                  const Duration(milliseconds: 80),
+                                  (timer) {
+                                    if (tempValue > 0) {
+                                      tempValue--;
+                                      controller.text = tempValue.toString();
+                                      setStateDialog(() {});
+                                    } else {
+                                      timer.cancel();
+                                    }
+                                  },
+                                );
+                              },
+                              onLongPressEnd: (_) => stopTimers(),
+                              onLongPressCancel: () => stopTimers(),
+                              child: const Icon(Icons.remove, size: 20),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          onPressed: () {
+                            tempValue = 0;
+                            controller.text = '0';
+                            setStateDialog(() {});
+                          },
+                          tooltip: 'Borrar',
+                          icon: const Icon(Icons.delete_sweep, size: 18),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          onPressed: () {
+                            stopTimers();
+                            _setVueltas(tempValue);
+                            changed = true;
+                            Navigator.pop(context);
+                          },
+                          tooltip: 'Aceptar',
+                          icon: const Icon(Icons.check, size: 18),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -1729,6 +2575,13 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         );
       },
     );
+    stopTimers();
+    controller.dispose();
+    if (changed && mounted) {
+      setState(() {
+        _hasChanges = true;
+      });
+    }
   }
 
   Future<void> _seleccionarFotos() async {
@@ -1852,7 +2705,10 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
           } catch (e) {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Error al procesar imagen: $e')),
+                SnackBar(
+                  content: Text('Error al procesar imagen: $e'),
+                  backgroundColor: Colors.red,
+                ),
               );
             }
           }
@@ -1867,7 +2723,10 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al seleccionar fotos: $e')),
+          SnackBar(
+            content: Text('Error al seleccionar fotos: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -1910,7 +2769,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
               'tipo': extension.toLowerCase() == 'png' ? 'png' : 'jpg',
             });
           } catch (e) {
-            debugPrint('Error encoding image: $e');
+            // debugPrint('Error encoding image: $e');
           }
         }
       }
@@ -1939,17 +2798,35 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         url += 'update_entrenamiento&codigo=${widget.entrenamiento!.codigo}';
         final response = await apiService.put(url, body: jsonEncode(data));
 
-        if (response.statusCode == 200) {
+        if (response.statusCode == 200 ||
+            response.statusCode == 201 ||
+            response.statusCode == 204) {
           if (_entrenamientoEjercicios.isNotEmpty) {
+            final codigo = widget.entrenamiento!.codigo!;
+            for (final ejercicio in _entrenamientoEjercicios) {
+              ejercicio.codigoEntrenamiento = codigo;
+            }
             await apiService.saveEntrenamientoEjercicios(
-                widget.entrenamiento!.codigo!, _entrenamientoEjercicios);
+                codigo, _entrenamientoEjercicios);
           }
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                  content: Text('Entrenamiento actualizado correctamente')),
+                content: Text('Entrenamiento actualizado correctamente'),
+                backgroundColor: Colors.green,
+              ),
             );
             Navigator.pop(context);
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                    'Error al actualizar: ${response.statusCode} - ${response.body}'),
+                backgroundColor: Colors.red,
+              ),
+            );
           }
         }
       } else {
@@ -1965,13 +2842,18 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
             codigoCreado = null;
           }
           if (codigoCreado != null && _entrenamientoEjercicios.isNotEmpty) {
+            for (final ejercicio in _entrenamientoEjercicios) {
+              ejercicio.codigoEntrenamiento = codigoCreado;
+            }
             await apiService.saveEntrenamientoEjercicios(
                 codigoCreado, _entrenamientoEjercicios);
           }
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                  content: Text('Entrenamiento registrado correctamente')),
+                content: Text('Entrenamiento registrado correctamente'),
+                backgroundColor: Colors.green,
+              ),
             );
             Navigator.pop(context);
           }
@@ -1979,8 +2861,10 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                  content: Text(
-                      'Error al registrar: ${response.statusCode} - ${response.body}')),
+                content: Text(
+                    'Error al registrar: ${response.statusCode} - ${response.body}'),
+                backgroundColor: Colors.red,
+              ),
             );
           }
         }
@@ -1988,7 +2872,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -2065,7 +2949,10 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al guardar actividad: $e')),
+          SnackBar(
+            content: Text('Error al guardar actividad: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -2112,7 +2999,10 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al eliminar actividad: $e')),
+          SnackBar(
+            content: Text('Error al eliminar actividad: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -2356,7 +3246,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
             volume: 0.5,
           );
         } catch (e) {
-          debugPrint('Error loading beep asset: $e');
+          // debugPrint('Error loading beep asset: $e');
         }
       } else {
         // En Android e iOS, usar SystemSound con mejor compatibilidad
@@ -2370,17 +3260,17 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
               );
               return;
             } catch (e) {
-              debugPrint('Android audio asset failed, using system sound');
+              // debugPrint('Android audio asset failed, using system sound');
             }
           }
           // Fallback: usar SystemSound
           await SystemSound.play(SystemSoundType.click);
         } catch (e) {
-          debugPrint('SystemSound failed: $e');
+          // debugPrint('SystemSound failed: $e');
         }
       }
     } catch (e) {
-      debugPrint('Error playing beep: $e');
+      // debugPrint('Error playing beep: $e');
     }
   }
 
@@ -3153,31 +4043,61 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                                     Column(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        IconButton(
-                                          icon: const Icon(Icons.add, size: 18),
-                                          tooltip: 'Sumar ronda',
-                                          onPressed: () {
-                                            _setVueltas(vueltasValue + 1);
+                                        GestureDetector(
+                                          onTap: () =>
+                                              _setVueltas(vueltasValue + 1),
+                                          onLongPressStart: (_) {
+                                            _stopTimers();
+                                            _addTimer = Timer.periodic(
+                                              const Duration(milliseconds: 80),
+                                              (_) => _setVueltas(
+                                                  _vueltasNotifier.value + 1),
+                                            );
                                           },
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(
-                                            minWidth: 28,
-                                            minHeight: 28,
+                                          onLongPressEnd: (_) => _stopTimers(),
+                                          onLongPressCancel: _stopTimers,
+                                          child: const IconButton(
+                                            icon: Icon(Icons.add, size: 18),
+                                            tooltip: 'Sumar ronda',
+                                            onPressed: null,
+                                            padding: EdgeInsets.zero,
+                                            constraints: BoxConstraints(
+                                              minWidth: 28,
+                                              minHeight: 28,
+                                            ),
                                           ),
                                         ),
-                                        IconButton(
-                                          icon: const Icon(Icons.remove,
-                                              size: 18),
-                                          tooltip: 'Restar ronda',
-                                          onPressed: vueltasValue > 0
-                                              ? () {
-                                                  _setVueltas(vueltasValue - 1);
-                                                }
+                                        GestureDetector(
+                                          onTap: vueltasValue > 0
+                                              ? () =>
+                                                  _setVueltas(vueltasValue - 1)
                                               : null,
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(
-                                            minWidth: 28,
-                                            minHeight: 28,
+                                          onLongPressStart: (_) {
+                                            if (_vueltasNotifier.value <= 0) {
+                                              return;
+                                            }
+                                            _stopTimers();
+                                            _removeTimer = Timer.periodic(
+                                              const Duration(milliseconds: 80),
+                                              (_) {
+                                                final next =
+                                                    _vueltasNotifier.value - 1;
+                                                _setVueltas(
+                                                    next < 0 ? 0 : next);
+                                              },
+                                            );
+                                          },
+                                          onLongPressEnd: (_) => _stopTimers(),
+                                          onLongPressCancel: _stopTimers,
+                                          child: const IconButton(
+                                            icon: Icon(Icons.remove, size: 18),
+                                            tooltip: 'Restar ronda',
+                                            onPressed: null,
+                                            padding: EdgeInsets.zero,
+                                            constraints: BoxConstraints(
+                                              minWidth: 28,
+                                              minHeight: 28,
+                                            ),
                                           ),
                                         ),
                                       ],
@@ -3203,7 +4123,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                         ),
                         const SizedBox(height: 8),
                         DropdownButtonFormField<int?>(
-                          value: _planFitSeleccionado,
+                          initialValue: _planFitSeleccionado,
                           items: [
                             const DropdownMenuItem(
                               value: null,
@@ -3259,9 +4179,8 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                         const SizedBox(height: 20),
                       ],
 
-                      if (_planFitSeleccionado != null &&
-                          (_entrenamientoEjercicios.isNotEmpty ||
-                              _loadingEjerciciosPlanFit)) ...[
+                      if (_entrenamientoEjercicios.isNotEmpty ||
+                          _loadingEjerciciosPlanFit) ...[
                         _buildPlanFitEjerciciosSection(),
                         const SizedBox(height: 20),
                       ],

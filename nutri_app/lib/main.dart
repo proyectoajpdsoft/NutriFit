@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -23,9 +26,53 @@ import 'package:nutri_app/screens/lista_compra_screen.dart';
 import 'package:nutri_app/screens/entrenamientos_screen.dart';
 import 'package:nutri_app/services/auth_error_handler.dart';
 import 'package:nutri_app/constants/app_constants.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:window_manager/window_manager.dart';
 
-void main() {
+const _windowWidthKey = 'window_width';
+const _windowHeightKey = 'window_height';
+const _windowXKey = 'window_x';
+const _windowYKey = 'window_y';
+const _windowMaximizedKey = 'window_maximized';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await _initWindowManager();
   runApp(const AppState());
+}
+
+Future<void> _initWindowManager() async {
+  if (!Platform.isWindows) {
+    return;
+  }
+
+  await windowManager.ensureInitialized();
+  final prefs = await SharedPreferences.getInstance();
+
+  final width = prefs.getDouble(_windowWidthKey);
+  final height = prefs.getDouble(_windowHeightKey);
+  final x = prefs.getDouble(_windowXKey);
+  final y = prefs.getDouble(_windowYKey);
+  final wasMaximized = prefs.getBool(_windowMaximizedKey) ?? false;
+
+  final options = WindowOptions(
+    size: (width != null && height != null) ? Size(width, height) : null,
+    center: width == null || height == null,
+    title: AppConstants.appTitle,
+  );
+
+  windowManager.waitUntilReadyToShow(options, () async {
+    await windowManager.show();
+    await windowManager.focus();
+    if (x != null && y != null) {
+      await windowManager.setPosition(Offset(x, y));
+    }
+    if (wasMaximized) {
+      await windowManager.maximize();
+    }
+  });
+
+  windowManager.addListener(WindowStateHandler(prefs));
 }
 
 class AppState extends StatelessWidget {
@@ -102,4 +149,50 @@ class AppScrollBehavior extends MaterialScrollBehavior {
         PointerDeviceKind.stylus,
         PointerDeviceKind.unknown,
       };
+}
+
+class WindowStateHandler extends WindowListener {
+  WindowStateHandler(this._prefs);
+
+  final SharedPreferences _prefs;
+  Timer? _saveTimer;
+
+  void _scheduleSave() {
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 250), _saveNow);
+  }
+
+  Future<void> _saveNow() async {
+    if (!Platform.isWindows) {
+      return;
+    }
+
+    final isMaximized = await windowManager.isMaximized();
+    await _prefs.setBool(_windowMaximizedKey, isMaximized);
+    if (isMaximized) {
+      return;
+    }
+
+    final size = await windowManager.getSize();
+    final position = await windowManager.getPosition();
+    await _prefs.setDouble(_windowWidthKey, size.width);
+    await _prefs.setDouble(_windowHeightKey, size.height);
+    await _prefs.setDouble(_windowXKey, position.dx);
+    await _prefs.setDouble(_windowYKey, position.dy);
+  }
+
+  @override
+  void onWindowResized() {
+    _scheduleSave();
+  }
+
+  @override
+  void onWindowMoved() {
+    _scheduleSave();
+  }
+
+  @override
+  void onWindowClose() {
+    _saveNow();
+  }
 }

@@ -170,8 +170,9 @@ class _ListaCompraEditScreenState extends State<ListaCompraEditScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
+          SnackBar(content: Text('Error al guardar item. $errorMessage')),
         );
       }
     } finally {

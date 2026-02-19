@@ -201,13 +201,22 @@ function bind_consejo_params($stmt, $data) {
     }
     $stmt->bindParam(":imagen_portada", $imagen_portada, PDO::PARAM_LOB);
     $stmt->bindParam(":imagen_portada_nombre", $imagen_portada_nombre);
+
+    // Handle thumbnail
+    $imagen_miniatura = null;
+    if (!empty($data->imagen_miniatura)) {
+        $imagen_miniatura = base64_decode($data->imagen_miniatura);
+    }
+    $stmt->bindParam(":imagen_miniatura", $imagen_miniatura, PDO::PARAM_LOB);
 }
 
 function get_consejos() {
     global $db;
     ensure_consejo_categoria_tables();
     
-    $query = "SELECT c.*, 
+    $query = "SELECT c.codigo, c.titulo, c.texto, c.activo, c.fecha_inicio, c.fecha_fin,
+              c.mostrar_portada, c.visible_para_todos, c.imagen_portada_nombre, c.imagen_miniatura,
+              c.fechaa, c.codusuarioa, c.fecham, c.codusuariom,
               (SELECT COUNT(*) FROM nu_consejo_usuario cu WHERE cu.codigo_consejo = c.codigo AND cu.me_gusta = 'S') as total_likes,
               (SELECT COUNT(*) FROM nu_consejo_usuario cu WHERE cu.codigo_consejo = c.codigo) as total_usuarios,
               GROUP_CONCAT(DISTINCT cc.codigo ORDER BY cc.nombre SEPARATOR ',') as categorias_ids,
@@ -222,10 +231,10 @@ function get_consejos() {
     $stmt->execute();
     $consejos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // Convertir imagen de portada a base64
+    // Convertir imagen miniatura a base64 (imagen_portada no está en el SELECT)
     foreach ($consejos as &$consejo) {
-        if ($consejo['imagen_portada']) {
-            $consejo['imagen_portada'] = base64_encode($consejo['imagen_portada']);
+        if ($consejo['imagen_miniatura']) {
+            $consejo['imagen_miniatura'] = base64_encode($consejo['imagen_miniatura']);
         }
     }
     
@@ -267,6 +276,9 @@ function get_consejo($codigo) {
         if ($consejo['imagen_portada']) {
             $consejo['imagen_portada'] = base64_encode($consejo['imagen_portada']);
         }
+        if ($consejo['imagen_miniatura']) {
+            $consejo['imagen_miniatura'] = base64_encode($consejo['imagen_miniatura']);
+        }
         ob_clean();
         echo json_encode($consejo);
     } else {
@@ -282,7 +294,9 @@ function get_consejos_paciente($paciente_codigo, $codigo_usuario = null) {
     
     // Si se proporciona codigo_usuario, hacer JOIN para obtener estado de favorito y me_gusta
     if ($codigo_usuario !== null) {
-        $query = "SELECT c.*, 
+          $query = "SELECT c.codigo, c.titulo, c.texto, c.activo, c.fecha_inicio, c.fecha_fin,
+              c.mostrar_portada, c.visible_para_todos, c.imagen_portada, c.imagen_portada_nombre, c.imagen_miniatura,
+              c.fechaa, c.codusuarioa, c.fecham, c.codusuariom,
               MAX(COALESCE(cu.me_gusta, 'N')) as me_gusta, 
               MAX(COALESCE(cu.favorito, 'N')) as favorito,
               (SELECT COUNT(*) FROM nu_consejo_usuario cu2 WHERE cu2.codigo_consejo = c.codigo AND cu2.me_gusta = 'S') as total_likes,
@@ -301,7 +315,9 @@ function get_consejos_paciente($paciente_codigo, $codigo_usuario = null) {
         $stmt->bindParam(':codigo_usuario', $codigo_usuario);
     } else {
         // Sin codigo_usuario, devolver valores por defecto
-        $query = "SELECT c.*, 
+          $query = "SELECT c.codigo, c.titulo, c.texto, c.activo, c.fecha_inicio, c.fecha_fin,
+              c.mostrar_portada, c.visible_para_todos, c.imagen_portada, c.imagen_portada_nombre, c.imagen_miniatura,
+              c.fechaa, c.codusuarioa, c.fecham, c.codusuariom,
               'N' as me_gusta, 
               'N' as favorito,
               (SELECT COUNT(*) FROM nu_consejo_usuario cu2 WHERE cu2.codigo_consejo = c.codigo AND cu2.me_gusta = 'S') as total_likes,
@@ -325,6 +341,9 @@ function get_consejos_paciente($paciente_codigo, $codigo_usuario = null) {
         if ($consejo['imagen_portada']) {
             $consejo['imagen_portada'] = base64_encode($consejo['imagen_portada']);
         }
+        if ($consejo['imagen_miniatura']) {
+            $consejo['imagen_miniatura'] = base64_encode($consejo['imagen_miniatura']);
+        }
     }
     
     ob_clean();
@@ -339,7 +358,9 @@ function get_consejos_portada_paciente($paciente_codigo, $codigo_usuario = null)
     
     // Si se proporciona codigo_usuario, hacer JOIN para obtener estado de favorito y me_gusta
     if ($codigo_usuario !== null) {
-        $query = "SELECT c.*, 
+          $query = "SELECT c.codigo, c.titulo, c.texto, c.activo, c.fecha_inicio, c.fecha_fin,
+              c.mostrar_portada, c.visible_para_todos, c.imagen_portada, c.imagen_portada_nombre, c.imagen_miniatura,
+              c.fechaa, c.codusuarioa, c.fecham, c.codusuariom,
               MAX(COALESCE(cu.me_gusta, 'N')) as me_gusta, 
               MAX(COALESCE(cu.favorito, 'N')) as favorito,
               (SELECT COUNT(*) FROM nu_consejo_usuario cu2 WHERE cu2.codigo_consejo = c.codigo AND cu2.me_gusta = 'S') as total_likes,
@@ -362,7 +383,9 @@ function get_consejos_portada_paciente($paciente_codigo, $codigo_usuario = null)
         $stmt->bindParam(':hoy', $hoy);
     } else {
         // Sin codigo_usuario, devolver valores por defecto
-        $query = "SELECT c.*, 
+          $query = "SELECT c.codigo, c.titulo, c.texto, c.activo, c.fecha_inicio, c.fecha_fin,
+              c.mostrar_portada, c.visible_para_todos, c.imagen_portada, c.imagen_portada_nombre, c.imagen_miniatura,
+              c.fechaa, c.codusuarioa, c.fecham, c.codusuariom,
               'N' as me_gusta, 
               'N' as favorito,
               (SELECT COUNT(*) FROM nu_consejo_usuario cu2 WHERE cu2.codigo_consejo = c.codigo AND cu2.me_gusta = 'S') as total_likes,
@@ -389,6 +412,9 @@ function get_consejos_portada_paciente($paciente_codigo, $codigo_usuario = null)
     foreach ($consejos as &$consejo) {
         if ($consejo['imagen_portada']) {
             $consejo['imagen_portada'] = base64_encode($consejo['imagen_portada']);
+        }
+        if ($consejo['imagen_miniatura']) {
+            $consejo['imagen_miniatura'] = base64_encode($consejo['imagen_miniatura']);
         }
     }
     
@@ -425,6 +451,7 @@ function create_consejo() {
                 visible_para_todos = :visible_para_todos,
                 imagen_portada = :imagen_portada,
                 imagen_portada_nombre = :imagen_portada_nombre,
+                imagen_miniatura = :imagen_miniatura,
                 fechaa = NOW(),
                 codusuarioa = :codusuarioa";
     
@@ -473,6 +500,7 @@ function update_consejo() {
                 visible_para_todos = :visible_para_todos,
                 imagen_portada = :imagen_portada,
                 imagen_portada_nombre = :imagen_portada_nombre,
+                imagen_miniatura = :imagen_miniatura,
                 fecham = NOW(),
                 codusuariom = :codusuariom
               WHERE codigo = :codigo";

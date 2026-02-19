@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
 import 'package:nutri_app/models/usuario.dart';
 import 'package:nutri_app/screens/usuarios/usuario_edit_screen.dart';
 import 'package:nutri_app/services/api_service.dart';
@@ -7,6 +8,7 @@ import 'package:nutri_app/mixins/auth_error_handler_mixin.dart';
 import 'package:provider/provider.dart';
 import 'package:nutri_app/services/config_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class UsuariosListScreen extends StatefulWidget {
   const UsuariosListScreen({super.key});
@@ -23,6 +25,8 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
   bool _filterTodos = true;
   bool _filterActivos = false;
   bool _filterAccesoWeb = false;
+  bool _showFilters = false;
+  final TextEditingController _searchController = TextEditingController();
 
   Widget _buildTag(String text, Color backgroundColor,
       {Color textColor = Colors.white}) {
@@ -61,10 +65,73 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
     );
   }
 
+  Widget _buildUserAvatar(Usuario usuario) {
+    // Si tiene imagen de perfil, mostrar la imagen
+    if (usuario.imgPerfil != null && usuario.imgPerfil!.isNotEmpty) {
+      try {
+        // debugPrint('Intentando decodificar imagen de usuario: ${usuario.nick}');
+        // debugPrint('Tamaño base64: ${usuario.imgPerfil!.length} caracteres');
+        // debugPrint(
+        //     'Primeros 100 caracteres: ${usuario.imgPerfil!.substring(0, math.min(100, usuario.imgPerfil!.length))}');
+
+        final imageBytes = base64Decode(usuario.imgPerfil!);
+        // debugPrint(
+        //     'Imagen decodificada exitosamente: ${imageBytes.length} bytes');
+
+        return CircleAvatar(
+          radius: 24,
+          backgroundImage: MemoryImage(imageBytes),
+          onBackgroundImageError: (exception, stackTrace) {
+            // debugPrint('Error al mostrar imagen: $exception');
+          },
+        );
+      } catch (e) {
+        // Si hay error decodificando, mostrar icono genérico
+        // debugPrint('Error decodificando base64 para ${usuario.nick}: $e');
+        return const CircleAvatar(
+          radius: 24,
+          child: Icon(Icons.person, size: 28, color: Colors.white),
+        );
+      }
+    }
+
+    // Si no tiene imagen, mostrar icono genérico
+    return const CircleAvatar(
+      radius: 24,
+      child: Icon(Icons.person, size: 28, color: Colors.white),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
+    _loadUiState();
+    _searchController.addListener(() {
+      setState(() {
+        _searchQuery = _searchController.text;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadUiState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final showFilters = prefs.getBool('usuarios_show_filters') ?? false;
+    if (!mounted) return;
+    setState(() {
+      _showFilters = showFilters;
+    });
     _refreshUsuarios();
+  }
+
+  Future<void> _saveUiState() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('usuarios_show_filters', _showFilters);
   }
 
   void _refreshUsuarios() {
@@ -176,6 +243,17 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
         title: const Text('Usuarios'),
         actions: [
           IconButton(
+            icon: Icon(
+                _showFilters ? Icons.filter_alt : Icons.filter_alt_outlined),
+            tooltip: _showFilters ? 'Ocultar filtro' : 'Mostrar filtro',
+            onPressed: () {
+              setState(() {
+                _showFilters = !_showFilters;
+              });
+              _saveUiState();
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _refreshUsuarios,
           ),
@@ -231,75 +309,79 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
 
           return Column(
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                child: Column(
-                  children: [
-                    TextField(
-                      decoration: const InputDecoration(
-                        labelText: 'Buscar usuario',
-                        prefixIcon: Icon(Icons.search),
-                        border: OutlineInputBorder(),
-                      ),
-                      onChanged: (value) {
-                        setState(() {
-                          _searchQuery = value;
-                        });
-                      },
+              if (_showFilters) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      labelText: 'Buscar usuario',
+                      prefixIcon: const Icon(Icons.search),
+                      border: const OutlineInputBorder(),
+                      suffixIcon: _searchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                _searchController.clear();
+                              },
+                            )
+                          : null,
                     ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        FilterChip(
-                          label: const Text('Todos'),
-                          selected: _filterTodos,
-                          onSelected: (selected) {
-                            setState(() {
-                              _filterTodos = selected;
-                              if (selected) {
-                                _filterActivos = false;
-                                _filterAccesoWeb = false;
-                              } else if (!_filterActivos && !_filterAccesoWeb) {
-                                _filterTodos = true;
-                              }
-                            });
-                          },
-                        ),
-                        FilterChip(
-                          label: const Text('Activos'),
-                          selected: _filterActivos,
-                          onSelected: (selected) {
-                            setState(() {
-                              _filterActivos = selected;
-                              if (selected) {
-                                _filterTodos = false;
-                              } else if (!_filterAccesoWeb) {
-                                _filterTodos = true;
-                              }
-                            });
-                          },
-                        ),
-                        FilterChip(
-                          label: const Text('Acceso web'),
-                          selected: _filterAccesoWeb,
-                          onSelected: (selected) {
-                            setState(() {
-                              _filterAccesoWeb = selected;
-                              if (selected) {
-                                _filterTodos = false;
-                              } else if (!_filterActivos) {
-                                _filterTodos = true;
-                              }
-                            });
-                          },
-                        ),
-                      ],
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-              const Divider(height: 1),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Wrap(
+                    spacing: 8,
+                    children: [
+                      FilterChip(
+                        label: const Text('Todos'),
+                        selected: _filterTodos,
+                        onSelected: (selected) {
+                          setState(() {
+                            _filterTodos = selected;
+                            if (selected) {
+                              _filterActivos = false;
+                              _filterAccesoWeb = false;
+                            } else if (!_filterActivos && !_filterAccesoWeb) {
+                              _filterTodos = true;
+                            }
+                          });
+                        },
+                      ),
+                      FilterChip(
+                        label: const Text('Activos'),
+                        selected: _filterActivos,
+                        onSelected: (selected) {
+                          setState(() {
+                            _filterActivos = selected;
+                            if (selected) {
+                              _filterTodos = false;
+                            } else if (!_filterAccesoWeb) {
+                              _filterTodos = true;
+                            }
+                          });
+                        },
+                      ),
+                      FilterChip(
+                        label: const Text('Acceso web'),
+                        selected: _filterAccesoWeb,
+                        onSelected: (selected) {
+                          setState(() {
+                            _filterAccesoWeb = selected;
+                            if (selected) {
+                              _filterTodos = false;
+                            } else if (!_filterActivos) {
+                              _filterTodos = true;
+                            }
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+              ],
               Expanded(
                 child: filteredUsuarios.isEmpty
                     ? const Center(child: Text('No se encontraron usuarios.'))
@@ -345,8 +427,7 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
                                 horizontal: 8, vertical: 4),
                             elevation: 2,
                             child: ListTile(
-                              leading: CircleAvatar(
-                                  child: Text(usuario.nick[0].toUpperCase())),
+                              leading: _buildUserAvatar(usuario),
                               title: Text(usuario.nick),
                               subtitle: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,

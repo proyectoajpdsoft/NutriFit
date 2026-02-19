@@ -10,7 +10,22 @@ import 'package:nutri_app/services/plan_fit_pdf_service.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
-import 'package:url_launcher/url_launcher.dart';
+// import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+class _PlanFitPdfOptions {
+  final bool fichaPorDias;
+  final bool showMiniThumbs;
+  final bool showConsejos;
+  final bool showRecomendaciones;
+
+  const _PlanFitPdfOptions({
+    required this.fichaPorDias,
+    required this.showMiniThumbs,
+    required this.showConsejos,
+    required this.showRecomendaciones,
+  });
+}
 
 class PlanesFitListScreen extends StatefulWidget {
   final Paciente? paciente;
@@ -21,16 +36,20 @@ class PlanesFitListScreen extends StatefulWidget {
 }
 
 class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
+  static const _pdfFullPrefix = 'plan_fit_pdf_full';
+  static const _pdfResumenPrefix = 'plan_fit_pdf_resumen';
   final ApiService _apiService = ApiService();
   late Future<List<PlanFit>> _planesFuture;
   final TextEditingController _searchController = TextEditingController();
   String _searchText = '';
   bool _showSearchField = false;
+  bool _showFilterPlanes = false;
   String _filtroCompletado = 'No completados';
 
   @override
   void initState() {
     super.initState();
+    _loadUiState();
     _refreshPlanes();
     _searchController.addListener(() {
       setState(() {
@@ -53,6 +72,27 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
         _planesFuture = _apiService.getPlanesFit(null);
       }
     });
+  }
+
+  Future<void> _loadUiState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final showSearch = prefs.getBool('planes_fit_show_search_field') ?? false;
+    final showFilter = prefs.getBool('planes_fit_show_filter') ?? false;
+    final filtroCompletado =
+        prefs.getString('planes_fit_filtro_completado') ?? 'No completados';
+    if (!mounted) return;
+    setState(() {
+      _showSearchField = showSearch;
+      _showFilterPlanes = showFilter;
+      _filtroCompletado = filtroCompletado;
+    });
+  }
+
+  Future<void> _saveUiState() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('planes_fit_show_search_field', _showSearchField);
+    await prefs.setBool('planes_fit_show_filter', _showFilterPlanes);
+    await prefs.setString('planes_fit_filtro_completado', _filtroCompletado);
   }
 
   List<PlanFit> _filterPlanes(List<PlanFit> planes) {
@@ -139,11 +179,127 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
   }
 
   Future<void> _generatePlanFitPdf(PlanFit plan) async {
+    final options = await _showPlanFitPdfOptionsDialog(showFichaOptions: true);
+    if (options == null) return;
     await PlanFitPdfService.generatePlanFitPdf(
       context: context,
       apiService: _apiService,
       plan: plan,
       fileName: _buildFileName(plan),
+      fichaPorDias: options.fichaPorDias,
+      showMiniThumbs: options.showMiniThumbs,
+      showConsejos: options.showConsejos,
+      showRecomendaciones: options.showRecomendaciones,
+    );
+  }
+
+  Future<void> _generatePlanFitPdfResumen(PlanFit plan) async {
+    final options = await _showPlanFitPdfOptionsDialog(showFichaOptions: false);
+    if (options == null) return;
+    await PlanFitPdfService.generatePlanFitPdf(
+      context: context,
+      apiService: _apiService,
+      plan: plan,
+      fileName: _buildFileName(plan),
+      resumen: true,
+      showMiniThumbs: options.showMiniThumbs,
+      showConsejos: options.showConsejos,
+      showRecomendaciones: options.showRecomendaciones,
+    );
+  }
+
+  Future<_PlanFitPdfOptions?> _showPlanFitPdfOptionsDialog({
+    required bool showFichaOptions,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final modePrefix = showFichaOptions ? _pdfFullPrefix : _pdfResumenPrefix;
+    String key(String suffix) => '${modePrefix}_$suffix';
+    var fichaPorDias = prefs.getBool(key('ficha_por_dias')) ?? true;
+    var showMiniThumbs = prefs.getBool(key('show_mini_thumbs')) ?? false;
+    var showConsejos = prefs.getBool(key('show_consejos')) ?? true;
+    var showRecomendaciones =
+        prefs.getBool(key('show_recomendaciones')) ?? true;
+    return showDialog<_PlanFitPdfOptions>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Opciones del PDF'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (showFichaOptions) ...[
+                    RadioListTile<bool>(
+                      value: true,
+                      groupValue: fichaPorDias,
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() => fichaPorDias = value);
+                      },
+                      title: const Text('Ficha por días'),
+                    ),
+                    RadioListTile<bool>(
+                      value: false,
+                      groupValue: fichaPorDias,
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() => fichaPorDias = value);
+                      },
+                      title: const Text('Ficha únicos'),
+                    ),
+                  ],
+                  SwitchListTile(
+                    value: showMiniThumbs,
+                    onChanged: (value) {
+                      setState(() => showMiniThumbs = value);
+                    },
+                    title: const Text('Mostrar miniatura'),
+                  ),
+                  SwitchListTile(
+                    value: showConsejos,
+                    onChanged: (value) {
+                      setState(() => showConsejos = value);
+                    },
+                    title: const Text('Mostrar consejos'),
+                  ),
+                  SwitchListTile(
+                    value: showRecomendaciones,
+                    onChanged: (value) {
+                      setState(() => showRecomendaciones = value);
+                    },
+                    title: const Text('Mostrar recomendaciones'),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    prefs.setBool(key('ficha_por_dias'), fichaPorDias);
+                    prefs.setBool(key('show_mini_thumbs'), showMiniThumbs);
+                    prefs.setBool(key('show_consejos'), showConsejos);
+                    prefs.setBool(
+                        key('show_recomendaciones'), showRecomendaciones);
+                    Navigator.of(dialogContext).pop(
+                      _PlanFitPdfOptions(
+                        fichaPorDias: fichaPorDias,
+                        showMiniThumbs: showMiniThumbs,
+                        showConsejos: showConsejos,
+                        showRecomendaciones: showRecomendaciones,
+                      ),
+                    );
+                  },
+                  child: const Text('Generar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -188,50 +344,64 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
             : 'Planes Fit'),
         actions: [
           IconButton(
+            icon: Icon(_showFilterPlanes
+                ? Icons.filter_alt
+                : Icons.filter_alt_outlined),
+            tooltip: _showFilterPlanes ? 'Ocultar filtro' : 'Mostrar filtro',
+            onPressed: () {
+              setState(() {
+                _showFilterPlanes = !_showFilterPlanes;
+              });
+              _saveUiState();
+            },
+          ),
+          IconButton(
               icon: const Icon(Icons.refresh), onPressed: _refreshPlanes),
         ],
       ),
       body: SafeArea(
         child: Column(
           children: [
-            Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  SegmentedButton<String>(
-                    segments: const [
-                      ButtonSegment(
-                          value: "No completados",
-                          label: Text('No completados')),
-                      ButtonSegment(value: "Todos", label: Text('Todos')),
-                    ],
-                    selected: {_filtroCompletado},
-                    onSelectionChanged: (Set<String> newSelection) {
-                      setState(() {
-                        _filtroCompletado = newSelection.first;
-                      });
-                    },
-                  ),
-                  IconButton(
-                    icon: Icon(
-                        _showSearchField ? Icons.search_off : Icons.search),
-                    onPressed: () {
-                      setState(() {
-                        _showSearchField = !_showSearchField;
-                        if (!_showSearchField) {
-                          _searchController.clear();
-                        }
-                      });
-                    },
-                    tooltip: _showSearchField
-                        ? 'Ocultar búsqueda'
-                        : 'Mostrar búsqueda',
-                  ),
-                ],
+            if (_showFilterPlanes)
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(
+                            value: "No completados", label: Text('No compl.')),
+                        ButtonSegment(value: "Todos", label: Text('Todos')),
+                      ],
+                      selected: {_filtroCompletado},
+                      onSelectionChanged: (Set<String> newSelection) {
+                        setState(() {
+                          _filtroCompletado = newSelection.first;
+                        });
+                        _saveUiState();
+                      },
+                    ),
+                    IconButton(
+                      icon: Icon(
+                          _showSearchField ? Icons.search_off : Icons.search),
+                      onPressed: () {
+                        setState(() {
+                          _showSearchField = !_showSearchField;
+                          if (!_showSearchField) {
+                            _searchController.clear();
+                          }
+                        });
+                        _saveUiState();
+                      },
+                      tooltip: _showSearchField
+                          ? 'Ocultar búsqueda'
+                          : 'Mostrar búsqueda',
+                    ),
+                  ],
+                ),
               ),
-            ),
             if (_showSearchField)
               Padding(
                 padding:
@@ -268,7 +438,7 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
                     return const Center(child: CircularProgressIndicator());
                   } else if (snapshot.hasError) {
                     final errorMessage = snapshot.error.toString();
-                    debugPrint('Error al cargar planes fit: $errorMessage');
+                    // debugPrint('Error al cargar planes fit: $errorMessage');
                     if (configService.appMode == AppMode.debug) {
                       return Center(
                           child: Padding(
@@ -326,237 +496,318 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
 
                       final desdeStr = plan.desde != null
                           ? DateFormat('dd/MM/yyyy').format(plan.desde!)
-                          : '-';
+                          : null;
                       final hastaStr = plan.hasta != null
                           ? DateFormat('dd/MM/yyyy').format(plan.hasta!)
-                          : '-';
+                          : null;
+
+                      // Construir el título del plan según las fechas disponibles
+                      final planTitle = desdeStr == null
+                          ? hastaStr != null
+                              ? 'Plan fit de $hastaStr'
+                              : 'Plan fit'
+                          : hastaStr != null
+                              ? 'Desde $desdeStr hasta $hastaStr'
+                              : 'Desde $desdeStr';
 
                       return Card(
                         elevation: 4,
                         margin: const EdgeInsets.symmetric(vertical: 8),
-                        child: InkWell(
-                          onTap: () => _navigateToEditScreen(plan),
-                          child: Padding(
-                            padding: const EdgeInsets.all(16.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                ListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  title: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        widget.paciente?.nombre ??
-                                            plan.nombrePaciente ??
-                                            'Paciente',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleMedium
-                                            ?.copyWith(
-                                                fontWeight: FontWeight.bold),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        'Plan Fit del $desdeStr al $hastaStr',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleMedium,
-                                      ),
-                                    ],
-                                  ),
-                                  subtitle: (plan.semanas != null &&
-                                          plan.semanas!.isNotEmpty)
-                                      ? Text(
-                                          'Semanas: ${plan.semanas}',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodySmall,
-                                        )
-                                      : null,
-                                ),
-                                FutureBuilder<Map<String, int>>(
-                                  future: _getPlanCounts(plan.codigo),
-                                  builder: (context, snapshot) {
-                                    final data = snapshot.data ??
-                                        const {'ejercicios': 0, 'dias': 0};
-                                    final ejercicios = data['ejercicios'] ?? 0;
-                                    final dias = data['dias'] ?? 0;
-                                    return Padding(
-                                      padding: const EdgeInsets.only(top: 4.0),
-                                      child: Text(
-                                        'Ejercicios: $ejercicios • Días: $dias',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall,
-                                      ),
-                                    );
-                                  },
-                                ),
-                                if (plan.url != null &&
-                                    plan.url!.isNotEmpty) ...[
-                                  const SizedBox(height: 6),
-                                  InkWell(
-                                    onTap: () async {
-                                      try {
-                                        String urlString = plan.url!.trim();
-                                        // Asegurarse de que la URL tenga un esquema
-                                        if (!urlString.startsWith('http://') &&
-                                            !urlString.startsWith('https://')) {
-                                          urlString = 'https://$urlString';
-                                        }
-                                        final Uri url = Uri.parse(urlString);
-                                        await launchUrl(url,
-                                            mode:
-                                                LaunchMode.externalApplication);
-                                      } catch (e) {
-                                        if (context.mounted) {
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(
-                                            SnackBar(
-                                              content: Text(
-                                                  'No se pudo abrir la URL: ${plan.url}'),
-                                              backgroundColor: Colors.red,
-                                            ),
-                                          );
-                                        }
-                                      }
-                                    },
-                                    child: Row(
-                                      children: [
-                                        const Icon(
-                                          Icons.open_in_browser,
-                                          size: 16,
-                                          color: Colors.blue,
-                                        ),
-                                        const SizedBox(width: 6),
-                                        Text(
-                                          'Ver en el navegador',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodyMedium
-                                              ?.copyWith(
-                                                color: Colors.blue,
-                                                decoration:
-                                                    TextDecoration.underline,
-                                              ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                                if (plan.planIndicaciones != null &&
-                                    plan.planIndicaciones!.isNotEmpty) ...[
-                                  const SizedBox(height: 6),
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Paciente + Título del plan
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
                                   Text(
-                                    'Indicaciones:',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodySmall
-                                        ?.copyWith(
-                                          fontWeight: FontWeight.bold,
-                                        ),
+                                    widget.paciente?.nombre ??
+                                        plan.nombrePaciente ??
+                                        'Paciente',
+                                    style:
+                                        Theme.of(context).textTheme.titleSmall,
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
-                                    _truncateIndicaciones(
-                                        plan.planIndicaciones!, 200),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style:
-                                        Theme.of(context).textTheme.bodyMedium,
+                                    planTitle,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(fontWeight: FontWeight.bold),
                                   ),
-                                  const SizedBox(height: 12),
                                 ],
+                              ),
+                              const SizedBox(height: 12),
+
+                              // Semanas + Ejercicios + Días
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // Semanas
+                                  if (plan.semanas != null &&
+                                      plan.semanas!.isNotEmpty)
+                                    Padding(
+                                      padding:
+                                          const EdgeInsets.only(bottom: 8.0),
+                                      child: Chip(
+                                        avatar: const Icon(Icons.calendar_today,
+                                            size: 16),
+                                        label: Text('${plan.semanas} sem'),
+                                        materialTapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                      ),
+                                    ),
+                                  // Ejercicios + Días
+                                  FutureBuilder<Map<String, int>>(
+                                    future: _getPlanCounts(plan.codigo),
+                                    builder: (context, snapshot) {
+                                      final data = snapshot.data ??
+                                          const {'ejercicios': 0, 'dias': 0};
+                                      final ejercicios =
+                                          data['ejercicios'] ?? 0;
+                                      final dias = data['dias'] ?? 0;
+                                      return Wrap(
+                                        spacing: 8,
+                                        runSpacing: 8,
+                                        children: [
+                                          if (ejercicios > 0)
+                                            Chip(
+                                              avatar: const Icon(
+                                                  Icons.fitness_center,
+                                                  size: 16),
+                                              label: Text('$ejercicios ej'),
+                                              materialTapTargetSize:
+                                                  MaterialTapTargetSize
+                                                      .shrinkWrap,
+                                            ),
+                                          if (dias > 0)
+                                            Chip(
+                                              avatar: const Icon(
+                                                  Icons.date_range,
+                                                  size: 16),
+                                              label: Text('$dias días'),
+                                              materialTapTargetSize:
+                                                  MaterialTapTargetSize
+                                                      .shrinkWrap,
+                                            ),
+                                        ],
+                                      );
+                                    },
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+
+                              // Indicaciones (recuadro amarillo, expandido al ancho)
+                              if (plan.planIndicacionesVisibleUsuario != null &&
+                                  plan.planIndicacionesVisibleUsuario!
+                                      .isNotEmpty) ...[
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(12.0),
+                                  decoration: BoxDecoration(
+                                    color: Colors.amber[100],
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: Colors.amber[300]!,
+                                      width: 1,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    plan.planIndicacionesVisibleUsuario!,
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ),
                                 const SizedBox(height: 12),
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Wrap(
-                                    spacing: 8,
-                                    runSpacing: 6,
-                                    children: [
-                                      ElevatedButton.icon(
-                                        icon: const Icon(Icons.picture_as_pdf),
-                                        label: const Text('Generar'),
-                                        onPressed: () =>
-                                            _generatePlanFitPdf(plan),
-                                      ),
-                                      if (plan.planDocumentoNombre != null &&
-                                          plan.planDocumentoNombre!.isNotEmpty)
-                                        ElevatedButton.icon(
-                                          icon: const Icon(Icons
-                                              .download_for_offline_outlined),
-                                          label: const Text('Descargar'),
-                                          onPressed: () =>
-                                              _downloadAndOpenFile(plan),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Wrap(
-                                    spacing: 8,
-                                    runSpacing: 6,
-                                    children: [
-                                      OutlinedButton.icon(
-                                        onPressed: () => _navigateToEditScreen(
-                                            plan,
-                                            openDayDialog: true),
-                                        icon: const Icon(Icons.add),
-                                        label: const Text('Día'),
-                                      ),
-                                      OutlinedButton.icon(
-                                        onPressed: () => _navigateToEditScreen(
-                                            plan,
-                                            openExerciseDialog: true),
-                                        icon: const Icon(Icons.add_circle),
-                                        label: const Text('Ejercicio'),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Wrap(
-                                    spacing: 8,
-                                    runSpacing: 6,
-                                    crossAxisAlignment:
-                                        WrapCrossAlignment.center,
-                                    children: [
-                                      if (plan.completado != 'S')
-                                        ElevatedButton.icon(
-                                          icon: const Icon(Icons.check),
-                                          label: const Text('Completar'),
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: Colors.green,
-                                            foregroundColor: Colors.white,
-                                          ),
-                                          onPressed: () =>
-                                              _showCompletarPlanDialog(plan),
-                                        ),
-                                      IconButton(
-                                        onPressed: () =>
-                                            _navigateToEditScreen(plan),
-                                        icon: const Icon(Icons.edit),
-                                        tooltip: 'Editar',
-                                        color: Colors.blue,
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(Icons.delete),
-                                        color: Colors.red,
-                                        onPressed: () =>
-                                            _showDeleteConfirmation(plan),
-                                        tooltip: 'Eliminar',
-                                      ),
-                                    ],
-                                  ),
-                                ),
                               ],
-                            ),
+
+                              // Primera fila: Generar, Resumen, Descargar, Clonar, Completar
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: Wrap(
+                                  spacing: 4,
+                                  runSpacing: 6,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.picture_as_pdf),
+                                      color: Colors.red,
+                                      onPressed: () =>
+                                          _generatePlanFitPdf(plan),
+                                      tooltip: 'Generar PDF',
+                                      iconSize: 30,
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.summarize),
+                                      color: Colors.orange,
+                                      onPressed: () =>
+                                          _generatePlanFitPdfResumen(plan),
+                                      tooltip: 'Resumen PDF',
+                                      iconSize: 30,
+                                    ),
+                                    if (plan.planDocumentoNombre != null &&
+                                        plan.planDocumentoNombre!.isNotEmpty)
+                                      IconButton(
+                                        icon: const Icon(Icons
+                                            .download_for_offline_outlined),
+                                        color: Colors.blue,
+                                        onPressed: () =>
+                                            _downloadAndOpenFile(plan),
+                                        tooltip: 'Descargar',
+                                        iconSize: 30,
+                                      ),
+                                    IconButton(
+                                      icon: const Icon(Icons.content_copy),
+                                      color: Colors.purple,
+                                      onPressed: () => _clonPlan(plan),
+                                      tooltip: 'Clonar',
+                                      iconSize: 30,
+                                    ),
+                                    if (plan.completado != 'S')
+                                      IconButton(
+                                        icon: const Icon(Icons.check),
+                                        color: Colors.green,
+                                        onPressed: () =>
+                                            _showCompletarPlanDialog(plan),
+                                        tooltip: 'Completar',
+                                        iconSize: 30,
+                                      ),
+                                    IconButton(
+                                      icon: const Icon(Icons.open_in_browser),
+                                      color: Colors.blue,
+                                      onPressed: () async {
+                                        // try {
+                                        //   String urlString =
+                                        //       plan.url?.trim() ?? '';
+                                        //   if (urlString.isEmpty) {
+                                        //     throw Exception('URL vacía');
+                                        //   }
+                                        //   if (!urlString
+                                        //           .startsWith('http://') &&
+                                        //       !urlString
+                                        //           .startsWith('https://')) {
+                                        //     urlString = 'https://$urlString';
+                                        //   }
+                                        //   Uri url;
+                                        //   try {
+                                        //     url = Uri.parse(urlString);
+                                        //   } catch (_) {
+                                        //     url = Uri.parse(
+                                        //         Uri.encodeFull(urlString));
+                                        //   }
+                                        //
+                                        //   if (await canLaunchUrl(url)) {
+                                        //     final opened = await launchUrl(url,
+                                        //         mode: LaunchMode
+                                        //             .externalApplication);
+                                        //     if (!opened) {
+                                        //       throw Exception(
+                                        //           'No se pudo abrir la URL');
+                                        //     }
+                                        //   } else {
+                                        //     throw Exception(
+                                        //         'No se puede lanzar la URL');
+                                        //   }
+                                        // } catch (e) {
+                                        //   if (context.mounted) {
+                                        //     ScaffoldMessenger.of(context)
+                                        //         .showSnackBar(
+                                        //       SnackBar(
+                                        //         content: Text(
+                                        //             'No se pudo abrir la URL: ${plan.url}'),
+                                        //         backgroundColor: Colors.red,
+                                        //       ),
+                                        //     );
+                                        //   }
+                                        // }
+                                      },
+                                      tooltip: 'Ver en navegador',
+                                      iconSize: 30,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              // Segunda fila: URL, Día, Ejercicio, Editar, Eliminar
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: Wrap(
+                                  spacing: 4,
+                                  runSpacing: 6,
+                                  children: [
+                                    if (plan.url != null &&
+                                        plan.url!.isNotEmpty)
+                                      IconButton(
+                                        icon: const Icon(Icons.open_in_browser),
+                                        color: Colors.blue,
+                                        onPressed: () async {
+                                          // try {
+                                          //   String urlString = plan.url!.trim();
+                                          //   if (!urlString
+                                          //           .startsWith('http://') &&
+                                          //       !urlString
+                                          //           .startsWith('https://')) {
+                                          //     urlString = 'https://$urlString';
+                                          //   }
+                                          //   final Uri url =
+                                          //       Uri.parse(urlString);
+                                          //   await launchUrl(url,
+                                          //       mode: LaunchMode
+                                          //           .externalApplication);
+                                          // } catch (e) {
+                                          //   if (context.mounted) {
+                                          //     ScaffoldMessenger.of(context)
+                                          //         .showSnackBar(
+                                          //       SnackBar(
+                                          //         content: Text(
+                                          //             'No se pudo abrir la URL: ${plan.url}'),
+                                          //         backgroundColor: Colors.red,
+                                          //       ),
+                                          //     );
+                                          //   }
+                                          // }
+                                        },
+                                        tooltip: 'Ver en navegador',
+                                        iconSize: 30,
+                                      ),
+                                    IconButton(
+                                      onPressed: () => _navigateToEditScreen(
+                                          plan,
+                                          openDayDialog: true),
+                                      icon: const Icon(Icons.calendar_today),
+                                      tooltip: 'Añadir Día',
+                                      iconSize: 30,
+                                    ),
+                                    IconButton(
+                                      onPressed: () => _navigateToEditScreen(
+                                          plan,
+                                          openExerciseDialog: true),
+                                      icon: const Icon(Icons.fitness_center),
+                                      tooltip: 'Añadir Ejercicio',
+                                      iconSize: 30,
+                                    ),
+                                    IconButton(
+                                      onPressed: () =>
+                                          _navigateToEditScreen(plan),
+                                      icon: const Icon(Icons.edit),
+                                      color: Colors.blue,
+                                      tooltip: 'Editar',
+                                      iconSize: 30,
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.delete),
+                                      color: Colors.red,
+                                      onPressed: () =>
+                                          _showDeleteConfirmation(plan),
+                                      tooltip: 'Eliminar',
+                                      iconSize: 30,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       );
@@ -747,8 +998,187 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
     }
   }
 
-  String _truncateIndicaciones(String text, int maxChars) {
-    if (text.length <= maxChars) return text;
-    return text.substring(0, maxChars);
+  Future<void> _clonPlan(PlanFit plan) async {
+    try {
+      // Confirmación de clonación
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Clonar plan'),
+          content: const Text('¿Desea realizar una copia del Plan Fit actual?'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('No')),
+            TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Sí')),
+          ],
+        ),
+      );
+
+      if (confirm != true) return;
+      // Mostrar diálogo de progreso
+      if (mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const AlertDialog(
+            title: Text('Clonando plan...'),
+            content: SizedBox(
+              height: 50,
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          ),
+        );
+      }
+
+      // Obtener días y ejercicios del plan original
+      final diasOriginales = await _apiService.getDiasPlanFit(plan.codigo);
+      final ejerciciosOriginales =
+          await _apiService.getPlanFitEjercicios(plan.codigo);
+
+      // Calcular intervalo de días entre desde y hasta
+      int intervaloDias = 0;
+      if (plan.desde != null && plan.hasta != null) {
+        intervaloDias = plan.hasta!.difference(plan.desde!).inDays;
+      }
+
+      // Crear nuevo plan con fechas actualizadas
+      final hoy = DateTime.now();
+      final planNuevo = PlanFit(
+        codigo: 0, // El servidor asignará el código
+        codigoPaciente: plan.codigoPaciente,
+        desde: hoy,
+        hasta: intervaloDias > 0 ? hoy.add(Duration(days: intervaloDias)) : hoy,
+        semanas: plan.semanas,
+        completado: 'N', // Siempre 'N' para un plan clonado
+        codigoEntrevista: null, // Vacío para plan clonado
+        planDocumentoNombre: null, // Vacío, no clonamos archivo
+        planIndicaciones: plan.planIndicaciones,
+        planIndicacionesVisibleUsuario: plan.planIndicacionesVisibleUsuario,
+        url: plan.url,
+        nombrePaciente: plan.nombrePaciente,
+        rondas: plan.rondas,
+        consejos: plan.consejos,
+        recomendaciones: plan.recomendaciones,
+      );
+
+      // Crear el nuevo plan
+      await _apiService.createPlanFit(planNuevo, null);
+
+      // Esperar un poco para que el servidor procese la creación
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // Obtener los planes actualizados para encontrar el nuevo
+      final planesActualizado =
+          await _apiService.getPlanesFit(plan.codigoPaciente);
+
+      // Encontrar el plan recién creado (el más nuevo con fecha desde = hoy)
+      PlanFit? nuevoPlanCreado;
+      for (final p in planesActualizado) {
+        if (p.desde != null &&
+            p.desde!.year == hoy.year &&
+            p.desde!.month == hoy.month &&
+            p.desde!.day == hoy.day) {
+          nuevoPlanCreado = p;
+          break;
+        }
+      }
+
+      if (nuevoPlanCreado == null) {
+        throw Exception('No se pudo encontrar el plan clonado recién creado');
+      }
+
+      // Clonar días
+      // Asegurarse de que cada día tenga un `numeroDia` válido (>=1).
+      for (var idx = 0; idx < diasOriginales.length; idx++) {
+        final dia = diasOriginales[idx];
+        final numeroDia = (dia.numeroDia > 0) ? dia.numeroDia : (idx + 1);
+        final diaNuevo = PlanFitDia(
+          codigo: 0,
+          codigoPlanFit: nuevoPlanCreado.codigo,
+          numeroDia: numeroDia,
+          titulo: dia.titulo,
+          descripcion: dia.descripcion,
+          orden: dia.orden,
+        );
+        await _apiService.createDia(diaNuevo);
+      }
+
+      // Obtener los nuevos días para mapear códigos (mapear por posición si los
+      // número de día no coinciden, para mayor robustez).
+      final diasNuevos =
+          await _apiService.getDiasPlanFit(nuevoPlanCreado.codigo);
+
+      // Crear un mapa para asociar días antiguos con nuevos (por posición)
+      final diaMapeo = <int, int>{};
+      for (var i = 0; i < diasOriginales.length && i < diasNuevos.length; i++) {
+        diaMapeo[diasOriginales[i].codigo] = diasNuevos[i].codigo;
+      }
+
+      // Clonar ejercicios
+      try {
+        for (final ejercicio in ejerciciosOriginales) {
+          final codigoDiaNuevo = ejercicio.codigoDia != null
+              ? diaMapeo[ejercicio.codigoDia]
+              : null;
+
+          final ejercicioNuevo = PlanFitEjercicio(
+            codigo: 0,
+            codigoPlanFit: nuevoPlanCreado.codigo,
+            codigoDia: codigoDiaNuevo,
+            codigoEjercicioCatalogo: ejercicio.codigoEjercicioCatalogo,
+            nombre: ejercicio.nombre,
+            instrucciones: ejercicio.instrucciones,
+            urlVideo: ejercicio.urlVideo,
+            fotoBase64: ejercicio.fotoBase64,
+            fotoNombre: ejercicio.fotoNombre,
+            fotoMiniatura: ejercicio.fotoMiniatura,
+            tiempo: ejercicio.tiempo,
+            descanso: ejercicio.descanso,
+            repeticiones: ejercicio.repeticiones,
+            kilos: ejercicio.kilos,
+            orden: ejercicio.orden,
+          );
+          await _apiService.createPlanFitEjercicio(ejercicioNuevo, null);
+        }
+      } catch (e) {
+        debugPrint('Advertencia: Error al clonar ejercicios: $e');
+        // No lanzar excepción aquí, los días ya se han creado exitosamente
+      }
+
+      // Cerrar diálogo de progreso
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+
+      // Refrescar lista
+      _refreshPlanes();
+
+      // Mostrar mensaje de éxito
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Plan clonado exitosamente del ${DateFormat('dd/MM/yyyy').format(plan.desde ?? DateTime.now())} '
+              'al ${DateFormat('dd/MM/yyyy').format(nuevoPlanCreado.hasta ?? DateTime.now())}',
+            ),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      // Cerrar diálogo de progreso si está abierto
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al clonar plan: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 }

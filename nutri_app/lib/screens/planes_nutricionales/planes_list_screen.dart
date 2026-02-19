@@ -7,7 +7,8 @@ import 'package:nutri_app/services/config_service.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
-import 'package:url_launcher/url_launcher.dart';
+// import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class PlanesListScreen extends StatefulWidget {
   final Paciente? paciente;
@@ -23,11 +24,13 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchText = '';
   bool _showSearchField = false;
+  bool _showFilterPlanes = false;
   String _filtroCompletado = 'No completados';
 
   @override
   void initState() {
     super.initState();
+    _loadUiState();
     _refreshPlanes();
     _searchController.addListener(() {
       setState(() {
@@ -51,6 +54,27 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
         _planesFuture = _apiService.getPlanes(null);
       }
     });
+  }
+
+  Future<void> _loadUiState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final showSearch = prefs.getBool('planes_show_search_field') ?? false;
+    final showFilter = prefs.getBool('planes_show_filter') ?? false;
+    final filtroCompletado =
+        prefs.getString('planes_filtro_completado') ?? 'No completados';
+    if (!mounted) return;
+    setState(() {
+      _showSearchField = showSearch;
+      _showFilterPlanes = showFilter;
+      _filtroCompletado = filtroCompletado;
+    });
+  }
+
+  Future<void> _saveUiState() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('planes_show_search_field', _showSearchField);
+    await prefs.setBool('planes_show_filter', _showFilterPlanes);
+    await prefs.setString('planes_filtro_completado', _filtroCompletado);
   }
 
   List<PlanNutricional> _filterPlanes(List<PlanNutricional> planes) {
@@ -150,50 +174,64 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
             : 'Planes Nutri'),
         actions: [
           IconButton(
+            icon: Icon(_showFilterPlanes
+                ? Icons.filter_alt
+                : Icons.filter_alt_outlined),
+            tooltip: _showFilterPlanes ? 'Ocultar filtro' : 'Mostrar filtro',
+            onPressed: () {
+              setState(() {
+                _showFilterPlanes = !_showFilterPlanes;
+              });
+              _saveUiState();
+            },
+          ),
+          IconButton(
               icon: const Icon(Icons.refresh), onPressed: _refreshPlanes),
         ],
       ),
       body: SafeArea(
         child: Column(
           children: [
-            Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  SegmentedButton<String>(
-                    segments: const [
-                      ButtonSegment(
-                          value: "No completados",
-                          label: Text('No completados')),
-                      ButtonSegment(value: "Todos", label: Text('Todos')),
-                    ],
-                    selected: {_filtroCompletado},
-                    onSelectionChanged: (Set<String> newSelection) {
-                      setState(() {
-                        _filtroCompletado = newSelection.first;
-                      });
-                    },
-                  ),
-                  IconButton(
-                    icon: Icon(
-                        _showSearchField ? Icons.search_off : Icons.search),
-                    onPressed: () {
-                      setState(() {
-                        _showSearchField = !_showSearchField;
-                        if (!_showSearchField) {
-                          _searchController.clear();
-                        }
-                      });
-                    },
-                    tooltip: _showSearchField
-                        ? 'Ocultar búsqueda'
-                        : 'Mostrar búsqueda',
-                  ),
-                ],
+            if (_showFilterPlanes)
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(
+                            value: "No completados", label: Text('No compl.')),
+                        ButtonSegment(value: "Todos", label: Text('Todos')),
+                      ],
+                      selected: {_filtroCompletado},
+                      onSelectionChanged: (Set<String> newSelection) {
+                        setState(() {
+                          _filtroCompletado = newSelection.first;
+                        });
+                        _saveUiState();
+                      },
+                    ),
+                    IconButton(
+                      icon: Icon(
+                          _showSearchField ? Icons.search_off : Icons.search),
+                      onPressed: () {
+                        setState(() {
+                          _showSearchField = !_showSearchField;
+                          if (!_showSearchField) {
+                            _searchController.clear();
+                          }
+                        });
+                        _saveUiState();
+                      },
+                      tooltip: _showSearchField
+                          ? 'Ocultar búsqueda'
+                          : 'Mostrar búsqueda',
+                    ),
+                  ],
+                ),
               ),
-            ),
             if (_showSearchField)
               Padding(
                 padding:
@@ -231,7 +269,7 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
                     // --- LÓGICA DE ERROR DUAL (DEBUG/NORMAL) ---
                     final errorMessage = snapshot.error.toString();
                     // DEBUG: Imprime el error completo en la consola
-                    debugPrint('Error al cargar planes: $errorMessage');
+                    // debugPrint('Error al cargar planes: $errorMessage');
                     if (configService.appMode == AppMode.debug) {
                       return Center(
                           child: Padding(
@@ -287,196 +325,167 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
                     itemBuilder: (context, index) {
                       final plan = planes[index];
 
-                      // --- MANEJO SEGURO DE FECHAS NULAS ---
                       final desdeStr = plan.desde != null
                           ? DateFormat('dd/MM/yyyy').format(plan.desde!)
-                          : '-';
+                          : null;
                       final hastaStr = plan.hasta != null
                           ? DateFormat('dd/MM/yyyy').format(plan.hasta!)
-                          : '-';
+                          : null;
+
+                      // Construir el título del plan según las fechas disponibles
+                      final planTitle = desdeStr == null
+                          ? hastaStr != null
+                              ? 'Plan nutri de $hastaStr'
+                              : 'Plan nutri'
+                          : hastaStr != null
+                              ? 'Plan nutri del $desdeStr al $hastaStr'
+                              : 'Plan nutri del $desdeStr';
 
                       return Card(
                         elevation: 4,
                         margin: const EdgeInsets.symmetric(vertical: 8),
-                        child: InkWell(
-                          onTap: () => _navigateToEditScreen(plan),
-                          child: Padding(
-                            padding: const EdgeInsets.all(16.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                ListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  title: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        widget.paciente?.nombre ??
-                                            plan.nombrePaciente ??
-                                            'Paciente',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleMedium
-                                            ?.copyWith(
-                                                fontWeight: FontWeight.bold),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        'Plan del $desdeStr al $hastaStr',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleMedium,
-                                      ),
-                                    ],
-                                  ),
-                                  subtitle: (plan.semanas != null &&
-                                          plan.semanas!.isNotEmpty)
-                                      ? Text(
-                                          'Semanas: ${plan.semanas}',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodySmall,
-                                        )
-                                      : null,
-                                ),
-                                if (plan.url != null &&
-                                    plan.url!.isNotEmpty) ...[
-                                  const SizedBox(height: 6),
-                                  InkWell(
-                                    onTap: () async {
-                                      try {
-                                        String urlString = plan.url!.trim();
-                                        // Asegurarse de que la URL tenga un esquema
-                                        if (!urlString.startsWith('http://') &&
-                                            !urlString.startsWith('https://')) {
-                                          urlString = 'https://$urlString';
-                                        }
-                                        final Uri url = Uri.parse(urlString);
-                                        await launchUrl(url,
-                                            mode:
-                                                LaunchMode.externalApplication);
-                                      } catch (e) {
-                                        if (context.mounted) {
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(
-                                            SnackBar(
-                                              content: Text(
-                                                  'No se pudo abrir la URL: ${plan.url}'),
-                                              backgroundColor: Colors.red,
-                                            ),
-                                          );
-                                        }
-                                      }
-                                    },
-                                    child: Row(
-                                      children: [
-                                        const Icon(
-                                          Icons.open_in_browser,
-                                          size: 16,
-                                          color: Colors.blue,
-                                        ),
-                                        const SizedBox(width: 6),
-                                        Text(
-                                          'Ver en el navegador',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodyMedium
-                                              ?.copyWith(
-                                                color: Colors.blue,
-                                                decoration:
-                                                    TextDecoration.underline,
-                                              ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                                if (plan.planIndicaciones != null &&
-                                    plan.planIndicaciones!.isNotEmpty) ...[
-                                  const SizedBox(height: 6),
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Paciente + Título del plan
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
                                   Text(
-                                    'Indicaciones:',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodySmall
-                                        ?.copyWith(
-                                          fontWeight: FontWeight.bold,
-                                        ),
+                                    widget.paciente?.nombre ??
+                                        plan.nombrePaciente ??
+                                        'Paciente',
+                                    style:
+                                        Theme.of(context).textTheme.titleSmall,
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
-                                    _truncateIndicaciones(
-                                        plan.planIndicaciones!, 200),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style:
-                                        Theme.of(context).textTheme.bodyMedium,
+                                    planTitle,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(fontWeight: FontWeight.bold),
                                   ),
-                                  const SizedBox(height: 12),
                                 ],
-                                if (plan.planDocumentoNombre != null &&
-                                    plan.planDocumentoNombre!.isNotEmpty) ...[
-                                  const SizedBox(height: 12),
-                                  Center(
-                                    child: ElevatedButton.icon(
-                                      icon: const Icon(
-                                          Icons.download_for_offline_outlined),
-                                      label: const Text('Descargar plan'),
-                                      onPressed: () =>
-                                          _downloadAndOpenFile(plan),
+                              ),
+                              const SizedBox(height: 12),
+
+                              // Semanas (con icono y tag)
+                              if (plan.semanas != null &&
+                                  plan.semanas!.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 12.0),
+                                  child: Chip(
+                                    avatar: const Icon(Icons.calendar_today,
+                                        size: 16),
+                                    label: Text('${plan.semanas} semanas'),
+                                    materialTapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                ),
+
+                              // Indicaciones (recuadro amarillo, expandido al ancho)
+                              if (plan.planIndicacionesVisibleUsuario != null &&
+                                  plan.planIndicacionesVisibleUsuario!
+                                      .isNotEmpty) ...[
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(12.0),
+                                  decoration: BoxDecoration(
+                                    color: Colors.amber[100],
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: Colors.amber[300]!,
+                                      width: 1,
                                     ),
                                   ),
-                                ],
-                                // Botones de acciones
-                                const SizedBox(height: 16),
-                                Row(
+                                  child: Text(
+                                    plan.planIndicacionesVisibleUsuario!,
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                              ],
+
+                              // Primera fila: Descargar, Completar, Clonar, URL
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: Wrap(
+                                  spacing: 4,
+                                  runSpacing: 6,
                                   children: [
+                                    if (plan.planDocumentoNombre != null &&
+                                        plan.planDocumentoNombre!.isNotEmpty)
+                                      IconButton(
+                                        icon: const Icon(Icons
+                                            .download_for_offline_outlined),
+                                        color: Colors.blue,
+                                        onPressed: () =>
+                                            _downloadAndOpenFile(plan),
+                                        tooltip: 'Descargar',
+                                        iconSize: 30,
+                                      ),
                                     if (plan.completado != 'S')
-                                      Flexible(
-                                        child: Wrap(
-                                          spacing: 8,
-                                          runSpacing: 6,
-                                          children: [
-                                            ElevatedButton.icon(
-                                              icon: const Icon(Icons.check),
-                                              label: const Text('Completar'),
-                                              style: ElevatedButton.styleFrom(
-                                                backgroundColor: Colors.green,
-                                                foregroundColor: Colors.white,
-                                              ),
-                                              onPressed: () =>
-                                                  _showCompletarPlanDialog(
-                                                      plan),
-                                            ),
-                                          ],
-                                        ),
-                                      )
-                                    else
-                                      const SizedBox.shrink(),
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        IconButton(
-                                          icon: const Icon(Icons.edit),
-                                          color: Colors.blue,
-                                          onPressed: () =>
-                                              _navigateToEditScreen(plan),
-                                          tooltip: 'Editar',
-                                        ),
-                                        IconButton(
-                                          icon: const Icon(Icons.delete),
-                                          color: Colors.red,
-                                          onPressed: () =>
-                                              _showDeleteConfirmation(plan),
-                                          tooltip: 'Eliminar',
-                                        ),
-                                      ],
+                                      IconButton(
+                                        icon: const Icon(Icons.check),
+                                        color: Colors.green,
+                                        onPressed: () =>
+                                            _showCompletarPlanDialog(plan),
+                                        tooltip: 'Completar',
+                                        iconSize: 30,
+                                      ),
+                                    IconButton(
+                                      icon: const Icon(Icons.content_copy),
+                                      color: Colors.purple,
+                                      onPressed: () => _clonPlan(plan),
+                                      tooltip: 'Clonar',
+                                      iconSize: 30,
+                                    ),
+                                    if (plan.url != null &&
+                                        plan.url!.isNotEmpty)
+                                      IconButton(
+                                        icon: const Icon(Icons.open_in_browser),
+                                        color: Colors.blue,
+                                        onPressed: () async {
+                                          // Removed: launchUrl functionality
+                                        },
+                                        tooltip: 'Ver en navegador',
+                                        iconSize: 30,
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              // Segunda fila: Editar, Eliminar
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: Wrap(
+                                  spacing: 4,
+                                  runSpacing: 6,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.edit),
+                                      color: Colors.blue,
+                                      onPressed: () =>
+                                          _navigateToEditScreen(plan),
+                                      tooltip: 'Editar',
+                                      iconSize: 30,
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.delete),
+                                      color: Colors.red,
+                                      onPressed: () =>
+                                          _showDeleteConfirmation(plan),
+                                      tooltip: 'Eliminar',
+                                      iconSize: 30,
                                     ),
                                   ],
                                 ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
                         ),
                       );
@@ -669,5 +678,104 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
   String _truncateIndicaciones(String text, int maxChars) {
     if (text.length <= maxChars) return text;
     return text.substring(0, maxChars);
+  }
+
+  Future<void> _clonPlan(PlanNutricional plan) async {
+    try {
+      // Confirmación de clonación
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Clonar plan'),
+          content:
+              const Text('¿Desea realizar una copia del Plan Nutri actual?'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('No')),
+            TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Sí')),
+          ],
+        ),
+      );
+
+      if (confirm != true) return;
+      // Mostrar diálogo de progreso
+      if (mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const AlertDialog(
+            title: Text('Clonando plan...'),
+            content: SizedBox(
+              height: 50,
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          ),
+        );
+      }
+
+      // Calcular intervalo de días entre desde y hasta
+      int intervaloDias = 0;
+      if (plan.desde != null && plan.hasta != null) {
+        intervaloDias = plan.hasta!.difference(plan.desde!).inDays;
+      }
+
+      // Crear nuevo plan con fechas actualizadas
+      final hoy = DateTime.now();
+      final planNuevo = PlanNutricional(
+        codigo: 0, // El servidor asignará el código
+        codigoPaciente: plan.codigoPaciente,
+        desde: hoy,
+        hasta: intervaloDias > 0 ? hoy.add(Duration(days: intervaloDias)) : hoy,
+        semanas: plan.semanas,
+        completado: 'N', // Siempre 'N' para un plan clonado
+        codigoEntrevista: null, // Vacío para plan clonado
+        planDocumentoNombre: null, // Vacío, no clonamos archivo
+        planIndicaciones: plan.planIndicaciones,
+        planIndicacionesVisibleUsuario: plan.planIndicacionesVisibleUsuario,
+        url: plan.url,
+        nombrePaciente: plan.nombrePaciente,
+      );
+
+      // Crear el nuevo plan
+      await _apiService.createPlan(planNuevo, null);
+
+      // Esperar un poco para que el servidor procese la creación
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // Cerrar diálogo de progreso
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+
+      // Refrescar lista
+      _refreshPlanes();
+
+      // Mostrar mensaje de éxito
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Plan clonado exitosamente del ${DateFormat('dd/MM/yyyy').format(plan.desde ?? DateTime.now())} '
+              'al ${DateFormat('dd/MM/yyyy').format(hoy.add(Duration(days: intervaloDias)))}',
+            ),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      // Cerrar diálogo de progreso si está abierto
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al clonar plan: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 }

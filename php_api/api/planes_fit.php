@@ -10,6 +10,7 @@ header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers
 
 include_once '../config/database.php';
 include_once '../auth/token_validator.php';
+include_once '../auth/auto_validator.php';
 include_once '../auth/permissions.php';
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -22,9 +23,9 @@ $db = $database->getConnection();
 
 $request_method = $_SERVER["REQUEST_METHOD"];
 
-// Validar token (solo usuarios registrados con paciente)
-$validator = new TokenValidator($db);
-$user = $validator->validateToken();
+// Validar token (acepta usuario o guest)
+$validator = new AutoValidator($db);
+$user = $validator->validate();
 PermissionManager::checkPermission($user, 'planes_fit');
 
 try {
@@ -166,11 +167,19 @@ function create_plan_fit() {
     $codusuarioa = isset($_POST['codusuarioa']) ? intval($_POST['codusuarioa']) : 1;
 
     $plan_documento_blob = null;
-    if (isset($_FILES['archivo']) && $_FILES['archivo']['error'] === UPLOAD_ERR_OK) {
+    // Soporte para Base64 (preferido) o multipart/form-data (fallback)
+    if (!empty($_POST['plan_documento_base64'])) {
+        $plan_documento_blob = base64_decode($_POST['plan_documento_base64']);
+        if (!$plan_documento_nombre) {
+            $plan_documento_nombre = !empty($_POST['plan_documento_nombre']) ? $_POST['plan_documento_nombre'] : 'documento.pdf';
+        }
+        error_log("CREATE_PLAN_FIT: Archivo Base64 recibido: $plan_documento_nombre, tamaño=" . strlen($plan_documento_blob));
+    } elseif (isset($_FILES['archivo']) && $_FILES['archivo']['error'] === UPLOAD_ERR_OK) {
         $plan_documento_blob = file_get_contents($_FILES['archivo']['tmp_name']);
         if (!$plan_documento_nombre) {
             $plan_documento_nombre = $_FILES['archivo']['name'];
         }
+        error_log("CREATE_PLAN_FIT: Archivo multipart recibido: $plan_documento_nombre, tamaño=" . strlen($plan_documento_blob));
     }
 
     $query = "INSERT INTO nu_plan_nutricional_fit (codigo_paciente, desde, hasta, semanas, completado, codigo_entrevista, plan_indicaciones, plan_indicaciones_visible_usuario, url, rondas, consejos, recomendaciones, plan_documento, plan_documento_nombre, codusuarioa, fechaa) VALUES (:codigo_paciente, :desde, :hasta, :semanas, :completado, :codigo_entrevista, :plan_indicaciones, :plan_indicaciones_visible_usuario, :url, :rondas, :consejos, :recomendaciones, :plan_documento, :plan_documento_nombre, :codusuarioa, NOW())";
@@ -278,10 +287,17 @@ function update_plan_fit() {
 
     $set_clauses[] = "fecham = NOW()";
 
-    if (isset($_FILES['archivo']) && $_FILES['archivo']['error'] === UPLOAD_ERR_OK) {
+    // Soporte para Base64 (preferido) o multipart/form-data (fallback)
+    if (!empty($_POST['plan_documento_base64'])) {
+        $plan_documento_blob = base64_decode($_POST['plan_documento_base64']);
+        $set_clauses[] = "plan_documento = :plan_documento";
+        $bind_params[':plan_documento'] = $plan_documento_blob;
+        error_log("UPDATE_PLAN_FIT: Archivo Base64 recibido, tamaño=" . strlen($plan_documento_blob));
+    } elseif (isset($_FILES['archivo']) && $_FILES['archivo']['error'] === UPLOAD_ERR_OK) {
         $plan_documento_blob = file_get_contents($_FILES['archivo']['tmp_name']);
         $set_clauses[] = "plan_documento = :plan_documento";
         $bind_params[':plan_documento'] = $plan_documento_blob;
+        error_log("UPDATE_PLAN_FIT: Archivo multipart recibido, tamaño=" . strlen($plan_documento_blob));
     }
 
     if (empty($set_clauses)) {

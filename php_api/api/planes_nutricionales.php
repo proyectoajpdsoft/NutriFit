@@ -11,6 +11,7 @@ header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers
 
 include_once '../config/database.php';
 include_once '../auth/token_validator.php';
+include_once '../auth/auto_validator.php';
 include_once '../auth/permissions.php';
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -23,9 +24,9 @@ $db = $database->getConnection();
 
 $request_method = $_SERVER["REQUEST_METHOD"];
 
-// Validar token (solo usuarios registrados con paciente)
-$validator = new TokenValidator($db);
-$user = $validator->validateToken();
+// Validar token (acepta usuario o guest)
+$validator = new AutoValidator($db);
+$user = $validator->validate();
 PermissionManager::checkPermission($user, 'planes_nutricionales');
 
 // --- BLOQUE TRY-CATCH PARA CAPTURAR ERRORES FATALES ---
@@ -163,6 +164,8 @@ function download_plan($codigo) {
 function create_plan() {
     global $db;
     
+    error_log("CREATE_PLAN: recibido $_POST. Archivos: " . json_encode($_FILES));
+    
     $codigo_paciente = !empty($_POST['codigo_paciente']) ? intval($_POST['codigo_paciente']) : null;
     $desde = !empty($_POST['fecha_inicio']) ? $_POST['fecha_inicio'] : null;
     $hasta = !empty($_POST['fecha_fin']) ? $_POST['fecha_fin'] : null;
@@ -174,12 +177,20 @@ function create_plan() {
     $url = !empty($_POST['url']) ? $_POST['url'] : null;
     $codusuarioa = !empty($_POST['codusuarioa']) ? intval($_POST['codusuarioa']) : 1;
     
+    error_log("CREATE_PLAN: codigo_paciente=$codigo_paciente, codusuarioa=$codusuarioa");
+    
     $plan_documento = null;
     $plan_documento_nombre = null;
 
-    if (isset($_FILES['archivo']) && $_FILES['archivo']['error'] == UPLOAD_ERR_OK) {
+    // Soporte para Base64 (preferido) o multipart/form-data (fallback)
+    if (!empty($_POST['plan_documento_base64'])) {
+        $plan_documento = base64_decode($_POST['plan_documento_base64']);
+        $plan_documento_nombre = !empty($_POST['plan_documento_nombre']) ? $_POST['plan_documento_nombre'] : 'documento.pdf';
+        error_log("CREATE_PLAN: Archivo Base64 recibido: $plan_documento_nombre, tamaño=" . strlen($plan_documento));
+    } elseif (isset($_FILES['archivo']) && $_FILES['archivo']['error'] == UPLOAD_ERR_OK) {
         $plan_documento = file_get_contents($_FILES['archivo']['tmp_name']);
         $plan_documento_nombre = basename($_FILES['archivo']['name']);
+        error_log("CREATE_PLAN: Archivo multipart recibido: $plan_documento_nombre, tamaño=" . strlen($plan_documento));
     }
 
     $query = "INSERT INTO nu_plan_nutricional (codigo_paciente, desde, hasta, semanas, completado, codigo_entrevista, plan_documento, plan_documento_nombre, plan_indicaciones, plan_indicaciones_visible_usuario, url, fechaa, codusuarioa) VALUES (:codigo_paciente, :desde, :hasta, :semanas, :completado, :codigo_entrevista, :plan_documento, :plan_documento_nombre, :plan_indicaciones, :plan_indicaciones_visible_usuario, :url, NOW(), :codusuarioa)";
@@ -214,6 +225,8 @@ function create_plan() {
 function update_plan() {
     global $db;
     
+    error_log("UPDATE_PLAN: recibido $_POST. Archivos: " . json_encode($_FILES));
+    
     $codigo = !empty($_POST['codigo']) ? intval($_POST['codigo']) : null;
     if (is_null($codigo)) {
         http_response_code(400);
@@ -232,6 +245,8 @@ function update_plan() {
     $url = !empty($_POST['url']) ? $_POST['url'] : null;
     $codusuariom = !empty($_POST['codusuariom']) ? intval($_POST['codusuariom']) : 1;
 
+    error_log("UPDATE_PLAN: codigo=$codigo, codigo_paciente=$codigo_paciente, codusuariom=$codusuariom");
+    
     $set_clauses = [
         "codigo_paciente = :codigo_paciente",
         "desde = :desde",
@@ -259,14 +274,23 @@ function update_plan() {
         ':codigo' => $codigo
     ];
 
-    // Si se sube un nuevo documento, se añade a la consulta
-    if (isset($_FILES['archivo']) && $_FILES['archivo']['error'] == UPLOAD_ERR_OK) {
+    // Si se sube un nuevo documento (Base64 o multipart)
+    if (!empty($_POST['plan_documento_base64'])) {
+        $plan_documento = base64_decode($_POST['plan_documento_base64']);
+        $plan_documento_nombre = !empty($_POST['plan_documento_nombre']) ? $_POST['plan_documento_nombre'] : 'documento.pdf';
+        $set_clauses[] = "plan_documento = :plan_documento";
+        $set_clauses[] = "plan_documento_nombre = :plan_documento_nombre";
+        $bind_params[':plan_documento'] = $plan_documento;
+        $bind_params[':plan_documento_nombre'] = $plan_documento_nombre;
+        error_log("UPDATE_PLAN: Archivo Base64 recibido: $plan_documento_nombre, tamaño=" . strlen($plan_documento));
+    } elseif (isset($_FILES['archivo']) && $_FILES['archivo']['error'] == UPLOAD_ERR_OK) {
         $plan_documento = file_get_contents($_FILES['archivo']['tmp_name']);
         $plan_documento_nombre = basename($_FILES['archivo']['name']);
         $set_clauses[] = "plan_documento = :plan_documento";
         $set_clauses[] = "plan_documento_nombre = :plan_documento_nombre";
         $bind_params[':plan_documento'] = $plan_documento;
         $bind_params[':plan_documento_nombre'] = $plan_documento_nombre;
+        error_log("UPDATE_PLAN: Archivo multipart recibido: $plan_documento_nombre, tamaño=" . strlen($plan_documento));
     }
 
     $query = "UPDATE nu_plan_nutricional SET " . implode(", ", $set_clauses) . " WHERE codigo = :codigo";

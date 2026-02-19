@@ -18,6 +18,7 @@ class _ParametroEditScreenState extends State<ParametroEditScreen> {
   late TextEditingController _valorController;
   late TextEditingController _valor2Controller;
   late TextEditingController _descripcionController;
+  String? _nombreOriginal;
   String _categoria = 'Aplicación';
   bool _hasChanges = false;
   String _tipo = 'General';
@@ -29,6 +30,7 @@ class _ParametroEditScreenState extends State<ParametroEditScreen> {
   @override
   void initState() {
     super.initState();
+    _nombreOriginal = widget.parametro?['nombre']?.toString();
     _nombreController = TextEditingController(
       text: widget.parametro?['nombre'] ?? '',
     );
@@ -98,12 +100,26 @@ class _ParametroEditScreenState extends State<ParametroEditScreen> {
         success = await apiService.updateParametro(
           nombre: nombre,
           valor: valor,
+          codigo: widget.parametro?['codigo'],
+          nombreOriginal: _nombreOriginal,
           valor2: valor2Payload,
           descripcion: descripcionPayload,
           categoria: _categoria,
           tipo: _tipo,
         );
       } else {
+        final existing = await apiService.getParametroByNombre(nombre);
+        if (existing != null) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Ya existe un parametro con ese nombre'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+          }
+          return;
+        }
         success = await apiService.createParametro(
           nombre: nombre,
           valor: valor,
@@ -181,7 +197,6 @@ class _ParametroEditScreenState extends State<ParametroEditScreen> {
                   border: OutlineInputBorder(),
                   hintText: 'Ej: complejidad_contraseña_longitud_minima',
                 ),
-                enabled: widget.parametro == null,
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
                     return 'El nombre es obligatorio';

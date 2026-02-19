@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:nutri_app/services/api_service.dart';
+import 'package:nutri_app/screens/chat_screen.dart';
 
 class ContactoNutricionistaScreen extends StatefulWidget {
   const ContactoNutricionistaScreen({super.key});
@@ -51,7 +51,7 @@ class _ContactoNutricionistaScreenState
         });
       }
     } catch (e) {
-      debugPrint('Error al cargar información de contacto: $e');
+      // debugPrint('Error al cargar información de contacto: $e');
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -73,100 +73,74 @@ class _ContactoNutricionistaScreenState
       }
       return null;
     } catch (e) {
-      debugPrint('Error al cargar parámetro $nombre: $e');
+      // debugPrint('Error al cargar parámetro $nombre: $e');
       return null;
     }
   }
 
-  Future<void> _launchUrl(String url) async {
-    if (url.isEmpty) return;
-
-    try {
-      final uri = Uri.parse(url);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No se puede abrir el enlace'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al abrir el enlace: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _launchPhone(String phoneNumber) async {
-    if (phoneNumber.isEmpty) return;
-
-    try {
-      final uri = Uri(scheme: 'tel', path: phoneNumber);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri);
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No se puede realizar la llamada'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al realizar la llamada: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _launchTelegram(String username) async {
-    if (username.isEmpty) return;
-
-    try {
-      // Limpiar el username si tiene @
-      final cleanUsername = username.replaceAll('@', '');
-      final uri = Uri.parse('https://t.me/$cleanUsername');
-
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Telegram no está instalado'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al abrir Telegram: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
+  // URL Launcher disabled - feature temporarily disabled
+  // Future<void> _launchUrl(String url) async {
+  //   if (url.isEmpty) return;
+  //   try {
+  //     final uri = Uri.parse(url);
+  //     await PermissionsService.launchUrl(
+  //       uri,
+  //       mode: url_launcher.LaunchMode.externalApplication,
+  //       context: context,
+  //     );
+  //   } catch (e) {
+  //     if (mounted) {
+  //       ScaffoldMessenger.of(context).showSnackBar(
+  //         const SnackBar(
+  //           content: Text('No se pudo realizar la acción'),
+  //           backgroundColor: Colors.red,
+  //         ),
+  //       );
+  //     }
+  //   }
+  // }
+  //
+  // Future<void> _launchPhone(String phoneNumber) async {
+  //   if (phoneNumber.isEmpty) return;
+  //   try {
+  //     final uri = Uri(scheme: 'tel', path: phoneNumber);
+  //     await PermissionsService.launchUrl(
+  //       uri,
+  //       context: context,
+  //     );
+  //   } catch (e) {
+  //     if (mounted) {
+  //       ScaffoldMessenger.of(context).showSnackBar(
+  //         SnackBar(
+  //           content: Text('Error al realizar la llamada: $e'),
+  //           backgroundColor: Colors.red,
+  //         ),
+  //       );
+  //     }
+  //   }
+  // }
+  //
+  // Future<void> _launchTelegram(String username) async {
+  //   if (username.isEmpty) return;
+  //   try {
+  //     final cleanUsername = username.replaceAll('@', '');
+  //     final uri = Uri.parse('https://t.me/$cleanUsername');
+  //     await PermissionsService.launchUrl(
+  //       uri,
+  //       mode: url_launcher.LaunchMode.externalApplication,
+  //       context: context,
+  //     );
+  //   } catch (e) {
+  //     if (mounted) {
+  //       ScaffoldMessenger.of(context).showSnackBar(
+  //         const SnackBar(
+  //           content: Text('No se pudo abrir Telegram'),
+  //           backgroundColor: Colors.red,
+  //         ),
+  //       );
+  //     }
+  //   }
+  // }
 
   Future<void> _addToContacts(String phoneNumber) async {
     try {
@@ -212,7 +186,7 @@ class _ContactoNutricionistaScreenState
         ),
       );
     } catch (e) {
-      debugPrint('Error al agregar contacto: $e');
+      // debugPrint('Error al agregar contacto: $e');
     }
   }
 
@@ -258,19 +232,37 @@ class _ContactoNutricionistaScreenState
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                     const SizedBox(height: 16),
+                    Card(
+                      child: ListTile(
+                        leading: Icon(Icons.mark_chat_unread_outlined,
+                            color: Theme.of(context).colorScheme.primary),
+                        title: const Text('Chat con dietista'),
+                        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const ChatScreen(),
+                          ),
+                        ),
+                      ),
+                    ),
                     // Email
                     _buildContactItem(
                       Icons.email,
                       'Email',
                       _contactInfo['email'] ?? '',
-                      () => _launchUrl('mailto:${_contactInfo['email']}'),
+                      // URL Launcher disabled - feature temporarily disabled
+                      // () => _launchUrl('mailto:${_contactInfo['email']}'),
+                      () {},
                     ),
                     // Teléfono
                     _buildContactItem(
                       Icons.phone,
                       'Llamar',
                       _contactInfo['telefono'] ?? '',
-                      () => _launchPhone(_contactInfo['telefono'] ?? ''),
+                      // URL Launcher disabled - feature temporarily disabled
+                      // () => _launchPhone(_contactInfo['telefono'] ?? ''),
+                      () {},
                     ),
                     // WhatsApp
                     if ((_contactInfo['whatsapp'] ?? '').isNotEmpty)
@@ -316,7 +308,9 @@ class _ContactoNutricionistaScreenState
                       Icons.send,
                       'Telegram',
                       _contactInfo['telegram'] ?? '',
-                      () => _launchTelegram(_contactInfo['telegram'] ?? ''),
+                      // URL Launcher disabled - feature temporarily disabled
+                      // () => _launchTelegram(_contactInfo['telegram'] ?? ''),
+                      () {},
                     ),
                     const SizedBox(height: 24),
                     Text(
@@ -329,28 +323,36 @@ class _ContactoNutricionistaScreenState
                       Icons.video_library,
                       'YouTube',
                       _contactInfo['youtube'] ?? '',
-                      () => _launchUrl(_contactInfo['youtube'] ?? ''),
+                      // URL Launcher disabled - feature temporarily disabled
+                      // () => _launchUrl(_contactInfo['youtube'] ?? ''),
+                      () {},
                     ),
                     // Facebook
                     _buildContactItem(
                       Icons.facebook,
                       'Facebook',
                       _contactInfo['facebook'] ?? '',
-                      () => _launchUrl(_contactInfo['facebook'] ?? ''),
+                      // URL Launcher disabled - feature temporarily disabled
+                      // () => _launchUrl(_contactInfo['facebook'] ?? ''),
+                      () {},
                     ),
                     // Instagram
                     _buildContactItem(
                       Icons.camera_alt,
                       'Instagram',
                       _contactInfo['instagram'] ?? '',
-                      () => _launchUrl(_contactInfo['instagram'] ?? ''),
+                      // URL Launcher disabled - feature temporarily disabled
+                      // () => _launchUrl(_contactInfo['instagram'] ?? ''),
+                      () {},
                     ),
                     // Web
                     _buildContactItem(
                       Icons.language,
                       'Sitio Web',
                       _contactInfo['web'] ?? '',
-                      () => _launchUrl(_contactInfo['web'] ?? ''),
+                      // URL Launcher disabled - feature temporarily disabled
+                      // () => _launchUrl(_contactInfo['web'] ?? ''),
+                      () {},
                     ),
                   ],
                 ),

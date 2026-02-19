@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'dart:convert';
+import 'package:image/image.dart' as img;
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:provider/provider.dart';
@@ -26,6 +27,8 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
   final ApiService _apiService = ApiService();
   String? _imageBase64;
   int _maxImageSizeKb = 500; // Valor por defecto
+  int _maxImageWidth = 400; // Valor por defecto
+  int _maxImageHeight = 400; // Valor por defecto
 
   @override
   void initState() {
@@ -36,6 +39,21 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
 
   Future<void> _loadMaxImageSize() async {
     try {
+      // Primero intentar cargar el parámetro de dimensiones
+      final dimParam =
+          await _apiService.getParametro('usuario_max_imagen_tamaño');
+      if (dimParam != null) {
+        final width = int.tryParse(dimParam['valor'] ?? '400');
+        final height = int.tryParse(dimParam['valor2'] ?? '400');
+        if (width != null && height != null && mounted) {
+          setState(() {
+            _maxImageWidth = width;
+            _maxImageHeight = height;
+          });
+        }
+      }
+
+      // Mantener también el parámetro de tamaño en KB como fallback
       final sizeParam = await _apiService.getParametro('usuario_max_imagen_kb');
       if (sizeParam != null) {
         final size = int.tryParse(sizeParam['valor'] ?? '500');
@@ -46,7 +64,60 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
         }
       }
     } catch (e) {
-      // Si no existe el parámetro, usar valor por defecto
+      // Si no existen los parámetros, usar valores por defecto
+    }
+  }
+
+  /// Redimensiona una imagen para que quepa dentro de los límites especificados
+  /// Mantiene la relación de aspecto
+  Future<File> _resizeImageIfNeeded(File imageFile) async {
+    try {
+      // Leer la imagen original
+      final bytes = await imageFile.readAsBytes();
+      final image = img.decodeImage(bytes);
+
+      if (image == null) return imageFile;
+
+      // Verificar si necesita redimensionamiento
+      if (image.width <= _maxImageWidth && image.height <= _maxImageHeight) {
+        return imageFile; // La imagen ya cabe dentro de los límites
+      }
+
+      // Calcular el factor de escala manteniendo la relación de aspecto
+      double scale = 1.0;
+
+      // Si el ancho excede el límite
+      if (image.width > _maxImageWidth) {
+        scale = _maxImageWidth / image.width;
+      }
+
+      // Si el alto excede el límite y requiere un factor de escala mayor
+      if (image.height > _maxImageHeight) {
+        final scaleHeight = _maxImageHeight / image.height;
+        if (scaleHeight < scale) {
+          scale = scaleHeight;
+        }
+      }
+
+      // Redimensionar la imagen
+      final newWidth = (image.width * scale).toInt();
+      final newHeight = (image.height * scale).toInt();
+
+      final resizedImage = img.copyResize(
+        image,
+        width: newWidth,
+        height: newHeight,
+        interpolation: img.Interpolation.linear,
+      );
+
+      // Guardar la imagen redimensionada en el mismo archivo
+      final resizedBytes = img.encodePng(resizedImage);
+      await imageFile.writeAsBytes(resizedBytes);
+
+      return imageFile;
+    } catch (e) {
+      // Si algo falla, devolver la imagen original
+      return imageFile;
     }
   }
 
@@ -61,26 +132,15 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
       if (pickedFile == null) return;
 
       // Paso 2: Crear archivo desde la imagen seleccionada
-      final File file = File(pickedFile.path);
+      var file = File(pickedFile.path);
 
-      // Paso 3: Verificar el tamaño de la imagen
-      final int fileSize = await file.length();
-      final int maxSizeBytes = _maxImageSizeKb * 1024;
-
-      if (fileSize > maxSizeBytes) {
-        if (mounted) {
-          _showUserFriendlyError(
-            'La imagen seleccionada supera los $_maxImageSizeKb KB (${(fileSize / 1024).toStringAsFixed(1)}KB).\n'
-            'Por favor, selecciona una imagen más pequeña.',
-            showDetail: true,
-          );
-        }
-        return;
-      }
+      // Paso 3: Redimensionar la imagen si excede los límites
+      file = await _resizeImageIfNeeded(file);
 
       // Paso 4: Convertir a base64 y guardar
       final bytes = await file.readAsBytes();
       final base64String = base64Encode(bytes);
+      final fileSize = bytes.length;
 
       setState(() {
         _imageBase64 = base64String;
@@ -215,11 +275,8 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
                     color: Colors.grey.shade200,
                   ),
                   child: ClipOval(
-                    child: _imageBase64 != null
-                        ? Image.memory(
-                            base64Decode(_imageBase64!),
-                            fit: BoxFit.cover,
-                          )
+                    child: _imageBase64 != null && _imageBase64!.isNotEmpty
+                        ? _buildImageWidget()
                         : Icon(
                             Icons.person,
                             size: 60,
@@ -263,7 +320,7 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
         ),
         Center(
           child: Text(
-            'Máx. $_maxImageSizeKb KB',
+            'Máx. ${_maxImageWidth}x${_maxImageHeight}px',
             style: TextStyle(
               fontSize: 11,
               color: Colors.grey.shade500,
@@ -272,5 +329,24 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
         ),
       ],
     );
+  }
+
+  Widget _buildImageWidget() {
+    try {
+      final imageBytes = base64Decode(_imageBase64!);
+      return Image.memory(
+        imageBytes,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          // debugPrint('Error al cargar imagen: $error');
+          return Icon(Icons.person, size: 60, color: Colors.grey.shade400);
+        },
+      );
+    } catch (e) {
+      // debugPrint('Error decodificando base64: $e');
+      // debugPrint(
+      //     'Primer 100 chars del base64: ${_imageBase64!.substring(0, math.min(100, _imageBase64!.length))}');
+      return Icon(Icons.person, size: 60, color: Colors.grey.shade400);
+    }
   }
 }

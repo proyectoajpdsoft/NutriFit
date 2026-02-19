@@ -122,25 +122,43 @@ class _CobrosListScreenState extends State<CobrosListScreen> {
                   margin:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   elevation: 2,
-                  child: ListTile(
-                    title: Text(
-                        '${cobro.importe.toStringAsFixed(2)} € - ${cobro.nombrePaciente ?? cobro.nombreCliente ?? '-'}'),
-                    subtitle:
-                        Text(DateFormat('dd/MM/yyyy').format(cobro.fecha)),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        IconButton(
-                          icon: const Icon(Icons.edit, color: Colors.blue),
-                          onPressed: () => _navigateToEditScreen(cobro),
+                        Text(
+                          '${cobro.importe.toStringAsFixed(2)} € - ${cobro.nombrePaciente ?? cobro.nombreCliente ?? '-'}',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.delete, color: Colors.red),
-                          onPressed: () => _showDeleteConfirmation(cobro),
+                        const SizedBox(height: 4),
+                        Text(
+                          DateFormat('dd/MM/yyyy').format(cobro.fecha),
+                          style:
+                              TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.start,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.edit),
+                              color: Colors.blue,
+                              iconSize: 28,
+                              onPressed: () => _navigateToEditScreen(cobro),
+                              tooltip: 'Editar',
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete),
+                              color: Colors.red,
+                              iconSize: 28,
+                              onPressed: () => _showDeleteConfirmation(cobro),
+                              tooltip: 'Eliminar',
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                    onTap: () => _navigateToEditScreen(cobro),
                   ),
                 );
               },

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'package:image/image.dart' as img;
 import 'package:nutri_app/models/usuario.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
@@ -22,6 +24,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   final _formKey = GlobalKey<FormState>();
   final ApiService _apiService = ApiService();
   final TextEditingController _nickController = TextEditingController();
+  int _maxImageWidth = 400;
+  int _maxImageHeight = 400;
 
   // Controladores
   late String _nick = '';
@@ -40,7 +44,27 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   void initState() {
     super.initState();
     _configService = context.read<ConfigService>();
+    _loadMaxImageDimensions();
     _loadUserData();
+  }
+
+  Future<void> _loadMaxImageDimensions() async {
+    try {
+      final dimParam =
+          await _apiService.getParametro('usuario_max_imagen_tamaño');
+      if (dimParam != null && mounted) {
+        final width = int.tryParse(dimParam['valor'] ?? '400');
+        final height = int.tryParse(dimParam['valor2'] ?? '400');
+        if (width != null && height != null) {
+          setState(() {
+            _maxImageWidth = width;
+            _maxImageHeight = height;
+          });
+        }
+      }
+    } catch (e) {
+      // Si no existe el parámetro, mantener los valores por defecto
+    }
   }
 
   void _markDirty() {
@@ -231,9 +255,66 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
     );
   }
 
+  /// Redimensiona la imagen de perfil si supera las dimensiones máximas
+  Future<void> _resizeImageIfNeeded() async {
+    if (_imageBase64 == null || _imageBase64!.isEmpty) {
+      return;
+    }
+
+    try {
+      // Decodificar base64 a bytes
+      final imageBytes = base64Decode(_imageBase64!);
+      final image = img.decodeImage(imageBytes);
+
+      if (image == null) {
+        return;
+      }
+
+      // Verificar si la imagen supera los límites
+      if (image.width <= _maxImageWidth && image.height <= _maxImageHeight) {
+        return; // La imagen ya está dentro de los límites
+      }
+
+      // Calcular el factor de escala manteniendo la relación de aspecto
+      double scale = 1.0;
+
+      if (image.width > _maxImageWidth) {
+        scale = _maxImageWidth / image.width;
+      }
+
+      if (image.height > _maxImageHeight) {
+        final scaleHeight = _maxImageHeight / image.height;
+        if (scaleHeight < scale) {
+          scale = scaleHeight;
+        }
+      }
+
+      // Redimensionar la imagen
+      final newWidth = (image.width * scale).toInt();
+      final newHeight = (image.height * scale).toInt();
+
+      final resizedImage = img.copyResize(
+        image,
+        width: newWidth,
+        height: newHeight,
+        interpolation: img.Interpolation.linear,
+      );
+
+      // Convertir a PNG y luego a base64
+      final resizedBytes = img.encodePng(resizedImage);
+      _imageBase64 = base64Encode(resizedBytes);
+    } catch (e) {
+      // Si hay error al redimensionar, mantener la imagen original
+      // debugPrint('Error redimensionando imagen: $e');
+    }
+  }
+
   void _submitForm() async {
     if (_formKey.currentState!.validate()) {
       _formKey.currentState!.save();
+
+      // Redimensionar la imagen si excede los límites
+      await _resizeImageIfNeeded();
 
       // Validar que las contraseñas coincidan si se proporciona una nueva
       if (_newPassword.isNotEmpty && _newPassword != _confirmPassword) {
@@ -312,9 +393,10 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
         }
       } catch (e) {
         if (mounted) {
+          final errorMessage = e.toString().replaceFirst('Exception: ', '');
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Error al actualizar el perfil: $e'),
+              content: Text('Error al cargar datos del usuario. $errorMessage'),
               backgroundColor: Colors.red,
             ),
           );

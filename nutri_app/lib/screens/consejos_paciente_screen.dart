@@ -1,17 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
+// import 'package:url_launcher/url_launcher.dart';
 // import 'package:youtube_player_flutter/youtube_player_flutter.dart'; // Deshabilitado para web
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../services/consejo_receta_pdf_service.dart';
 import '../models/consejo.dart';
 import '../models/consejo_documento.dart';
+import '../widgets/image_viewer_dialog.dart';
 
 class ConsejosPacienteScreen extends StatefulWidget {
   const ConsejosPacienteScreen({super.key});
@@ -285,9 +287,11 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       }
     } catch (e) {
       if (mounted) {
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+        ).showSnackBar(
+            SnackBar(content: Text('Error al cargar consejos. $errorMessage')));
       }
     } finally {
       if (mounted) {
@@ -326,10 +330,10 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
           });
         }
       } else {
-        debugPrint('Error loading portada: ${response.statusCode}');
+        // debugPrint('Error loading portada: ${response.statusCode}');
       }
     } catch (e) {
-      debugPrint('Exception loading portada: $e');
+      // debugPrint('Exception loading portada: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -389,10 +393,10 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
   }
 
   Future<void> _toggleLike(Consejo consejo) async {
-    debugPrint('_toggleLike called for consejo: ${consejo.codigo}');
+    // debugPrint('_toggleLike called for consejo: ${consejo.codigo}');
 
     if (_isGuestMode) {
-      debugPrint('Guest mode - cannot like');
+      // debugPrint('Guest mode - cannot like');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -424,14 +428,14 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
         'codigo_usuario': int.parse(_userCode!),
       };
 
-      debugPrint('Sending toggle_like request: $data');
+      // debugPrint('Sending toggle_like request: $data');
       final response = await apiService.post(
         'api/consejo_usuarios.php?toggle_like=1',
         body: json.encode(data),
       );
-      debugPrint(
-        'toggle_like response: ${response.statusCode} - ${response.body}',
-      );
+      // debugPrint(
+      //   'toggle_like response: ${response.statusCode} - ${response.body}',
+      // );
 
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
@@ -450,17 +454,19 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
         _applyConsejoUpdate(consejo, syncFavoritos: false);
       }
     } catch (e) {
+      final errorMessage = e.toString().replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+      ).showSnackBar(
+          SnackBar(content: Text('Error al cambiar me gusta. $errorMessage')));
     }
   }
 
   Future<void> _toggleFavorito(Consejo consejo) async {
-    debugPrint('_toggleFavorito called for consejo: ${consejo.codigo}');
+    // debugPrint('_toggleFavorito called for consejo: ${consejo.codigo}');
 
     if (_isGuestMode) {
-      debugPrint('Guest mode - cannot save favorites');
+      // debugPrint('Guest mode - cannot save favorites');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -492,14 +498,14 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
         'codigo_usuario': int.parse(_userCode!),
       };
 
-      debugPrint('Sending toggle_favorito request: $data');
+      // debugPrint('Sending toggle_favorito request: $data');
       final response = await apiService.post(
         'api/consejo_usuarios.php?toggle_favorito=1',
         body: json.encode(data),
       );
-      debugPrint(
-        'toggle_favorito response: ${response.statusCode} - ${response.body}',
-      );
+      // debugPrint(
+      //   'toggle_favorito response: ${response.statusCode} - ${response.body}',
+      // );
 
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
@@ -509,9 +515,11 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
         _applyConsejoUpdate(consejo, syncFavoritos: true);
       }
     } catch (e) {
+      final errorMessage = e.toString().replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+      ).showSnackBar(
+          SnackBar(content: Text('Error al cambiar favorito. $errorMessage')));
     }
   }
 
@@ -557,7 +565,7 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
                 child: const Icon(Icons.article, size: 64, color: Colors.grey),
               ),
 
-            // Acciones (like y favorito)
+            // Acciones (like, favorito, copiar, pdf)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               child: Row(
@@ -586,6 +594,16 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
                     onPressed: () => _toggleFavorito(consejo),
                   ),
                   const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.copy, size: 18),
+                    onPressed: () => _copyConsejoToClipboard(consejo),
+                    tooltip: 'Copiar',
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.picture_as_pdf, size: 18),
+                    onPressed: () => _generateConsejoPdfFromCard(consejo),
+                    tooltip: 'PDF',
+                  ),
                   if (consejo.mostrarPortada == 'S')
                     const Icon(Icons.star, color: Colors.amber, size: 20),
                 ],
@@ -615,8 +633,9 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
                   if (consejo.texto.length > 100) const SizedBox(height: 4),
                   if (consejo.texto.length > 100)
                     const Text(
-                      'Toca para ver más',
+                      'Toca para ver el detalle completo',
                       style: TextStyle(color: Colors.blue, fontSize: 12),
+                      textAlign: TextAlign.center,
                     ),
                 ],
               ),
@@ -816,6 +835,52 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
     );
   }
 
+  Future<void> _copyConsejoToClipboard(Consejo consejo) async {
+    try {
+      final textToCopy = '${consejo.titulo}\n\n${consejo.texto}';
+      await Clipboard.setData(ClipboardData(text: textToCopy));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Copiado al portapapeles'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al copiar: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _generateConsejoPdfFromCard(Consejo consejo) async {
+    try {
+      final apiService = Provider.of<ApiService>(context, listen: false);
+      await ConsejoRecetaPdfService.generatePdf(
+        context: context,
+        apiService: apiService,
+        titulo: consejo.titulo,
+        contenido: consejo.texto,
+        tipo: 'consejo',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al generar PDF: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   void dispose() {
     _tabController.dispose();
@@ -910,9 +975,9 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
   }
 
   Future<void> _toggleLike() async {
-    debugPrint('Detail _toggleLike called for consejo: ${_consejo.codigo}');
+    // debugPrint('Detail _toggleLike called for consejo: ${_consejo.codigo}');
     if (widget.isPreviewMode) {
-      debugPrint('Preview mode, skipping');
+      // debugPrint('Preview mode, skipping');
       return;
     }
 
@@ -920,7 +985,7 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
     final userCode = authService.userCode;
 
     if (authService.isGuestMode) {
-      debugPrint('Guest mode - cannot like');
+      // debugPrint('Guest mode - cannot like');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -952,14 +1017,14 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
         'codigo_usuario': int.parse(userCode),
       };
 
-      debugPrint('Sending detail toggle_like request: $data');
+      // debugPrint('Sending detail toggle_like request: $data');
       final response = await apiService.post(
         'api/consejo_usuarios.php?toggle_like=1',
         body: json.encode(data),
       );
-      debugPrint(
-        'Detail toggle_like response: ${response.statusCode} - ${response.body}',
-      );
+      // debugPrint(
+      //   'Detail toggle_like response: ${response.statusCode} - ${response.body}',
+      // );
 
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
@@ -973,9 +1038,11 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
         });
       }
     } catch (e) {
+      final errorMessage = e.toString().replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+      ).showSnackBar(
+          SnackBar(content: Text('Error al cambiar me gusta. $errorMessage')));
     }
   }
 
@@ -996,25 +1063,11 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
 
   Future<void> _launchUrl(String url) async {
     try {
-      // Verificar si es un video de YouTube
-      final videoId = _extractYouTubeVideoId(url);
-      if (videoId != null) {
-        // Mostrar reproductor de YouTube incrustado
-        if (mounted) {
-          showDialog(
-            context: context,
-            builder: (context) =>
-                Dialog(child: YoutubePlayerDialog(videoId: videoId)),
-          );
-        }
-        return;
-      }
-
-      // Para otras URLs, abrir en navegador externo
+      // Abrir todas las URLs en navegador externo
       final uri = Uri.parse(url);
-      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-        throw Exception('No se pudo abrir el enlace');
-      }
+      // if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      throw Exception('No se pudo abrir el enlace');
+      // }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1045,22 +1098,22 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
           'api/consejo_documentos.php?codigo=${doc.codigo}',
         );
 
-        debugPrint('Response status: ${response.statusCode}');
-        debugPrint('Response body: ${response.body}');
+        // debugPrint('Response status: ${response.statusCode}');
+        // debugPrint('Response body: ${response.body}');
 
         if (response.statusCode == 200) {
           final data = json.decode(response.body);
-          debugPrint('Data type: ${data.runtimeType}');
-          debugPrint('Data: $data');
+          // debugPrint('Data type: ${data.runtimeType}');
+          // debugPrint('Data: $data');
 
           if (data is Map && data['documento'] != null) {
             documentoBase64 = data['documento'];
-            debugPrint('Documento length from Map: ${documentoBase64?.length}');
+            // debugPrint('Documento length from Map: ${documentoBase64?.length}');
           } else if (data is List && data.isNotEmpty) {
             documentoBase64 = data[0]['documento'];
-            debugPrint(
-              'Documento length from List: ${documentoBase64?.length}',
-            );
+            // debugPrint(
+            //   'Documento length from List: ${documentoBase64?.length}',
+            // );
           }
         } else {
           if (mounted) Navigator.of(context).pop();
@@ -1180,9 +1233,9 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
   }
 
   Future<void> _toggleFavorito() async {
-    debugPrint('Detail _toggleFavorito called for consejo: ${_consejo.codigo}');
+    // debugPrint('Detail _toggleFavorito called for consejo: ${_consejo.codigo}');
     if (widget.isPreviewMode) {
-      debugPrint('Preview mode, skipping');
+      // debugPrint('Preview mode, skipping');
       return;
     }
 
@@ -1190,7 +1243,7 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
     final userCode = authService.userCode;
 
     if (authService.isGuestMode) {
-      debugPrint('Guest mode - cannot save favorites');
+      // debugPrint('Guest mode - cannot save favorites');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -1222,14 +1275,14 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
         'codigo_usuario': int.parse(userCode),
       };
 
-      debugPrint('Sending detail toggle_favorito request: $data');
+      // debugPrint('Sending detail toggle_favorito request: $data');
       final response = await apiService.post(
         'api/consejo_usuarios.php?toggle_favorito=1',
         body: json.encode(data),
       );
-      debugPrint(
-        'Detail toggle_favorito response: ${response.statusCode} - ${response.body}',
-      );
+      // debugPrint(
+      //   'Detail toggle_favorito response: ${response.statusCode} - ${response.body}',
+      // );
 
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
@@ -1244,9 +1297,57 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+        ).showSnackBar(SnackBar(
+            content: Text('Error al cambiar favorito. $errorMessage')));
+      }
+    }
+  }
+
+  Future<void> _copyToClipboard() async {
+    try {
+      final textToCopy = '${_consejo.titulo}\n\n${_consejo.texto}';
+      await Clipboard.setData(ClipboardData(text: textToCopy));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Copiado al portapapeles'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al copiar: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _generateConsejoPdf() async {
+    try {
+      final apiService = Provider.of<ApiService>(context, listen: false);
+      await ConsejoRecetaPdfService.generatePdf(
+        context: context,
+        apiService: apiService,
+        titulo: _consejo.titulo,
+        contenido: _consejo.texto,
+        tipo: 'consejo',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al generar PDF: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
   }
@@ -1311,26 +1412,52 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
               ),
             // Imagen de portada
             if (_consejo.imagenPortada != null)
-              Image.memory(
-                base64Decode(_consejo.imagenPortada!),
-                width: double.infinity,
-                height: 300,
-                fit: BoxFit.cover,
+              GestureDetector(
+                onTap: () => showImageViewerDialog(
+                  context: context,
+                  base64Image: _consejo.imagenPortada!,
+                  title: _consejo.titulo,
+                ),
+                child: Image.memory(
+                  base64Decode(_consejo.imagenPortada!),
+                  width: double.infinity,
+                  height: 300,
+                  fit: BoxFit.contain,
+                ),
               ),
 
             Padding(
-              padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 32.0),
+              padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 48.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Likes
                   Row(
                     children: [
-                      const Icon(Icons.favorite, color: Colors.red, size: 20),
-                      const SizedBox(width: 4),
+                      IconButton(
+                        icon: Icon(
+                          _consejo.meGusta == 'S'
+                              ? Icons.favorite
+                              : Icons.favorite_border,
+                          color: _consejo.meGusta == 'S' ? Colors.red : null,
+                          size: 20,
+                        ),
+                        onPressed: _toggleLike,
+                      ),
                       Text(
                         '${_consejo.totalLikes ?? 0} me gusta',
                         style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.copy, size: 20),
+                        onPressed: _copyToClipboard,
+                        tooltip: 'Copiar',
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.picture_as_pdf, size: 20),
+                        onPressed: _generateConsejoPdf,
+                        tooltip: 'Generar PDF',
                       ),
                     ],
                   ),
@@ -1391,7 +1518,7 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
                                     onTap: () {
                                       if (doc.tipo == 'url' &&
                                           doc.url != null) {
-                                        _launchUrl(doc.url!);
+                                        // _launchUrl(doc.url!);
                                       } else if (doc.tipo == 'documento') {
                                         _openDocumento(doc);
                                       }
@@ -1748,67 +1875,3 @@ class HashtagText extends StatelessWidget {
 }
 
 // Widget para reproducir videos de YouTube incrustados
-class YoutubePlayerDialog extends StatefulWidget {
-  final String videoId;
-
-  const YoutubePlayerDialog({super.key, required this.videoId});
-
-  @override
-  State<YoutubePlayerDialog> createState() => _YoutubePlayerDialogState();
-}
-
-class _YoutubePlayerDialogState extends State<YoutubePlayerDialog> {
-  // Reproductor de YouTube deshabilitado para web
-  // Se abre el enlace directamente en el navegador
-
-  @override
-  void initState() {
-    super.initState();
-    // Abrir automáticamente el video en el navegador
-    _openYoutubeVideo();
-  }
-
-  Future<void> _openYoutubeVideo() async {
-    final url = Uri.parse('https://www.youtube.com/watch?v=${widget.videoId}');
-    if (await canLaunchUrl(url)) {
-      await launchUrl(url, mode: LaunchMode.externalApplication);
-      if (mounted) {
-        Navigator.of(context).pop();
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Padding(
-          padding: EdgeInsets.all(16.0),
-          child: Column(
-            children: [
-              Icon(Icons.video_library, size: 64, color: Colors.red),
-              SizedBox(height: 16),
-              Text(
-                'Abriendo video en YouTube...',
-                style: TextStyle(fontSize: 16),
-              ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Cerrar'),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}

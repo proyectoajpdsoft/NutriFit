@@ -6,6 +6,7 @@ import 'package:nutri_app/models/session.dart';
 import 'package:nutri_app/screens/parametros/parametro_edit_screen.dart'
     as parametro;
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class ConfigScreen extends StatelessWidget {
   const ConfigScreen({super.key});
@@ -28,6 +29,7 @@ class ConfigScreen extends StatelessWidget {
               child: TabBar(
                 isScrollable: true,
                 tabs: [
+                  Tab(text: 'Parámetros'),
                   Tab(text: 'General'),
                   Tab(text: 'Seguridad'),
                   Tab(text: 'Usuario'),
@@ -37,7 +39,6 @@ class ConfigScreen extends StatelessWidget {
                   Tab(text: 'Planes'),
                   Tab(text: 'Pacientes'),
                   Tab(text: 'Clientes'),
-                  Tab(text: 'Parámetros'),
                 ],
               ),
             ),
@@ -45,6 +46,7 @@ class ConfigScreen extends StatelessWidget {
         ),
         body: const TabBarView(
           children: [
+            _ParametrosTab(),
             _GeneralTab(),
             _SecurityTab(),
             _UsuarioTab(),
@@ -54,7 +56,6 @@ class ConfigScreen extends StatelessWidget {
             _PlanesTab(),
             _PacientesTab(),
             _ClientesTab(),
-            _ParametrosTab(),
           ],
         ),
       ),
@@ -565,9 +566,10 @@ class _AccessSubTabState extends State<_AccessSubTab> {
         _isLoading = false;
       });
       if (mounted) {
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al cargar políticas: $e'),
+            content: Text('Error al cargar políticas. $errorMessage'),
             backgroundColor: Colors.red,
           ),
         );
@@ -902,6 +904,7 @@ class _CitasTabState extends State<_CitasTab> {
   List<String> tiposCita = [];
   bool _isLoadingTipos = true;
   late ApiService _apiService;
+  String _citasView = 'list';
 
   static const estadosCita = ["Pendiente", "Realizada", "Anulada", "Aplazada"];
 
@@ -909,7 +912,22 @@ class _CitasTabState extends State<_CitasTab> {
   void initState() {
     super.initState();
     _apiService = ApiService();
+    _loadCitasViewPref();
     _loadTiposCita();
+  }
+
+  Future<void> _loadCitasViewPref() async {
+    final prefs = await SharedPreferences.getInstance();
+    final value = prefs.getString('citas_default_view') ?? 'list';
+    if (!mounted) return;
+    setState(() {
+      _citasView = value;
+    });
+  }
+
+  Future<void> _saveCitasViewPref(String value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('citas_default_view', value);
   }
 
   Future<void> _loadTiposCita() async {
@@ -927,7 +945,7 @@ class _CitasTabState extends State<_CitasTab> {
         _setDefaultTipos();
       }
     } catch (e) {
-      debugPrint('Error al cargar tipos de citas: $e');
+      // debugPrint('Error al cargar tipos de citas: $e');
       _setDefaultTipos();
     }
   }
@@ -954,6 +972,31 @@ class _CitasTabState extends State<_CitasTab> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Visualizar citas',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(value: 'calendar', label: Text('Calendario')),
+                ButtonSegment(value: 'list', label: Text('Lista')),
+              ],
+              selected: {_citasView},
+              onSelectionChanged: (Set<String> newSelection) {
+                final nextValue = newSelection.first;
+                setState(() {
+                  _citasView = nextValue;
+                });
+                _saveCitasViewPref(nextValue);
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
         if (_isLoadingTipos)
           Container(
             padding: const EdgeInsets.all(16),
@@ -1436,16 +1479,23 @@ class _ParametrosTabState extends State<_ParametrosTab> {
   late Future<List<dynamic>> _parametrosFuture;
   final TextEditingController _searchController = TextEditingController();
   String _searchText = '';
+  String? _userType;
 
   @override
   void initState() {
     super.initState();
     _loadParametros();
+    _loadUserType();
     _searchController.addListener(() {
       setState(() {
         _searchText = _searchController.text.toLowerCase();
       });
     });
+  }
+
+  void _loadUserType() {
+    final authService = context.read<AuthService>();
+    _userType = authService.userType;
   }
 
   @override
@@ -1654,11 +1704,11 @@ class _ParametrosTabState extends State<_ParametrosTab> {
                     ),
                     itemCount: parametros.length,
                     itemBuilder: (context, index) {
-                      final parametro = parametros[index];
+                      final paramData = parametros[index];
                       return Card(
                         child: ListTile(
                           title: Text(
-                            parametro['nombre'] ?? '',
+                            paramData['nombre'] ?? '',
                             style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
                           subtitle: Column(
@@ -1666,16 +1716,16 @@ class _ParametrosTabState extends State<_ParametrosTab> {
                             children: [
                               const SizedBox(height: 4),
                               Text(
-                                _truncateText(parametro['valor']),
+                                _truncateText(paramData['valor']),
                                 style: const TextStyle(fontSize: 12),
                               ),
-                              if (parametro['descripcion'] != null &&
-                                  parametro['descripcion']
+                              if (paramData['descripcion'] != null &&
+                                  paramData['descripcion']
                                       .toString()
                                       .isNotEmpty) ...[
                                 const SizedBox(height: 4),
                                 Text(
-                                  parametro['descripcion'],
+                                  paramData['descripcion'],
                                   style: TextStyle(
                                     fontSize: 11,
                                     color: Colors.grey.shade600,
@@ -1687,26 +1737,28 @@ class _ParametrosTabState extends State<_ParametrosTab> {
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              IconButton(
-                                icon: const Icon(Icons.edit),
-                                onPressed: () async {
-                                  final result = await Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) =>
-                                          parametro.ParametroEditScreen(
-                                              parametro: parametro),
-                                    ),
-                                  );
-                                  if (result == true) {
-                                    _refresh();
-                                  }
-                                },
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete),
-                                onPressed: () => _deleteParametro(parametro),
-                              ),
+                              if (_userType == 'Nutricionista')
+                                IconButton(
+                                  icon: const Icon(Icons.edit),
+                                  onPressed: () async {
+                                    final result = await Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            parametro.ParametroEditScreen(
+                                                parametro: paramData),
+                                      ),
+                                    );
+                                    if (result == true) {
+                                      _refresh();
+                                    }
+                                  },
+                                ),
+                              if (_userType == 'Nutricionista')
+                                IconButton(
+                                  icon: const Icon(Icons.delete),
+                                  onPressed: () => _deleteParametro(paramData),
+                                ),
                             ],
                           ),
                         ),
@@ -1719,20 +1771,22 @@ class _ParametrosTabState extends State<_ParametrosTab> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const parametro.ParametroEditScreen(),
-            ),
-          );
-          if (result == true) {
-            _refresh();
-          }
-        },
-        child: const Icon(Icons.add),
-      ),
+      floatingActionButton: _userType == 'Nutricionista'
+          ? FloatingActionButton(
+              onPressed: () async {
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const parametro.ParametroEditScreen(),
+                  ),
+                );
+                if (result == true) {
+                  _refresh();
+                }
+              },
+              child: const Icon(Icons.add),
+            )
+          : null,
     );
   }
 }

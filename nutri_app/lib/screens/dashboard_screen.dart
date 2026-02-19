@@ -14,6 +14,7 @@ import 'package:nutri_app/screens/usuarios/usuarios_list_screen.dart';
 import 'package:nutri_app/screens/recetas_list_screen.dart';
 import 'package:nutri_app/screens/consejos_list_screen.dart';
 import 'package:nutri_app/screens/actividades_con_plan_list_screen.dart';
+import 'package:nutri_app/screens/planes_fit/plan_fit_ejercicios_catalog_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -37,6 +38,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _totalRecetas = 0;
   int _totalConsejos = 0;
   int _totalActividades = 0;
+  int _totalEjerciciosCatalog = 0;
 
   @override
   void initState() {
@@ -79,6 +81,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           await _apiService.getTotal('consejos.php?total_consejos=true');
       final actividadesCount = await _apiService
           .getTotal('entrenamientos.php?action=total_actividades_con_plan');
+      final ejerciciosCatalogCount =
+          await _apiService.getTotal('plan_fit_ejercicios.php?total_catalog=1');
 
       setState(() {
         _totalPatients = patientsCount;
@@ -94,12 +98,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _totalRecetas = recetasCount;
         _totalConsejos = consejosCount;
         _totalActividades = actividadesCount;
+        _totalEjerciciosCatalog = ejerciciosCatalogCount;
       });
     } catch (e) {
+      final errorMessage = e.toString().replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error al cargar datos del dashboard: $e')),
+        SnackBar(
+            content:
+                Text('Error al cargar datos del dashboard. $errorMessage')),
       );
-      debugPrint('Error al cargar datos del dashboard: $e');
+      // debugPrint('Error al cargar datos del dashboard: $e');
     }
   }
 
@@ -185,17 +193,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
             padding: const EdgeInsets.all(8.0),
             child: Column(
               children: [
-                _buildDashboardCard(
-                  title: 'Pacientes',
-                  value: _totalPatients.toString(),
-                  icon: Icons.people,
-                  color: Colors.blue,
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                          builder: (context) => const PacientesListScreen()),
-                    );
-                  },
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildDashboardCard(
+                        title: 'Pacientes',
+                        value: _totalPatients.toString(),
+                        icon: Icons.people,
+                        color: Colors.blue,
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (context) =>
+                                    const PacientesListScreen()),
+                          );
+                        },
+                      ),
+                    ),
+                    Expanded(
+                      child: _buildDashboardCard(
+                        title: 'Usuarios',
+                        value: _totalUsuarios.toString(),
+                        icon: Icons.person,
+                        color: Colors.brown,
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (context) =>
+                                    const UsuariosListScreen()),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                 ),
                 _buildDashboardCard(
                   title: 'Citas',
@@ -237,6 +267,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             MaterialPageRoute(
                                 builder: (context) =>
                                     const MedicionesPacientesListScreen()),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildDashboardCard(
+                        title: 'Ejercicios',
+                        value: _totalEjerciciosCatalog.toString(),
+                        icon: Icons.fitness_center,
+                        color: Colors.blueGrey,
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (context) =>
+                                    const PlanFitEjerciciosCatalogScreen()),
+                          );
+                        },
+                      ),
+                    ),
+                    Expanded(
+                      child: _buildDashboardCard(
+                        title: 'Actividades con Plan',
+                        value: _totalActividades.toString(),
+                        icon: Icons.directions_run,
+                        color: Colors.teal,
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (context) =>
+                                    const ActividadesConPlanListScreen()),
                           );
                         },
                       ),
@@ -327,25 +391,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   children: [
                     Expanded(
                       child: _buildDashboardCard(
-                        title: 'Usuarios',
-                        value: _totalUsuarios.toString(),
-                        icon: Icons.person,
-                        color: Colors.amber,
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (context) =>
-                                    const UsuariosListScreen()),
-                          );
-                        },
-                      ),
-                    ),
-                    Expanded(
-                      child: _buildDashboardCard(
                         title: 'Recetas',
                         value: _totalRecetas.toString(),
                         icon: Icons.restaurant_menu,
-                        color: Colors.orange,
+                        color: Colors.deepPurpleAccent,
                         onTap: () {
                           Navigator.of(context).push(
                             MaterialPageRoute(
@@ -355,33 +404,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         },
                       ),
                     ),
+                    Expanded(
+                      child: _buildDashboardCard(
+                        title: 'Consejos',
+                        value: _totalConsejos.toString(),
+                        icon: Icons.lightbulb,
+                        color: Colors.purpleAccent,
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (context) =>
+                                    const ConsejosListScreen()),
+                          );
+                        },
+                      ),
+                    ),
                   ],
                 ),
-                _buildDashboardCard(
-                  title: 'Consejos',
-                  value: _totalConsejos.toString(),
-                  icon: Icons.lightbulb,
-                  color: Colors.deepOrange,
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                          builder: (context) => const ConsejosListScreen()),
-                    );
-                  },
-                ),
-                _buildDashboardCard(
-                  title: 'Actividades con Plan',
-                  value: _totalActividades.toString(),
-                  icon: Icons.fitness_center,
-                  color: Colors.teal,
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                          builder: (context) =>
-                              const ActividadesConPlanListScreen()),
-                    );
-                  },
-                ),
+                const SizedBox(height: 24),
               ],
             ),
           ),

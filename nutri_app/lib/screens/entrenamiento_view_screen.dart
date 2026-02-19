@@ -5,6 +5,7 @@ import '../models/entrenamiento.dart';
 import '../models/entrenamiento_ejercicio.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../widgets/image_viewer_dialog.dart' show showImageViewerDialog;
 import 'entrenamiento_edit_screen.dart';
 
 class EntrenamientoViewScreen extends StatefulWidget {
@@ -54,7 +55,7 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
           ..addEntries(items.map((e) => MapEntry(e.nombre, e.icono)));
       });
     } catch (e) {
-      debugPrint('Error cargando iconos custom: $e');
+      // debugPrint('Error cargando iconos custom: $e');
     }
   }
 
@@ -114,7 +115,7 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
         _isLoading = false;
       });
     } catch (e) {
-      debugPrint('Error cargando actividades anteriores: $e');
+      // debugPrint('Error cargando actividades anteriores: $e');
       setState(() {
         _isLoading = false;
       });
@@ -132,7 +133,7 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
         });
       }
     } catch (e) {
-      debugPrint('Error cargando imágenes del entrenamiento: $e');
+      // debugPrint('Error cargando imágenes del entrenamiento: $e');
     }
   }
 
@@ -147,7 +148,7 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
         });
       }
     } catch (e) {
-      debugPrint('Error cargando ejercicios del entrenamiento: $e');
+      // Error cargando ejercicios
     }
   }
 
@@ -481,19 +482,17 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                     final kilosPlan = e.kilosPlan ?? 0;
                                     final esfuerzo = e.esfuerzoPercibido ?? 0;
 
-                                    // Determinar color de fondo
-                                    Color backgroundColor;
-                                    if (tiempoRealizado > 0 ||
-                                        repsRealizadas > 0) {
-                                      // Realizado - verde suave
-                                      backgroundColor = Colors.green.shade50;
-                                    } else if (tiempoPlan > 0 || repsPlan > 0) {
-                                      // No realizado - rojo suave
-                                      backgroundColor = Colors.red.shade50;
-                                    } else {
-                                      // No especificado - gris suave
-                                      backgroundColor = Colors.grey.shade100;
-                                    }
+                                    final realizado =
+                                        (e.realizado ?? '').toUpperCase();
+                                    final backgroundColor = realizado == 'S'
+                                        ? Colors.green.shade50
+                                        : Colors.orange.shade50;
+
+                                    final hasMiniatura = (e.fotoMiniatura ?? '')
+                                        .trim()
+                                        .isNotEmpty;
+                                    final hasImagenCompleta =
+                                        (e.fotoBase64 ?? '').trim().isNotEmpty;
 
                                     // Color del círculo de esfuerzo según valor
                                     Color getEsfuerzoColor(int valor) {
@@ -512,64 +511,138 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
-                                          Text(
-                                            e.nombre,
-                                            style: const TextStyle(
-                                                fontWeight: FontWeight.bold),
-                                          ),
-                                          const SizedBox(height: 8),
                                           Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
                                             children: [
-                                              if (repsRealizadas > 0 ||
-                                                  repsPlan > 0) ...[
-                                                const Icon(Icons.repeat,
-                                                    size: 16),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                    '${repsRealizadas > 0 ? repsRealizadas : repsPlan}'),
-                                                const SizedBox(width: 12),
-                                              ],
-                                              if (tiempoRealizado > 0 ||
-                                                  tiempoPlan > 0) ...[
-                                                const Icon(Icons.timer,
-                                                    size: 16),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                    '${tiempoRealizado > 0 ? tiempoRealizado : tiempoPlan}s'),
-                                                const SizedBox(width: 12),
-                                              ],
-                                              if (kilosPlan > 0) ...[
-                                                const Icon(Icons.fitness_center,
-                                                    size: 16),
-                                                const SizedBox(width: 4),
-                                                Text('${kilosPlan} kg'),
-                                                const SizedBox(width: 12),
-                                              ],
-                                              Container(
-                                                width: 20,
-                                                height: 20,
-                                                decoration: BoxDecoration(
-                                                  shape: BoxShape.circle,
-                                                  color:
-                                                      getEsfuerzoColor(esfuerzo)
-                                                          .withOpacity(0.3),
-                                                  border: Border.all(
-                                                    color: getEsfuerzoColor(
-                                                        esfuerzo),
-                                                    width: 2,
-                                                  ),
-                                                ),
-                                                child: Center(
-                                                  child: Text(
-                                                    '$esfuerzo',
-                                                    style: TextStyle(
-                                                      fontSize: 10,
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                      color: getEsfuerzoColor(
-                                                          esfuerzo),
+                                              if (hasMiniatura)
+                                                ClipRRect(
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                  child: GestureDetector(
+                                                    onTap: hasImagenCompleta
+                                                        ? () =>
+                                                            showImageViewerDialog(
+                                                              context: context,
+                                                              base64Image:
+                                                                  e.fotoBase64!,
+                                                              title: e.nombre,
+                                                            )
+                                                        : null,
+                                                    child: Image.memory(
+                                                      base64Decode(
+                                                          e.fotoMiniatura!),
+                                                      width: 64,
+                                                      height: 64,
+                                                      fit: BoxFit.cover,
                                                     ),
                                                   ),
+                                                )
+                                              else
+                                                Container(
+                                                  width: 64,
+                                                  height: 64,
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.grey.shade200,
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            8),
+                                                  ),
+                                                  child: const Icon(
+                                                    Icons.fitness_center,
+                                                    size: 28,
+                                                    color: Colors.grey,
+                                                  ),
+                                                ),
+                                              const SizedBox(width: 12),
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(
+                                                      e.nombre,
+                                                      style: const TextStyle(
+                                                          fontWeight:
+                                                              FontWeight.bold),
+                                                    ),
+                                                    const SizedBox(height: 6),
+                                                    Row(
+                                                      children: [
+                                                        if (repsRealizadas >
+                                                                0 ||
+                                                            repsPlan > 0) ...[
+                                                          const Icon(
+                                                              Icons.repeat,
+                                                              size: 16),
+                                                          const SizedBox(
+                                                              width: 4),
+                                                          Text(
+                                                              '${repsRealizadas > 0 ? repsRealizadas : repsPlan}'),
+                                                          const SizedBox(
+                                                              width: 12),
+                                                        ],
+                                                        if (tiempoRealizado >
+                                                                0 ||
+                                                            tiempoPlan > 0) ...[
+                                                          const Icon(
+                                                              Icons.timer,
+                                                              size: 16),
+                                                          const SizedBox(
+                                                              width: 4),
+                                                          Text(
+                                                              '${tiempoRealizado > 0 ? tiempoRealizado : tiempoPlan}s'),
+                                                          const SizedBox(
+                                                              width: 12),
+                                                        ],
+                                                        if (kilosPlan > 0) ...[
+                                                          const Icon(
+                                                              Icons
+                                                                  .fitness_center,
+                                                              size: 16),
+                                                          const SizedBox(
+                                                              width: 4),
+                                                          Text('$kilosPlan kg'),
+                                                          const SizedBox(
+                                                              width: 12),
+                                                        ],
+                                                        Container(
+                                                          width: 20,
+                                                          height: 20,
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            shape:
+                                                                BoxShape.circle,
+                                                            color:
+                                                                getEsfuerzoColor(
+                                                                        esfuerzo)
+                                                                    .withOpacity(
+                                                                        0.3),
+                                                            border: Border.all(
+                                                              color:
+                                                                  getEsfuerzoColor(
+                                                                      esfuerzo),
+                                                              width: 2,
+                                                            ),
+                                                          ),
+                                                          child: Center(
+                                                            child: Text(
+                                                              '$esfuerzo',
+                                                              style: TextStyle(
+                                                                fontSize: 10,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .bold,
+                                                                color:
+                                                                    getEsfuerzoColor(
+                                                                        esfuerzo),
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ],
                                                 ),
                                               ),
                                             ],

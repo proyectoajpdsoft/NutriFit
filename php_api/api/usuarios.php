@@ -100,14 +100,14 @@ function handle_post_request() {
 
 function get_usuarios() {
     global $db;
-    // No devolvemos la contraseña ni el token en la lista
+    // Incluir img_perfil para que se muestre en el listado
     $query = "SELECT codigo, nick, nombre, email, tipo, activo, accesoweb, administrador, codigo_paciente, img_perfil
               FROM usuario ORDER BY nombre";
     $stmt = $db->prepare($query);
     $stmt->execute();
     $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // Convertir img_perfil de BLOB a base64 usando PHP
+    // Convertir img_perfil de BLOB a base64
     foreach ($items as &$item) {
         if ($item['img_perfil'] !== null) {
             $item['img_perfil'] = base64_encode($item['img_perfil']);
