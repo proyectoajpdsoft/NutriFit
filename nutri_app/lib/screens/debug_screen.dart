@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:nutri_app/services/api_service.dart';
+import 'package:nutri_app/screens/debug_token_screen.dart';
 
 class DebugScreen extends StatefulWidget {
   const DebugScreen({super.key});
@@ -73,6 +74,15 @@ class _DebugScreenState extends State<DebugScreen> {
                             () => _apiService.getRawData('usuarios.php'),
                           ),
                   child: const Text('4. Get Usuarios (Raw)'),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => const DebugTokenScreen(),
+                    ),
+                  ),
+                  icon: const Icon(Icons.bug_report),
+                  label: const Text('5. Diagnóstico Token'),
                 ),
               ],
             ),
