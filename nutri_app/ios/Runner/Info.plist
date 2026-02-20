@@ -45,7 +45,35 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
-	
+	<!-- Permisos de red - ATS (App Transport Security) -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<!-- Permitir conexión HTTPS a aprendeconpatricia.com -->
+			<key>aprendeconpatricia.com</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<false/>
+				<key>NSExceptionMinimumTLSVersion</key>
+				<string>TLSv1.2</string/>
+			</dict>
+			<!-- Permitir conexión HTTP local (si es necesario) -->
+			<key>ipcasa.ajpdsoft.com</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSExceptionMinimumTLSVersion</key>
+				<string>TLSv1.0</string/>
+			</dict>
+		</dict>
+	</dict>
 	<!-- Permisos para cámara y galería -->
 	<key>NSCameraUsageDescription</key>
 	<string>Esta aplicación necesita acceso a la cámara para tomar fotos de perfil</string>
@@ -53,5 +81,13 @@
 	<string>Esta aplicación necesita acceso a la galería para seleccionar fotos de perfil</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Esta aplicación necesita guardar fotos en la galería</string>
+	<!-- Permisos de red local -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Esta aplicación necesita acceso a la red local para conectarse con el servidor</string>
+	<key>NSBonjourServiceTypes</key>
+	<array>
+		<string>_http._tcp</string>
+		<string>_https._tcp</string>
+	</array>
 </dict>
 </plist>
