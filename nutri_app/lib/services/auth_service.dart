@@ -94,7 +94,7 @@ class AuthService with ChangeNotifier {
         throw Exception('Error al crear sesión de invitado');
       }
     } catch (e) {
-      throw Exception('Error de conexión: $e');
+      throw Exception(e.toString().replaceFirst('Exception: ', ''));
     }
   }
 

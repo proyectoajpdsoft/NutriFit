@@ -4,6 +4,55 @@ header("Content-Type: application/json; charset=UTF-8");
 header("Access-Control-Allow-Methods: POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
 
+ob_start();
+ini_set('display_errors', '0');
+ini_set('log_errors', '1');
+error_reporting(E_ALL);
+
+function login_send_safe_error_response($http_code = 500, $message = 'No se pudo completar el inicio de sesión. Inténtalo de nuevo.', $code = 'LOGIN_INTERNAL_ERROR') {
+    if (ob_get_length()) {
+        ob_clean();
+    }
+
+    if (!headers_sent()) {
+        http_response_code($http_code);
+        header("Content-Type: application/json; charset=UTF-8");
+    }
+
+    echo json_encode(array(
+        "message" => $message,
+        "code" => $code
+    ));
+}
+
+set_error_handler(function ($severity, $message, $file, $line) {
+    if (!(error_reporting() & $severity)) {
+        return false;
+    }
+
+    throw new ErrorException($message, 0, $severity, $file, $line);
+});
+
+set_exception_handler(function ($exception) {
+    error_log("[login.php] Excepción no controlada: " . $exception->getMessage() . " en " . $exception->getFile() . ":" . $exception->getLine());
+    login_send_safe_error_response();
+    exit();
+});
+
+register_shutdown_function(function () {
+    $error = error_get_last();
+    if (!$error) {
+        return;
+    }
+
+    $fatal_types = array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR);
+    if (in_array($error['type'], $fatal_types, true)) {
+        error_log("[login.php] Error fatal: " . $error['message'] . " en " . $error['file'] . ":" . $error['line']);
+        login_send_safe_error_response();
+        exit();
+    }
+});
+
 include_once '../config/database.php';
 include_once '../auth/token_validator.php';
 include_once '../auth/permissions.php';
@@ -86,6 +135,8 @@ if ($num > 0) {
                 )
             ));
         } else {
+            $sql_error = $update_stmt->errorInfo();
+            error_log("[login.php] Fallo update token usuario {$codigo}: " . json_encode($sql_error));
             http_response_code(503);
             echo json_encode(array("message" => "No se pudo actualizar el token."));
         }

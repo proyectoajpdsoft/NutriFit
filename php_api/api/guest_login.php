@@ -4,6 +4,55 @@ header("Content-Type: application/json; charset=UTF-8");
 header("Access-Control-Allow-Methods: POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
 
+ob_start();
+ini_set('display_errors', '0');
+ini_set('log_errors', '1');
+error_reporting(E_ALL);
+
+function guest_send_safe_error_response($http_code = 500, $message = 'No se pudo crear la sesión de invitado. Inténtalo de nuevo.', $code = 'GUEST_LOGIN_INTERNAL_ERROR') {
+    if (ob_get_length()) {
+        ob_clean();
+    }
+
+    if (!headers_sent()) {
+        http_response_code($http_code);
+        header("Content-Type: application/json; charset=UTF-8");
+    }
+
+    echo json_encode(array(
+        "message" => $message,
+        "code" => $code
+    ));
+}
+
+set_error_handler(function ($severity, $message, $file, $line) {
+    if (!(error_reporting() & $severity)) {
+        return false;
+    }
+
+    throw new ErrorException($message, 0, $severity, $file, $line);
+});
+
+set_exception_handler(function ($exception) {
+    error_log("[guest_login.php] Excepción no controlada: " . $exception->getMessage() . " en " . $exception->getFile() . ":" . $exception->getLine());
+    guest_send_safe_error_response();
+    exit();
+});
+
+register_shutdown_function(function () {
+    $error = error_get_last();
+    if (!$error) {
+        return;
+    }
+
+    $fatal_types = array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR);
+    if (in_array($error['type'], $fatal_types, true)) {
+        error_log("[guest_login.php] Error fatal: " . $error['message'] . " en " . $error['file'] . ":" . $error['line']);
+        guest_send_safe_error_response();
+        exit();
+    }
+});
+
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
@@ -82,6 +131,8 @@ try {
     $stmt->bindParam(':ip_publica', $ip_publica);
     
     if (!$stmt->execute()) {
+        $sql_error = $stmt->errorInfo();
+        error_log("[guest_login.php] Fallo insert guest_tokens: " . json_encode($sql_error));
         throw new Exception("No se pudo guardar el token guest en la base de datos");
     }
     
@@ -92,7 +143,10 @@ try {
     
     $stmt_sesion = $db->prepare($query_sesion);
     $stmt_sesion->bindParam(':ip_publica', $ip_publica);
-    $stmt_sesion->execute();
+    if (!$stmt_sesion->execute()) {
+        $sql_error = $stmt_sesion->errorInfo();
+        error_log("[guest_login.php] Fallo insert sesion guest: " . json_encode($sql_error));
+    }
     
     http_response_code(200);
     echo json_encode(array(
@@ -104,10 +158,7 @@ try {
     ));
     
 } catch (Exception $e) {
-    http_response_code(500);
-    echo json_encode(array(
-        "error" => "Error creando sesión de invitado",
-        "details" => $e->getMessage()
-    ));
+    error_log("[guest_login.php] Error en flujo principal: " . $e->getMessage() . " en " . $e->getFile() . ":" . $e->getLine());
+    guest_send_safe_error_response();
 }
 ?>

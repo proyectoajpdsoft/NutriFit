@@ -226,7 +226,7 @@ class ApiService {
       deviceType = 'Unknown';
     }
 
-    final response = await http.post(
+    final response = await _safePost(
       Uri.parse('${_baseUrl}api/login.php'),
       headers: {
         'Content-Type': 'application/json; charset=UTF-8',
@@ -238,28 +238,62 @@ class ApiService {
         'dispositivo_tipo': deviceType,
       }),
     );
-    // Decodifica y devuelve siempre el cuerpo, el llamador se encargará de la lógica
-    return json.decode(response.body);
+    Map<String, dynamic> decoded;
+    try {
+      decoded = json.decode(response.body) as Map<String, dynamic>;
+    } catch (_) {
+      if (response.statusCode >= 500) {
+        throw Exception(
+            'No se pudo completar el inicio de sesión. Inténtalo de nuevo.');
+      }
+      throw Exception('Error de comunicación con el servidor.');
+    }
+
+    if (response.statusCode >= 500) {
+      throw Exception(
+        decoded['message']?.toString() ??
+            'No se pudo completar el inicio de sesión. Inténtalo de nuevo.',
+      );
+    }
+
+    return decoded;
   }
 
   // Login como invitado (sin credenciales)
   Future<Map<String, dynamic>> loginAsGuest() async {
     try {
-      final response = await http.post(
+      final response = await _safePost(
         Uri.parse('${_baseUrl}api/guest_login.php'),
         headers: {
           'Content-Type': 'application/json; charset=UTF-8',
           'Accept': 'application/json',
         },
-      ).timeout(const Duration(seconds: 10));
+      );
+
+      Map<String, dynamic> decoded;
+      try {
+        decoded = json.decode(response.body) as Map<String, dynamic>;
+      } catch (_) {
+        throw Exception(
+            'No se pudo acceder como invitado. Inténtalo de nuevo.');
+      }
 
       if (response.statusCode == 200) {
-        return json.decode(response.body);
+        return decoded;
       } else {
-        throw Exception('Error: ${response.statusCode}');
+        throw Exception(
+          decoded['message']?.toString() ??
+              'No se pudo acceder como invitado. Inténtalo de nuevo.',
+        );
       }
     } catch (e) {
-      throw Exception('Error creando sesión de invitado: $e');
+      final message = e.toString().replaceFirst('Exception: ', '');
+      if (message.toLowerCase().contains('internet') ||
+          message.toLowerCase().contains('conexión') ||
+          message.toLowerCase().contains('conexion')) {
+        throw Exception('Revise la conexión a Internet');
+      }
+      throw Exception('No se pudo acceder como invitado. Inténtalo de nuevo.');
     }
   }
 

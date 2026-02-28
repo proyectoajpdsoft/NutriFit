@@ -36,7 +36,7 @@ class _LoginScreenState extends State<LoginScreen> {
     if (_isNetworkError(errorMessage)) {
       return 'Hay algun problema con la conexion a Internet o la app no tiene permisos para conectarse.';
     }
-    return kDebugMode ? errorMessage : 'Inicio de sesion incorrecto';
+    return 'No se pudo completar el inicio de sesión. Inténtalo de nuevo.';
   }
 
   String _buildGuestErrorMessage(dynamic error) {
@@ -44,9 +44,7 @@ class _LoginScreenState extends State<LoginScreen> {
     if (_isNetworkError(errorMessage)) {
       return 'Hay algun problema con la conexion a Internet o la app no tiene permisos para conectarse.';
     }
-    return kDebugMode
-        ? errorMessage
-        : 'No se pudo acceder como invitado. Intentalo de nuevo.';
+    return 'No se pudo acceder como invitado. Inténtalo de nuevo.';
   }
 
   Future<void> _submit() async {

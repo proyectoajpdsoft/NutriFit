@@ -18,8 +18,13 @@ function get_token_hours_from_param($db, $param_name, $default_hours) {
     foreach ($queries as $query) {
         try {
             $stmt = $db->prepare($query);
+            if (!$stmt) {
+                continue;
+            }
             $stmt->bindParam(':nombre', $param_name, PDO::PARAM_STR);
-            $stmt->execute();
+            if (!$stmt->execute()) {
+                continue;
+            }
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if (!$row || !isset($row['valor_horas']) || $row['valor_horas'] === null || $row['valor_horas'] === '') {
