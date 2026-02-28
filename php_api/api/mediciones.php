@@ -26,7 +26,11 @@ PermissionManager::checkPermission($user, 'mediciones');
 
 switch($request_method) {
     case 'GET':
-        if (isset($_GET["total_mediciones"])) {
+        if (isset($_GET["objetivo_peso"])) {
+            get_objetivo_peso_usuario();
+        } elseif (isset($_GET["pesos_usuario"])) {
+            get_pesos_usuario();
+        } elseif (isset($_GET["total_mediciones"])) {
             $codigo_paciente = isset($_GET["codigo_paciente"]) ? intval($_GET["codigo_paciente"]) : null;
             get_total_mediciones($codigo_paciente);
         } elseif(!empty($_GET["codigo"])) {
@@ -41,7 +45,11 @@ switch($request_method) {
         create_medicion();
         break;
     case 'PUT':
-        update_medicion();
+        if (isset($_GET["objetivo_peso"])) {
+            update_objetivo_peso_usuario();
+        } else {
+            update_medicion();
+        }
         break;
     case 'DELETE':
         delete_medicion();
@@ -51,9 +59,178 @@ switch($request_method) {
         break;
 }
 
+function get_pesos_usuario() {
+        global $db, $user;
+
+        if (PermissionManager::isAdmin($user)) {
+                $codigo_paciente = isset($_GET["codigo_paciente"]) ? intval($_GET["codigo_paciente"]) : null;
+                if (empty($codigo_paciente)) {
+                        echo json_encode(array());
+                        return;
+                }
+
+                $query = "SELECT m.*, p.nombre as nombre_paciente, p.activo as paciente_activo, p.altura as altura_paciente
+                                    FROM nu_paciente_medicion m
+                                    LEFT JOIN nu_paciente p ON m.codigo_paciente = p.codigo
+                                    WHERE m.codigo_paciente = :codigo_paciente
+                                        AND m.tipo = 'Usuario'
+                                    ORDER BY m.fecha DESC";
+                $stmt = $db->prepare($query);
+                $stmt->bindParam(':codigo_paciente', $codigo_paciente);
+                $stmt->execute();
+                echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+                return;
+        }
+
+        $codigo_usuario = isset($user['codigo']) ? intval($user['codigo']) : 0;
+        if ($codigo_usuario <= 0) {
+                echo json_encode(array());
+                return;
+        }
+
+        $query = "SELECT m.*, p.nombre as nombre_paciente, p.activo as paciente_activo, p.altura as altura_paciente
+                            FROM nu_paciente_medicion m
+                            LEFT JOIN nu_paciente p ON m.codigo_paciente = p.codigo
+                            WHERE m.tipo = 'Usuario'
+                                AND m.codigo_usuario = :codigo_usuario
+                            ORDER BY m.fecha DESC";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(':codigo_usuario', $codigo_usuario);
+        $stmt->execute();
+        echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+}
+
+function resolve_user_paciente_code($user) {
+    if (!empty($user['codigo_paciente'])) {
+        return intval($user['codigo_paciente']);
+    }
+
+    return null;
+}
+
+function resolve_user_code($user) {
+    if (!empty($user['codigo'])) {
+        return intval($user['codigo']);
+    }
+    return null;
+}
+
+function get_objetivo_peso_usuario() {
+    global $db, $user;
+
+    $codigo_usuario = resolve_user_code($user);
+    if (empty($codigo_usuario)) {
+        http_response_code(400);
+        echo json_encode(array("message" => "Usuario inválido."));
+        return;
+    }
+
+    $query = "SELECT u.peso_objetivo, p.altura as altura_paciente
+              FROM usuario u
+              LEFT JOIN nu_paciente p ON u.codigo_paciente = p.codigo
+              WHERE u.codigo = :codigo_usuario
+              LIMIT 1";
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(':codigo_usuario', $codigo_usuario, PDO::PARAM_INT);
+
+    try {
+        $stmt->execute();
+        $item = $stmt->fetch(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        http_response_code(500);
+        echo json_encode(array(
+            "message" => "No se pudo obtener el objetivo de peso.",
+            "error" => $e->getMessage()
+        ));
+        return;
+    }
+
+    if (!$item) {
+        http_response_code(404);
+        echo json_encode(array("message" => "Usuario no encontrado."));
+        return;
+    }
+
+    $altura_cm = isset($item['altura_paciente']) ? intval($item['altura_paciente']) : null;
+    $peso_objetivo_sugerido = null;
+    if (!empty($altura_cm) && $altura_cm > 0) {
+        $altura_m = $altura_cm / 100.0;
+        $peso_objetivo_sugerido = round(22.0 * $altura_m * $altura_m, 1);
+    }
+
+    echo json_encode(array(
+        "peso_objetivo" => isset($item['peso_objetivo']) ? ($item['peso_objetivo'] !== null ? floatval($item['peso_objetivo']) : null) : null,
+        "peso_objetivo_sugerido" => $peso_objetivo_sugerido,
+        "altura_paciente" => $altura_cm
+    ));
+}
+
+function update_objetivo_peso_usuario() {
+    global $db, $user;
+
+    $codigo_usuario = resolve_user_code($user);
+    if (empty($codigo_usuario)) {
+        http_response_code(400);
+        echo json_encode(array("message" => "Usuario inválido."));
+        return;
+    }
+
+    $data = json_decode(file_get_contents("php://input"));
+    $peso_objetivo = null;
+
+    if (isset($data->peso_objetivo) && $data->peso_objetivo !== '') {
+        $peso_objetivo = floatval($data->peso_objetivo);
+        if ($peso_objetivo <= 0) {
+            http_response_code(400);
+            echo json_encode(array("message" => "El peso objetivo debe ser mayor que 0."));
+            return;
+        }
+    }
+
+    $query = "UPDATE usuario
+              SET peso_objetivo = :peso_objetivo,
+                  fecham = NOW(),
+                  codusuariom = :codusuariom
+              WHERE codigo = :codigo_usuario";
+
+    $stmt = $db->prepare($query);
+    $stmt->bindValue(':peso_objetivo', $peso_objetivo, $peso_objetivo === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+    $stmt->bindParam(':codusuariom', $codigo_usuario, PDO::PARAM_INT);
+    $stmt->bindParam(':codigo_usuario', $codigo_usuario, PDO::PARAM_INT);
+
+    try {
+        if ($stmt->execute()) {
+            http_response_code(200);
+            echo json_encode(array(
+                "message" => "Objetivo de peso actualizado.",
+                "peso_objetivo" => $peso_objetivo
+            ));
+        } else {
+            http_response_code(503);
+            echo json_encode(array("message" => "No se pudo actualizar el objetivo de peso."));
+        }
+    } catch (PDOException $e) {
+        http_response_code(500);
+        echo json_encode(array(
+            "message" => "No se pudo actualizar el objetivo de peso.",
+            "error" => $e->getMessage()
+        ));
+    }
+}
+
 function get_mediciones_por_paciente($codigo_paciente) {
-    global $db;
-    $query = "SELECT m.*, p.nombre as nombre_paciente, p.activo as paciente_activo
+    global $db, $user;
+
+    if (!PermissionManager::isAdmin($user)) {
+        $resolvedPaciente = resolve_user_paciente_code($user);
+        if (empty($resolvedPaciente)) {
+            echo json_encode(array());
+            return;
+        }
+        $codigo_paciente = $resolvedPaciente;
+    }
+
+    $query = "SELECT m.*, p.nombre as nombre_paciente, p.activo as paciente_activo, p.altura as altura_paciente
               FROM nu_paciente_medicion m
               LEFT JOIN nu_paciente p ON m.codigo_paciente = p.codigo
               WHERE m.codigo_paciente = :codigo_paciente
@@ -66,10 +243,22 @@ function get_mediciones_por_paciente($codigo_paciente) {
 }
 
 function get_todas_mediciones() {
-    global $db;
-    $query = "SELECT m.*, p.nombre as nombre_paciente, p.activo as paciente_activo
+    global $db, $user;
+
+    if (!PermissionManager::isAdmin($user)) {
+        $resolvedPaciente = resolve_user_paciente_code($user);
+        if (empty($resolvedPaciente)) {
+            echo json_encode(array());
+            return;
+        }
+        get_mediciones_por_paciente($resolvedPaciente);
+        return;
+    }
+
+    $query = "SELECT m.*, p.nombre as nombre_paciente, p.activo as paciente_activo, p.altura as altura_paciente
               FROM nu_paciente_medicion m
               LEFT JOIN nu_paciente p ON m.codigo_paciente = p.codigo
+              WHERE NOT (m.tipo = 'Usuario' AND p.codigo IS NULL)
               ORDER BY m.fecha DESC";
     $stmt = $db->prepare($query);
     $stmt->execute();
@@ -105,8 +294,17 @@ function bind_medicion_params($stmt, $data) {
     $data->pliegue_subescapular = ($data->pliegue_subescapular === '' || $data->pliegue_subescapular === null) ? null : floatval($data->pliegue_subescapular);
     $data->pligue_tricipital = ($data->pligue_tricipital === '' || $data->pligue_tricipital === null) ? null : floatval($data->pligue_tricipital);
     $data->pliegue_suprailiaco = ($data->pliegue_suprailiaco === '' || $data->pliegue_suprailiaco === null) ? null : floatval($data->pliegue_suprailiaco);
+    $data->observacion_usuario = isset($data->observacion_usuario) ? $data->observacion_usuario : null;
+    $data->tipo = isset($data->tipo) && !empty($data->tipo) ? $data->tipo : null;
+    $data->codigo_paciente = isset($data->codigo_paciente) && $data->codigo_paciente !== ''
+        ? intval($data->codigo_paciente)
+        : null;
+    $data->codigo_usuario = isset($data->codigo_usuario) && $data->codigo_usuario !== ''
+        ? intval($data->codigo_usuario)
+        : null;
 
-    $stmt->bindParam(":codigo_paciente", $data->codigo_paciente);
+    $stmt->bindValue(":codigo_paciente", $data->codigo_paciente, $data->codigo_paciente === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+    $stmt->bindValue(":codigo_usuario", $data->codigo_usuario, $data->codigo_usuario === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
     $stmt->bindParam(":fecha", $data->fecha);
     $stmt->bindParam(":peso", $data->peso);
     $stmt->bindParam(":cadera", $data->cadera);
@@ -121,22 +319,38 @@ function bind_medicion_params($stmt, $data) {
     $stmt->bindParam(":pligue_tricipital", $data->pligue_tricipital);
     $stmt->bindParam(":pliegue_suprailiaco", $data->pliegue_suprailiaco);
     $stmt->bindParam(":observacion", $data->observacion);
+    $stmt->bindParam(":observacion_usuario", $data->observacion_usuario);
+    $stmt->bindParam(":tipo", $data->tipo);
 }
 
 
 function create_medicion() {
-    global $db;
+    global $db, $user;
     $data = json_decode(file_get_contents("php://input"));
+
+    if (!PermissionManager::isAdmin($user)) {
+        $resolvedPaciente = resolve_user_paciente_code($user);
+        $resolvedUsuario = resolve_user_code($user);
+        $data->codigo_paciente = !empty($resolvedPaciente) ? $resolvedPaciente : null;
+        $data->codigo_usuario = !empty($resolvedUsuario) ? $resolvedUsuario : null;
+    } elseif (!isset($data->codigo_usuario)) {
+        $data->codigo_usuario = null;
+    }
+
+    if (!isset($data->tipo) || empty($data->tipo)) {
+        $data->tipo = PermissionManager::isAdmin($user) ? 'Dietista' : 'Usuario';
+    }
 
     $codusuarioa = isset($data->codusuarioa) ? $data->codusuarioa : 1;
 
     $query = "INSERT INTO nu_paciente_medicion SET
-                codigo_paciente = :codigo_paciente, fecha = :fecha, peso = :peso,
+                codigo_paciente = :codigo_paciente, codigo_usuario = :codigo_usuario, fecha = :fecha, peso = :peso,
                 cadera = :cadera, cintura = :cintura, muslo = :muslo, brazo = :brazo,
                 actividad_fisica = :actividad_fisica, pliegue_abdominal = :pliegue_abdominal,
                 pliegue_cuadricipital = :pliegue_cuadricipital, pliegue_peroneal = :pliegue_peroneal,
                 pliegue_subescapular = :pliegue_subescapular, pligue_tricipital = :pligue_tricipital,
                 pliegue_suprailiaco = :pliegue_suprailiaco, observacion = :observacion,
+                observacion_usuario = :observacion_usuario, tipo = :tipo,
                 fechaa = NOW(), codusuarioa = :codusuarioa";
     
     $stmt = $db->prepare($query);
@@ -153,7 +367,7 @@ function create_medicion() {
 }
 
 function update_medicion() {
-    global $db;
+    global $db, $user;
     $data = json_decode(file_get_contents("php://input"));
 
     if(empty($data->codigo)) {
@@ -162,15 +376,29 @@ function update_medicion() {
         return;
     }
 
+    if (!isset($data->tipo) || empty($data->tipo)) {
+        $data->tipo = PermissionManager::isAdmin($user) ? 'Dietista' : 'Usuario';
+    }
+
+    if (!PermissionManager::isAdmin($user)) {
+        $resolvedPaciente = resolve_user_paciente_code($user);
+        $resolvedUsuario = resolve_user_code($user);
+        $data->codigo_paciente = !empty($resolvedPaciente) ? $resolvedPaciente : null;
+        $data->codigo_usuario = !empty($resolvedUsuario) ? $resolvedUsuario : null;
+    } elseif (!isset($data->codigo_usuario)) {
+        $data->codigo_usuario = null;
+    }
+
     $codusuariom = isset($data->codusuariom) ? $data->codusuariom : 1;
 
     $query = "UPDATE nu_paciente_medicion SET
-                codigo_paciente = :codigo_paciente, fecha = :fecha, peso = :peso,
+                codigo_paciente = :codigo_paciente, codigo_usuario = :codigo_usuario, fecha = :fecha, peso = :peso,
                 cadera = :cadera, cintura = :cintura, muslo = :muslo, brazo = :brazo,
                 actividad_fisica = :actividad_fisica, pliegue_abdominal = :pliegue_abdominal,
                 pliegue_cuadricipital = :pliegue_cuadricipital, pliegue_peroneal = :pliegue_peroneal,
                 pliegue_subescapular = :pliegue_subescapular, pligue_tricipital = :pligue_tricipital,
-                pliegue_suprailiaco = :pliegue_suprailiaco, observacion = :observacion,
+                                pliegue_suprailiaco = :pliegue_suprailiaco, observacion = :observacion,
+                                observacion_usuario = :observacion_usuario, tipo = :tipo,
                 fecham = NOW(), codusuariom = :codusuariom
               WHERE codigo = :codigo";
 

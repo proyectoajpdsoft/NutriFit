@@ -44,7 +44,7 @@ try {
             }
             break;
         case 'POST':
-            create_paciente();
+            handle_post_request();
             break;
         case 'PUT':
             update_paciente();
@@ -198,6 +198,17 @@ function update_paciente() {
     bind_paciente_params($stmt, $data);
 
     if ($stmt->execute()) {
+        if (!empty($data->codigo_usuario)) {
+            $codigo_usuario = intval($data->codigo_usuario);
+            $codigo_paciente = intval($data->codigo);
+
+            $update_user = $db->prepare("UPDATE usuario SET codigo_paciente = :paciente WHERE codigo = :usuario");
+            $update_user->bindParam(':paciente', $codigo_paciente);
+            $update_user->bindParam(':usuario', $codigo_usuario);
+            $update_user->execute();
+
+            sync_usuario_paciente_rel($codigo_usuario, $codigo_paciente);
+        }
         http_response_code(200);
         ob_clean();
         echo json_encode(array("message" => "Paciente actualizado."));
@@ -209,6 +220,38 @@ function update_paciente() {
             "errorInfo" => $stmt->errorInfo()
         ));
     }
+}
+
+function sync_usuario_paciente_rel($codigo_usuario, $codigo_paciente) {
+    global $db;
+
+    if (empty($codigo_usuario) || empty($codigo_paciente)) {
+        return;
+    }
+
+    $tables = array('nu_consejo_usuario', 'nu_receta_usuario');
+    foreach ($tables as $table) {
+        if (!table_exists_pacientes($db, $table)) {
+            continue;
+        }
+
+        $query = "UPDATE $table
+                  SET codigo_usuario = :usuario
+                  WHERE codigo_paciente = :paciente
+                  AND (codigo_usuario IS NULL OR codigo_usuario = 0)";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(':usuario', $codigo_usuario);
+        $stmt->bindParam(':paciente', $codigo_paciente);
+        $stmt->execute();
+    }
+}
+
+function table_exists_pacientes($db, $table_name) {
+    $query = "SHOW TABLES LIKE :table";
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(':table', $table_name);
+    $stmt->execute();
+    return $stmt->rowCount() > 0;
 }
 
 function delete_paciente() {
@@ -239,3 +282,169 @@ function delete_paciente() {
     }
 }
 
+function handle_post_request() {
+    $data = json_decode(file_get_contents("php://input"));
+    $action = isset($data->action) ? $data->action : 'create';
+    
+    if ($action === 'check_dependencies') {
+        check_paciente_dependencies($data);
+    } elseif ($action === 'delete_cascade') {
+        delete_paciente_cascade($data);
+    } else {
+        create_paciente();
+    }
+}
+
+// Función para verificar dependencias de un paciente antes de eliminarlo
+function check_paciente_dependencies($data) {
+    global $db;
+    
+    if(empty($data->codigo)) {
+        http_response_code(400);
+        ob_clean();
+        echo json_encode(array("message" => "Falta el código del paciente."));
+        return;
+    }
+    
+    $codigo = intval($data->codigo);
+    $dependencies = array();
+    
+    // Contar registros en nu_consejo_usuario
+    $query = "SELECT COUNT(*) as count FROM nu_consejo_usuario WHERE codigo_paciente = :codigo";
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(":codigo", $codigo);
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($result['count'] > 0) {
+        $dependencies['nu_consejo_usuario'] = intval($result['count']);
+    }
+    
+    // Contar registros en nu_receta_usuario
+    $query = "SELECT COUNT(*) as count FROM nu_receta_usuario WHERE codigo_paciente = :codigo";
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(":codigo", $codigo);
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($result['count'] > 0) {
+        $dependencies['nu_receta_usuario'] = intval($result['count']);
+    }
+    
+    // Contar registros en nu_entrenamientos (por codigo_paciente)
+    $query = "SELECT COUNT(*) as count FROM nu_entrenamientos WHERE codigo_paciente = :codigo";
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(":codigo", $codigo);
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($result['count'] > 0) {
+        $dependencies['nu_entrenamientos'] = intval($result['count']);
+    }
+    
+    // Contar registros en nu_entrenamientos_ejercicios para entrenamientos de este paciente
+    $query = "SELECT COUNT(DISTINCT eej.codigo) as count 
+              FROM nu_entrenamientos_ejercicios eej
+              JOIN nu_entrenamientos e ON eej.codigo_entrenamiento = e.codigo
+              WHERE e.codigo_paciente = :codigo";
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(":codigo", $codigo);
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($result['count'] > 0) {
+        $dependencies['nu_entrenamientos_ejercicios'] = intval($result['count']);
+    }
+    
+    // Contar registros en nu_entrenamientos_imagenes para entrenamientos de este paciente
+    $query = "SELECT COUNT(DISTINCT eei.codigo) as count 
+              FROM nu_entrenamientos_imagenes eei
+              JOIN nu_entrenamientos e ON eei.codigo_entrenamiento = e.codigo
+              WHERE e.codigo_paciente = :codigo";
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(":codigo", $codigo);
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($result['count'] > 0) {
+        $dependencies['nu_entrenamientos_imagenes'] = intval($result['count']);
+    }
+    
+    http_response_code(200);
+    ob_clean();
+    echo json_encode(array("dependencies" => $dependencies));
+}
+
+// Función para eliminar paciente en cascada (elimina todos los registros relacionados)
+function delete_paciente_cascade() {
+    global $db;
+    $data = json_decode(file_get_contents("php://input"));
+    
+    if(empty($data->codigo)) {
+        http_response_code(400);
+        ob_clean();
+        echo json_encode(array("message" => "Falta el código del paciente."));
+        return;
+    }
+    
+    $codigo = intval($data->codigo);
+    
+    try {
+        $db->beginTransaction();
+        
+        // Obtener IDs de entrenamientos de este paciente
+        $query = "SELECT codigo FROM nu_entrenamientos WHERE codigo_paciente = :codigo";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(":codigo", $codigo);
+        $stmt->execute();
+        $entrenamientos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $entrenamiento_ids = array_column($entrenamientos, 'codigo');
+        
+        // Eliminar ejercicios de entrenamientos
+        if (!empty($entrenamiento_ids)) {
+            $placeholders = implode(',', array_fill(0, count($entrenamiento_ids), '?'));
+            $query = "DELETE FROM nu_entrenamientos_ejercicios WHERE codigo_entrenamiento IN ($placeholders)";
+            $stmt = $db->prepare($query);
+            $stmt->execute($entrenamiento_ids);
+            
+            // Eliminar imágenes de entrenamientos
+            $query = "DELETE FROM nu_entrenamientos_imagenes WHERE codigo_entrenamiento IN ($placeholders)";
+            $stmt = $db->prepare($query);
+            $stmt->execute($entrenamiento_ids);
+        }
+        
+        // Eliminar entrenamientos
+        $query = "DELETE FROM nu_entrenamientos WHERE codigo_paciente = :codigo";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(":codigo", $codigo);
+        $stmt->execute();
+        
+        // Eliminar consejos del paciente
+        $query = "DELETE FROM nu_consejo_usuario WHERE codigo_paciente = :codigo";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(":codigo", $codigo);
+        $stmt->execute();
+        
+        // Eliminar recetas del paciente
+        $query = "DELETE FROM nu_receta_usuario WHERE codigo_paciente = :codigo";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(":codigo", $codigo);
+        $stmt->execute();
+        
+        // Finalmente eliminar el paciente
+        $query = "DELETE FROM nu_paciente WHERE codigo = :codigo";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(":codigo", $codigo);
+        $stmt->execute();
+        
+        $db->commit();
+        
+        http_response_code(200);
+        ob_clean();
+        echo json_encode(array("message" => "Paciente y todos sus registros eliminados correctamente."));
+    } catch (Exception $e) {
+        $db->rollBack();
+        http_response_code(503);
+        ob_clean();
+        echo json_encode(array(
+            "message" => "Error al eliminar el paciente.",
+            "error" => $e->getMessage()
+        ));
+    }
+}
+?>

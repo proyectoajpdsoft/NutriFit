@@ -279,7 +279,11 @@ function toggle_favorito() {
 function get_favoritos($usuario_codigo) {
     global $db;
 
-    $query = "SELECT r.*, ru.me_gusta, ru.favorito,
+    $query = "SELECT r.codigo, r.titulo, r.texto, r.activo, r.fecha_inicio, r.fecha_fin,
+              r.mostrar_portada, r.fecha_inicio_portada, r.fecha_fin_portada,
+              r.visible_para_todos, r.imagen_portada, r.imagen_portada_nombre, r.imagen_miniatura,
+              r.fechaa, r.codusuarioa, r.fecham, r.codusuariom,
+              ru.me_gusta, ru.favorito, ru.leido,
               (SELECT COUNT(*) FROM nu_receta_usuario rp2 WHERE rp2.codigo_receta = r.codigo AND rp2.me_gusta = 'S') as total_likes
               FROM nu_receta r
               INNER JOIN nu_receta_usuario ru ON r.codigo = ru.codigo_receta
@@ -295,6 +299,9 @@ function get_favoritos($usuario_codigo) {
     foreach ($recetas as &$receta) {
         if ($receta['imagen_portada']) {
             $receta['imagen_portada'] = base64_encode($receta['imagen_portada']);
+        }
+        if ($receta['imagen_miniatura']) {
+            $receta['imagen_miniatura'] = base64_encode($receta['imagen_miniatura']);
         }
     }
 

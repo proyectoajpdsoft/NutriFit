@@ -282,7 +282,11 @@ function toggle_favorito() {
 function get_favoritos($usuario_codigo) {
     global $db;
     
-    $query = "SELECT c.*, cu.me_gusta, cu.favorito,
+    $query = "SELECT c.codigo, c.titulo, c.texto, c.activo, c.fecha_inicio, c.fecha_fin,
+              c.mostrar_portada, c.fecha_inicio_portada, c.fecha_fin_portada,
+              c.visible_para_todos, c.imagen_portada, c.imagen_portada_nombre, c.imagen_miniatura,
+              c.fechaa, c.codusuarioa, c.fecham, c.codusuariom,
+              cu.me_gusta, cu.favorito, cu.leido,
               (SELECT COUNT(*) FROM nu_consejo_usuario WHERE codigo_consejo = c.codigo AND me_gusta = 'S') as total_likes
               FROM nu_consejo c
               INNER JOIN nu_consejo_usuario cu ON c.codigo = cu.codigo_consejo
@@ -302,6 +306,9 @@ function get_favoritos($usuario_codigo) {
     foreach($consejos as &$consejo) {
         if($consejo['imagen_portada']) {
             $consejo['imagen_portada'] = base64_encode($consejo['imagen_portada']);
+        }
+        if($consejo['imagen_miniatura']) {
+            $consejo['imagen_miniatura'] = base64_encode($consejo['imagen_miniatura']);
         }
     }
     

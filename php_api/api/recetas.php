@@ -218,7 +218,7 @@ function get_recetas() {
               r.mostrar_portada, r.visible_para_todos, r.imagen_portada_nombre, r.imagen_miniatura,
               r.fechaa, r.codusuarioa, r.fecham, r.codusuariom,
               (SELECT COUNT(*) FROM nu_receta_usuario ru WHERE ru.codigo_receta = r.codigo AND ru.me_gusta = 'S') as total_likes,
-              (SELECT COUNT(*) FROM nu_receta_usuario ru WHERE ru.codigo_receta = r.codigo) as total_usuarios,
+              (SELECT COUNT(DISTINCT CASE WHEN ru.codigo_paciente IS NOT NULL THEN ru.codigo_paciente END) FROM nu_receta_usuario ru WHERE ru.codigo_receta = r.codigo) as total_pacientes,
               GROUP_CONCAT(DISTINCT rc.codigo ORDER BY rc.nombre SEPARATOR ',') as categorias_ids,
               GROUP_CONCAT(DISTINCT rc.nombre ORDER BY rc.nombre SEPARATOR ',') as categorias_nombres
               FROM nu_receta r 
@@ -258,7 +258,7 @@ function get_receta($codigo) {
 
     $query = "SELECT r.*,
               (SELECT COUNT(*) FROM nu_receta_usuario ru WHERE ru.codigo_receta = r.codigo AND ru.me_gusta = 'S') as total_likes,
-              (SELECT COUNT(*) FROM nu_receta_usuario ru WHERE ru.codigo_receta = r.codigo) as total_usuarios,
+              (SELECT COUNT(DISTINCT CASE WHEN ru.codigo_paciente IS NOT NULL THEN ru.codigo_paciente END) FROM nu_receta_usuario ru WHERE ru.codigo_receta = r.codigo) as total_pacientes,
               GROUP_CONCAT(DISTINCT rc.codigo ORDER BY rc.nombre SEPARATOR ',') as categorias_ids,
               GROUP_CONCAT(DISTINCT rc.nombre ORDER BY rc.nombre SEPARATOR ',') as categorias_nombres
               FROM nu_receta r 
@@ -357,8 +357,23 @@ function get_recetas_portada_paciente($paciente_codigo, $codigo_usuario = null) 
     $hoy = date('Y-m-d');
 
     // Si se proporciona codigo_usuario, hacer JOIN para obtener estado de favorito y me_gusta
+    // El parámetro $paciente_codigo aquí representa el codigo_paciente del paciente
+    // El parámetro $codigo_usuario (si existe) representa el codigo_usuario autenticado
+    
+    // Obtener codigo_paciente del usuario (si $codigo_usuario no es null, usarlo para obtener el paciente)
+    $codigo_paciente = null;
     if ($codigo_usuario !== null) {
-          $query = "SELECT r.codigo, r.titulo, r.texto, r.activo, r.fecha_inicio, r.fecha_fin,
+        $query_usuario = "SELECT codigo_paciente FROM usuario WHERE codigo = :codigo_usuario";
+        $stmt_usuario = $db->prepare($query_usuario);
+        $stmt_usuario->bindParam(':codigo_usuario', $codigo_usuario);
+        $stmt_usuario->execute();
+        $usuario_data = $stmt_usuario->fetch(PDO::FETCH_ASSOC);
+        $codigo_paciente = $usuario_data ? $usuario_data['codigo_paciente'] : null;
+    }
+    
+    // Si se proporciona codigo_usuario y se obtiene codigo_paciente, hacer JOIN para obtener estado personalizados
+    if ($codigo_usuario !== null && $codigo_paciente !== null) {
+        $query = "SELECT r.codigo, r.titulo, r.texto, r.activo, r.fecha_inicio, r.fecha_fin,
               r.mostrar_portada, r.visible_para_todos, r.imagen_portada, r.imagen_portada_nombre, r.imagen_miniatura,
               r.fechaa, r.codusuarioa, r.fecham, r.codusuariom,
               MAX(COALESCE(ru.me_gusta, 'N')) as me_gusta, 
@@ -367,12 +382,13 @@ function get_recetas_portada_paciente($paciente_codigo, $codigo_usuario = null) 
               GROUP_CONCAT(DISTINCT rc.codigo ORDER BY rc.nombre SEPARATOR ',') as categorias_ids,
               GROUP_CONCAT(DISTINCT rc.nombre ORDER BY rc.nombre SEPARATOR ',') as categorias_nombres
               FROM nu_receta r
-              LEFT JOIN nu_receta_usuario ru ON r.codigo = ru.codigo_receta AND ru.codigo_usuario = :codigo_usuario
+              LEFT JOIN nu_receta_usuario ru ON r.codigo = ru.codigo_receta 
+                  AND (ru.codigo_usuario = :codigo_usuario OR ru.codigo_paciente = :codigo_paciente)
               LEFT JOIN nu_receta_categoria_rel rcr ON r.codigo = rcr.codigo_receta
               LEFT JOIN nu_receta_categoria rc ON rcr.codigo_categoria = rc.codigo AND rc.activo = 'S'
               WHERE r.activo = 'S'
               AND r.mostrar_portada = 'S'
-              AND r.visible_para_todos = 'S'
+              AND (r.visible_para_todos = 'S' OR ru.codigo_usuario = :codigo_usuario OR ru.codigo_paciente = :codigo_paciente)
               AND (r.fecha_inicio IS NULL OR r.fecha_inicio <= :hoy)
               AND (r.fecha_fin IS NULL OR r.fecha_fin >= :hoy)
               GROUP BY r.codigo
@@ -380,10 +396,11 @@ function get_recetas_portada_paciente($paciente_codigo, $codigo_usuario = null) 
         
         $stmt = $db->prepare($query);
         $stmt->bindParam(':codigo_usuario', $codigo_usuario);
+        $stmt->bindParam(':codigo_paciente', $codigo_paciente);
         $stmt->bindParam(':hoy', $hoy);
     } else {
-        // Sin codigo_usuario, devolver valores por defecto
-          $query = "SELECT r.codigo, r.titulo, r.texto, r.activo, r.fecha_inicio, r.fecha_fin,
+        // Sin codigo_usuario, devolver solo visible_para_todos
+        $query = "SELECT r.codigo, r.titulo, r.texto, r.activo, r.fecha_inicio, r.fecha_fin,
               r.mostrar_portada, r.visible_para_todos, r.imagen_portada, r.imagen_portada_nombre, r.imagen_miniatura,
               r.fechaa, r.codusuarioa, r.fecham, r.codusuariom,
               'N' as me_gusta, 

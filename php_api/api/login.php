@@ -7,6 +7,7 @@ header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers
 include_once '../config/database.php';
 include_once '../auth/token_validator.php';
 include_once '../auth/permissions.php';
+include_once '../auth/token_expiration_config.php';
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
@@ -55,7 +56,12 @@ if ($num > 0) {
 
         // Generar un token seguro
         $token = bin2hex(random_bytes(32));
-        $token_expiracion = date('Y-m-d H:i:s', strtotime('+24 hours'));
+        $hours_to_expire = get_registered_user_token_expiration_hours(
+            $db,
+            $tipo,
+            $codigo_paciente
+        );
+        $token_expiracion = build_token_expiration_datetime_or_null($hours_to_expire);
 
         // Guardar el token en la base de datos
         $update_query = "UPDATE usuario SET token = :token, token_expiracion = :token_expiracion WHERE codigo = :codigo";
@@ -70,6 +76,7 @@ if ($num > 0) {
             echo json_encode(array(
                 "message" => "Inicio de sesión correcto.",
                 "token" => $token,
+                "token_expira_horas" => $hours_to_expire,
                 "usuario" => array(
                     "codigo" => $codigo,
                     "nick" => $nick,

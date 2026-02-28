@@ -17,7 +17,7 @@ function validate_token($db, $token) {
         return false;
     }
 
-    $query = "SELECT codigo, tipo, codigo_paciente FROM usuario WHERE token = :token AND token_expiracion > NOW()";
+    $query = "SELECT codigo, tipo, codigo_paciente FROM usuario WHERE token = :token AND (token_expiracion IS NULL OR token_expiracion > NOW())";
     $stmt = $db->prepare($query);
     $stmt->bindParam(':token', $token);
     $stmt->execute();

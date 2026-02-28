@@ -143,6 +143,51 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
       if (widget.entrenamiento.codigo != null) {
         final ejercicios = await apiService
             .getEntrenamientoEjercicios(widget.entrenamiento.codigo!);
+
+        final catalogCodes = ejercicios
+            .where((e) => (e.codigoEjercicioCatalogo ?? 0) > 0)
+            .map((e) => e.codigoEjercicioCatalogo!)
+            .toSet()
+            .toList();
+
+        if (catalogCodes.isNotEmpty) {
+          final catalogByCode = <int, dynamic>{};
+
+          await Future.wait(
+            catalogCodes.map((catalogCode) async {
+              try {
+                final catalogExercise =
+                    await apiService.getPlanFitEjercicioCatalogWithFoto(
+                  catalogCode,
+                );
+                if (catalogExercise != null) {
+                  catalogByCode[catalogCode] = catalogExercise;
+                }
+              } catch (_) {}
+            }),
+          );
+
+          for (final ejercicio in ejercicios) {
+            final catalogCode = ejercicio.codigoEjercicioCatalogo;
+            if (catalogCode == null || catalogCode <= 0) {
+              continue;
+            }
+
+            final catalogExercise = catalogByCode[catalogCode];
+            if (catalogExercise == null) {
+              continue;
+            }
+
+            ejercicio.fotoMiniatura =
+                (catalogExercise.fotoMiniatura ?? '').toString();
+
+            if ((ejercicio.fotoBase64 ?? '').trim().isEmpty) {
+              ejercicio.fotoBase64 =
+                  (catalogExercise.fotoBase64 ?? '').toString();
+            }
+          }
+        }
+
         setState(() {
           _ejercicios = ejercicios;
         });

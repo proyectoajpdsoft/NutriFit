@@ -45,7 +45,7 @@ class PermissionManager {
             'planes_fit' => false,
             'lista_compra' => true,
             'entrenamientos' => true,
-            'mediciones' => false,
+            'mediciones' => true,
             'citas' => false,
             'revisiones' => false,
             'entrevistas' => false,

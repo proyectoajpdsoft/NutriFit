@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'dart:io';
 import 'package:image/image.dart' as img;
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
-// import 'package:url_launcher/url_launcher.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import '../models/receta.dart';
@@ -24,6 +24,9 @@ class RecetaEditScreen extends StatefulWidget {
 }
 
 class _RecetaEditScreenState extends State<RecetaEditScreen> {
+  static const MethodChannel _externalUrlChannel =
+      MethodChannel('nutri_app/external_url');
+
   final _formKey = GlobalKey<FormState>();
   late Receta _receta;
   bool _isNew = true;
@@ -35,6 +38,8 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
   final _textoController = TextEditingController();
   DateTime? _fechaInicio;
   DateTime? _fechaFin;
+  DateTime? _fechaInicioPortada;
+  DateTime? _fechaFinPortada;
 
   List<Paciente> _allPacientes = [];
   List<int> _selectedPacientes = [];
@@ -92,6 +97,8 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
         _textoController.text = _receta.texto;
         _fechaInicio = _receta.fechaInicio;
         _fechaFin = _receta.fechaFin;
+        _fechaInicioPortada = _receta.fechaInicioPortada;
+        _fechaFinPortada = _receta.fechaFinPortada;
         _visibleParaTodos = _receta.visibleParaTodos == 'S';
 
         if (_receta.imagenPortada != null) {
@@ -119,6 +126,8 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
       _textoController.text = _receta.texto;
       _fechaInicio = _receta.fechaInicio;
       _fechaFin = _receta.fechaFin;
+      _fechaInicioPortada = _receta.fechaInicioPortada;
+      _fechaFinPortada = _receta.fechaFinPortada;
       _visibleParaTodos = _receta.visibleParaTodos == 'S';
       _selectedCategoriaIds = List<int>.from(_receta.categoriaIds);
       _loadPacientes();
@@ -401,6 +410,227 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
     }
   }
 
+  Future<void> _insertImageTokenAtCursor() async {
+    final imageDocs = _documentos
+        .where((doc) => doc.tipo == 'imagen' && doc.codigo != null)
+        .toList();
+
+    if (imageDocs.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No hay imágenes guardadas para insertar. Guarda primero las imágenes adjuntas.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    final selected = await showDialog<RecetaDocumento>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Insertar imagen en texto'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: imageDocs.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 8),
+            itemBuilder: (context, index) {
+              final doc = imageDocs[index];
+              final bytesBase64 = (doc.documento ?? '').trim();
+
+              Widget preview;
+              try {
+                preview = bytesBase64.isNotEmpty
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: Image.memory(
+                          base64Decode(bytesBase64),
+                          width: 48,
+                          height: 48,
+                          fit: BoxFit.cover,
+                        ),
+                      )
+                    : Container(
+                        width: 48,
+                        height: 48,
+                        color: Colors.grey[200],
+                        child: const Icon(Icons.image, size: 20),
+                      );
+              } catch (_) {
+                preview = Container(
+                  width: 48,
+                  height: 48,
+                  color: Colors.grey[200],
+                  child: const Icon(Icons.broken_image, size: 20),
+                );
+              }
+
+              return ListTile(
+                leading: preview,
+                title: Text(doc.nombre ?? 'Imagen ${doc.codigo}'),
+                subtitle: Text('[[img:${doc.codigo}]]'),
+                onTap: () => Navigator.pop(context, doc),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+        ],
+      ),
+    );
+
+    if (selected == null || selected.codigo == null) {
+      return;
+    }
+
+    final token = '[[img:${selected.codigo}]]';
+    _insertTokenAtCursor(token);
+  }
+
+  Future<void> _insertDocumentoTokenAtCursor() async {
+    final documentDocs = _documentos
+        .where((doc) => doc.tipo == 'documento' && doc.codigo != null)
+        .toList();
+
+    if (documentDocs.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No hay documentos guardados para insertar. Guarda primero documentos adjuntos.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    final selected = await showDialog<RecetaDocumento>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Insertar documento en texto'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: documentDocs.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 8),
+            itemBuilder: (context, index) {
+              final doc = documentDocs[index];
+              return ListTile(
+                leading: const Icon(Icons.insert_drive_file),
+                title: Text(doc.nombre ?? 'Documento ${doc.codigo}'),
+                subtitle: Text('[[documento:${doc.codigo}]]'),
+                onTap: () => Navigator.pop(context, doc),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+        ],
+      ),
+    );
+
+    if (selected == null || selected.codigo == null) {
+      return;
+    }
+
+    final token = '[[documento:${selected.codigo}]]';
+    _insertTokenAtCursor(token);
+  }
+
+  Future<void> _insertEnlaceTokenAtCursor() async {
+    final linkDocs = _documentos
+        .where((doc) => doc.tipo == 'url' && doc.codigo != null)
+        .toList();
+
+    if (linkDocs.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No hay enlaces guardados para insertar. Guarda primero enlaces adjuntos.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    final selected = await showDialog<RecetaDocumento>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Insertar enlace en texto'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: linkDocs.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 8),
+            itemBuilder: (context, index) {
+              final doc = linkDocs[index];
+              return ListTile(
+                leading: const Icon(Icons.link),
+                title: Text(doc.nombre ?? 'Enlace ${doc.codigo}'),
+                subtitle: Text('[[enlace:${doc.codigo}]]'),
+                onTap: () => Navigator.pop(context, doc),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+        ],
+      ),
+    );
+
+    if (selected == null || selected.codigo == null) {
+      return;
+    }
+
+    final token = '[[enlace:${selected.codigo}]]';
+    _insertTokenAtCursor(token);
+  }
+
+  void _insertTokenAtCursor(String token) {
+    final text = _textoController.text;
+    final selection = _textoController.selection;
+    final start = selection.start >= 0 ? selection.start : text.length;
+    final end = selection.end >= 0 ? selection.end : text.length;
+    final safeStart = start.clamp(0, text.length);
+    final safeEnd = end.clamp(0, text.length);
+    final from = safeStart <= safeEnd ? safeStart : safeEnd;
+    final to = safeStart <= safeEnd ? safeEnd : safeStart;
+
+    final updated = text.replaceRange(from, to, token);
+    _textoController.value = TextEditingValue(
+      text: updated,
+      selection: TextSelection.collapsed(offset: from + token.length),
+    );
+    _markDirty();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Insertado $token')),
+      );
+    }
+  }
+
   /// Generate a thumbnail from the full image
   /// Target size: 200x200 pixels, JPEG quality 85%
   Uint8List? _generateThumbnail(Uint8List imageBytes) {
@@ -588,38 +818,92 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
     }
   }
 
-  // Future<void> _openUrl(String? url) async {
-  //   var urlString = (url ?? '').trim();
-  //   if (urlString.isEmpty) {
-  //     if (mounted) {
-  //       ScaffoldMessenger.of(context).showSnackBar(
-  //         const SnackBar(content: Text('URL no disponible')),
-  //       );
-  //     }
-  //     return;
-  //   }
-  //   if (!urlString.startsWith('http://') && !urlString.startsWith('https://')) {
-  //     urlString = 'https://$urlString';
-  //   }
-  //   final uri = Uri.tryParse(urlString);
-  //   if (uri == null) {
-  //     if (mounted) {
-  //       ScaffoldMessenger.of(context).showSnackBar(
-  //         const SnackBar(content: Text('URL no valida')),
-  //       );
-  //     }
-  //     return;
-  //   }
-  //   try {
-  //     await launchUrl(uri, mode: LaunchMode.externalApplication);
-  //   } catch (e) {
-  //     if (mounted) {
-  //       ScaffoldMessenger.of(context).showSnackBar(
-  //         SnackBar(content: Text('No se pudo abrir la URL: $e')),
-  //       );
-  //     }
-  //   }
-  // }
+  Future<Uint8List?> _loadImageBytes(RecetaDocumento doc) async {
+    try {
+      // Si ya tiene los bytes en memoria
+      if (doc.documento != null && doc.documento!.trim().isNotEmpty) {
+        return base64Decode(doc.documento!);
+      }
+
+      // Si no, cargar desde la API
+      if (doc.codigo != null) {
+        final apiService = Provider.of<ApiService>(context, listen: false);
+        final response = await apiService.get(
+          'api/consejo_documentos.php?codigo=${doc.codigo}',
+        );
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body);
+          if (data is Map && data['documento'] != null) {
+            return base64Decode(data['documento'].toString());
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _openImagen(RecetaDocumento doc) async {
+    String? imageBase64 = doc.documento;
+
+    if ((imageBase64 ?? '').trim().isEmpty && doc.codigo != null) {
+      try {
+        final apiService = Provider.of<ApiService>(context, listen: false);
+        final response = await apiService.get(
+          'api/receta_documentos.php?codigo=${doc.codigo}',
+        );
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body);
+          if (data is Map && data['documento'] != null) {
+            imageBase64 = data['documento'].toString();
+          }
+        }
+      } catch (_) {}
+    }
+
+    if ((imageBase64 ?? '').trim().isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Imagen no disponible')),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+    showImageViewerDialog(
+      context: context,
+      base64Image: imageBase64!,
+      title: doc.nombre ?? 'Imagen',
+    );
+  }
+
+  Future<void> _openUrl(String? url) async {
+    final urlString = (url ?? '').trim();
+    if (urlString.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('URL no disponible')),
+        );
+      }
+      return;
+    }
+
+    try {
+      await launchUrlString(urlString, mode: LaunchMode.externalApplication);
+    } on PlatformException catch (e) {
+      if (e.code == 'channel-error') {
+        await _externalUrlChannel.invokeMethod('openUrl', {'url': urlString});
+        return;
+      }
+      rethrow;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo abrir la URL: $e')),
+        );
+      }
+    }
+  }
 
   Future<void> _addDocumento([RecetaDocumento? existingDoc]) async {
     final result = await showDialog<Map<String, dynamic>>(
@@ -628,6 +912,42 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
     );
 
     if (result != null) {
+      // Verificar si son múltiples imágenes
+      if (result['multiple'] == true && result['items'] != null) {
+        final items = result['items'] as List<Map<String, dynamic>>;
+        if (_isNew) {
+          // Si es nuevo, agregar todas las imágenes temporalmente
+          setState(() {
+            for (var item in items) {
+              _documentos.add(RecetaDocumento(
+                codigoReceta: 0,
+                tipo: item['tipo'],
+                nombre: item['nombre'],
+                documento: item['documento'],
+                url: item['url'],
+                orden: _documentos.length,
+              ));
+            }
+          });
+        } else {
+          // Si ya existe la receta, guardar todas en BD
+          int savedCount = 0;
+          for (var item in items) {
+            final success = await _saveDocumento(item, null, showMessage: false);
+            if (success) savedCount++;
+          }
+          if (savedCount > 0) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                  content: Text('$savedCount imagen${savedCount == 1 ? '' : 'es'} agregada${savedCount == 1 ? '' : 's'}')),
+            );
+            _loadDocumentos();
+          }
+        }
+        return;
+      }
+
+      // Proceso normal para un solo documento
       if (_isNew) {
         // Si es nuevo, agregar o editar temporalmente
         setState(() {
@@ -667,8 +987,10 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
     await _addDocumento(doc);
   }
 
-  Future<void> _saveDocumento(Map<String, dynamic> data,
-      [RecetaDocumento? existingDoc]) async {
+  Future<bool> _saveDocumento(
+    Map<String, dynamic> data,
+    RecetaDocumento? existingDoc,
+    {bool showMessage = true}) async {
     try {
       final authService = Provider.of<AuthService>(context, listen: false);
       final apiService = Provider.of<ApiService>(context, listen: false);
@@ -697,19 +1019,26 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
             );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(existingDoc != null
-                  ? 'Documento actualizado'
-                  : 'Documento agregado')),
-        );
-        _loadDocumentos();
+        if (showMessage) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text(existingDoc != null
+                    ? 'Documento actualizado'
+                    : 'Documento agregado')),
+          );
+          _loadDocumentos();
+        }
+        return true;
       }
+      return false;
     } catch (e) {
-      final errorMessage = e.toString().replaceFirst('Exception: ', '');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error al guardar documento. $errorMessage')),
-      );
+      if (showMessage) {
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al guardar documento. $errorMessage')),
+        );
+      }
+      return false;
     }
   }
 
@@ -845,6 +1174,8 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
       _receta.texto = _textoController.text;
       _receta.fechaInicio = _fechaInicio;
       _receta.fechaFin = _fechaFin;
+      _receta.fechaInicioPortada = _fechaInicioPortada;
+      _receta.fechaFinPortada = _fechaFinPortada;
       _receta.visibleParaTodos = _visibleParaTodos ? 'S' : 'N';
       _receta.categoriaIds = List<int>.from(_selectedCategoriaIds);
 
@@ -1128,6 +1459,39 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
                   return null;
                 },
               ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.center,
+                child: Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 8,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _insertImageTokenAtCursor,
+                      icon: const Icon(Icons.image_outlined),
+                      label: const Text('Img'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _insertDocumentoTokenAtCursor,
+                      icon: const Icon(Icons.insert_drive_file_outlined),
+                      label: const Text('Doc'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _insertEnlaceTokenAtCursor,
+                      icon: const Icon(Icons.link_outlined),
+                      label: const Text('Enlace'),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Marcadores: [[img:id]], [[documento:id]] y [[enlace:id]].',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                ),
+              ),
               const SizedBox(height: 16),
 
               // Imagen de portada
@@ -1344,6 +1708,89 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
                           });
                         },
                       ),
+                      // Campos de fechas de portada (solo visibles si mostrarPortada está activo)
+                      if (_receta.mostrarPortada == 'S') ...[
+                        const Divider(),
+                        const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                          child: Text(
+                            'Período destacado en portada',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                          ),
+                        ),
+                        ListTile(
+                          title: const Text('Fecha inicio portada'),
+                          subtitle: Text(_fechaInicioPortada != null
+                              ? '${_fechaInicioPortada!.day}/${_fechaInicioPortada!.month}/${_fechaInicioPortada!.year}'
+                              : 'Sin fecha (siempre visible)'),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.calendar_today),
+                                onPressed: () async {
+                                  final date = await showDatePicker(
+                                    context: context,
+                                    initialDate: _fechaInicioPortada ?? DateTime.now(),
+                                    firstDate: DateTime(2020),
+                                    lastDate: DateTime(2100),
+                                  );
+                                  if (date != null) {
+                                    setState(() {
+                                      _fechaInicioPortada = date;
+                                    });
+                                  }
+                                },
+                              ),
+                              if (_fechaInicioPortada != null)
+                                IconButton(
+                                  icon: const Icon(Icons.clear),
+                                  onPressed: () {
+                                    setState(() {
+                                      _fechaInicioPortada = null;
+                                    });
+                                  },
+                                ),
+                            ],
+                          ),
+                        ),
+                        ListTile(
+                          title: const Text('Fecha fin portada'),
+                          subtitle: Text(_fechaFinPortada != null
+                              ? '${_fechaFinPortada!.day}/${_fechaFinPortada!.month}/${_fechaFinPortada!.year}'
+                              : 'Sin fecha (indefinido)'),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.calendar_today),
+                                onPressed: () async {
+                                  final date = await showDatePicker(
+                                    context: context,
+                                    initialDate: _fechaFinPortada ?? DateTime.now(),
+                                    firstDate: DateTime(2020),
+                                    lastDate: DateTime(2100),
+                                  );
+                                  if (date != null) {
+                                    setState(() {
+                                      _fechaFinPortada = date;
+                                    });
+                                  }
+                                },
+                              ),
+                              if (_fechaFinPortada != null)
+                                IconButton(
+                                  icon: const Icon(Icons.clear),
+                                  onPressed: () {
+                                    setState(() {
+                                      _fechaFinPortada = null;
+                                    });
+                                  },
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -1443,52 +1890,161 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
                           child: Text('No hay documentos'),
                         )
                       else
-                        ..._documentos.map((doc) => ListTile(
-                              leading: Icon(
-                                doc.tipo == 'documento'
-                                    ? Icons.file_present
-                                    : _isYouTubeUrl(doc.url)
-                                        ? Icons.play_circle
-                                        : Icons.link,
-                                color: doc.tipo == 'documento'
-                                    ? Colors.blue
-                                    : _isYouTubeUrl(doc.url)
-                                        ? Colors.red
-                                        : Colors.purple,
+                        ..._documentos.map((doc) {
+                          // Acortar URL o nombre de archivo si tiene más de 20 caracteres
+                          String segundaLinea = '';
+                          if (doc.tipo == 'url') {
+                            segundaLinea = doc.url ?? '';
+                          } else {
+                            segundaLinea = doc.nombre ?? '';
+                          }
+                          if (segundaLinea.length > 20) {
+                            segundaLinea =
+                                '${segundaLinea.substring(0, 20)}...';
+                          }
+
+                          return Card(
+                            margin: const EdgeInsets.symmetric(
+                                vertical: 4, horizontal: 0),
+                            child: ListTile(
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              leading: SizedBox(
+                                width: 50,
+                                height: 50,
+                                child: doc.tipo == 'imagen'
+                                    ? FutureBuilder<Uint8List?>(
+                                        future: _loadImageBytes(doc),
+                                        builder: (context, snapshot) {
+                                          if (snapshot.connectionState ==
+                                                  ConnectionState.waiting ||
+                                              !snapshot.hasData) {
+                                            return Container(
+                                              decoration: BoxDecoration(
+                                                color: Colors.grey[300],
+                                                borderRadius:
+                                                    BorderRadius.circular(4),
+                                              ),
+                                              child: const Icon(Icons.image,
+                                                  size: 30,
+                                                  color: Colors.grey),
+                                            );
+                                          }
+                                          return ClipRRect(
+                                            borderRadius:
+                                                BorderRadius.circular(4),
+                                            child: Image.memory(
+                                              snapshot.data!,
+                                              fit: BoxFit.cover,
+                                            ),
+                                          );
+                                        },
+                                      )
+                                    : Container(
+                                        decoration: BoxDecoration(
+                                          color: doc.tipo == 'documento'
+                                              ? Colors.blue.withOpacity(0.1)
+                                              : _isYouTubeUrl(doc.url)
+                                                  ? Colors.red.withOpacity(0.1)
+                                                  : Colors.purple
+                                                      .withOpacity(0.1),
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                        ),
+                                        child: Icon(
+                                          doc.tipo == 'documento'
+                                              ? Icons.file_present
+                                              : _isYouTubeUrl(doc.url)
+                                                  ? Icons.play_circle
+                                                  : Icons.link,
+                                          size: 30,
+                                          color: doc.tipo == 'documento'
+                                              ? Colors.blue
+                                              : _isYouTubeUrl(doc.url)
+                                                  ? Colors.red
+                                                  : Colors.purple,
+                                        ),
+                                      ),
                               ),
-                              title: Text(doc.nombre ?? 'Sin nombre'),
-                              subtitle: Text(doc.tipo == 'url'
-                                  ? doc.url ?? ''
-                                  : 'Documento'),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
+                              title: Text(
+                                doc.nombre ?? 'Sin nombre',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  if (doc.tipo == 'url')
-                                    IconButton(
-                                      icon: const Icon(Icons.open_in_browser),
-                                      color: Colors.blue,
-                                      // onPressed: () => _openUrl(doc.url),
-                                      onPressed: () {}, // URL Launcher disabled
-                                    )
-                                  else
-                                    IconButton(
-                                      icon: const Icon(Icons.download),
-                                      color: Colors.blue,
-                                      onPressed: () => _openDocumento(doc),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    segundaLinea,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey[600],
                                     ),
-                                  IconButton(
-                                    icon: const Icon(Icons.edit,
-                                        color: Colors.blue),
-                                    onPressed: () => _editDocumento(doc),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                   ),
-                                  IconButton(
-                                    icon: const Icon(Icons.delete,
-                                        color: Colors.red),
-                                    onPressed: () => _deleteDocumento(doc),
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (doc.tipo == 'url')
+                                        IconButton(
+                                          icon: const Icon(Icons.open_in_browser,
+                                              size: 20),
+                                          color: Colors.blue,
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(),
+                                          onPressed: () => _openUrl(doc.url),
+                                          tooltip: 'Abrir URL',
+                                        )
+                                      else if (doc.tipo == 'imagen')
+                                        IconButton(
+                                          icon: const Icon(Icons.visibility,
+                                              size: 20),
+                                          color: Colors.teal,
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(),
+                                          onPressed: () => _openImagen(doc),
+                                          tooltip: 'Visualizar imagen',
+                                        )
+                                      else
+                                        IconButton(
+                                          icon: const Icon(Icons.download,
+                                              size: 20),
+                                          color: Colors.blue,
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(),
+                                          onPressed: () => _openDocumento(doc),
+                                          tooltip: 'Descargar',
+                                        ),
+                                      const SizedBox(width: 12),
+                                      IconButton(
+                                        icon: const Icon(Icons.edit, size: 20),
+                                        color: Colors.blue,
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                        onPressed: () => _editDocumento(doc),
+                                        tooltip: 'Editar',
+                                      ),
+                                      const SizedBox(width: 12),
+                                      IconButton(
+                                        icon: const Icon(Icons.delete, size: 20),
+                                        color: Colors.red,
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                        onPressed: () => _deleteDocumento(doc),
+                                        tooltip: 'Eliminar',
+                                      ),
+                                    ],
                                   ),
                                 ],
                               ),
-                            )),
+                            ),
+                          );
+                        }),
                     ],
                   ),
                 ),
@@ -1636,15 +2192,25 @@ class _DocumentoDialog extends StatefulWidget {
 }
 
 class _DocumentoDialogState extends State<_DocumentoDialog> {
+  static String _lastSelectedTipo = 'url'; // Recordar último tipo seleccionado
+
   late String _tipo;
   final _nombreController = TextEditingController();
   final _urlController = TextEditingController();
   Uint8List? _documentoBytes;
   String? _documentoNombre;
+  int? _maxImageWidth;
+  int? _maxImageHeight;
+
+  // Para múltiples imágenes
+  final List<Map<String, dynamic>> _imagenes = [];
+  int? _selectedImageIndex;
+  final _selectedImageNombreController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
+    _loadImageLimits();
     if (widget.documento != null) {
       _tipo = widget.documento!.tipo;
       _nombreController.text = widget.documento!.nombre ?? '';
@@ -1655,119 +2221,408 @@ class _DocumentoDialogState extends State<_DocumentoDialog> {
         _documentoNombre = widget.documento!.nombre;
       }
     } else {
-      _tipo = 'url';
+      _tipo = _lastSelectedTipo; // Usar último tipo seleccionado
+    }
+  }
+
+  Future<void> _loadImageLimits() async {
+    try {
+      final apiService = Provider.of<ApiService>(context, listen: false);
+      final parametro = await apiService
+          .getParametro('tamaño_maximo_imagenes_consejos_recetas');
+
+      if (parametro != null) {
+        _maxImageWidth = int.tryParse((parametro['valor'] ?? '').toString());
+        _maxImageHeight = int.tryParse((parametro['valor2'] ?? '').toString());
+      }
+    } catch (_) {}
+  }
+
+  Uint8List _resizeImageIfNeeded(Uint8List bytes) {
+    try {
+      final image = img.decodeImage(bytes);
+      if (image == null) return bytes;
+
+      final maxWidth = _maxImageWidth;
+      final maxHeight = _maxImageHeight;
+
+      if (maxWidth == null ||
+          maxHeight == null ||
+          maxWidth <= 0 ||
+          maxHeight <= 0) {
+        return bytes;
+      }
+
+      if (image.width <= maxWidth && image.height <= maxHeight) {
+        return bytes;
+      }
+
+      final widthScale = maxWidth / image.width;
+      final heightScale = maxHeight / image.height;
+      final scale = widthScale < heightScale ? widthScale : heightScale;
+
+      final resized = img.copyResize(
+        image,
+        width: (image.width * scale).round(),
+        height: (image.height * scale).round(),
+        interpolation: img.Interpolation.linear,
+      );
+
+      return Uint8List.fromList(img.encodePng(resized));
+    } catch (_) {
+      return bytes;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // Si estamos editando o si no es tipo imagen, ocultar el campo nombre (se usará el del carrusel)
+    final showNombreField = widget.documento != null || _tipo != 'imagen';
+
     return AlertDialog(
-      title: Text(widget.documento != null
-          ? 'Editar documento o URL'
-          : 'Agregar documento o URL'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(
-                    value: 'url', label: Text('URL'), icon: Icon(Icons.link)),
-                ButtonSegment(
-                    value: 'documento',
-                    label: Text('Documento'),
-                    icon: Icon(Icons.file_present)),
-              ],
-              selected: {_tipo},
-              onSelectionChanged: (Set<String> selection) {
-                setState(() {
-                  _tipo = selection.first;
-                });
-              },
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _nombreController,
-              decoration: const InputDecoration(
-                labelText: 'Nombre',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            if (_tipo == 'url')
-              TextFormField(
-                controller: _urlController,
-                decoration: const InputDecoration(
-                  labelText: 'URL',
-                  border: OutlineInputBorder(),
-                ),
-              )
-            else
-              Column(
-                children: [
-                  if (_documentoNombre != null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8.0),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.attach_file, size: 20),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              _documentoNombre!,
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  else
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 8.0),
-                      child: Text('No se ha seleccionado archivo'),
-                    ),
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    onPressed: () async {
-                      try {
-                        FilePickerResult? result =
-                            await FilePicker.platform.pickFiles(
-                          type: FileType.any,
-                          allowMultiple: false,
-                        );
-                        if (result != null) {
-                          if (result.files.single.bytes != null) {
-                            setState(() {
-                              _documentoBytes = result.files.single.bytes;
-                              _documentoNombre = result.files.single.name;
-                            });
-                          } else if (result.files.single.path != null) {
-                            // Para plataformas de escritorio, leer los bytes del archivo
-                            final file = File(result.files.single.path!);
-                            final bytes = await file.readAsBytes();
-                            setState(() {
-                              _documentoBytes = bytes;
-                              _documentoNombre = result.files.single.name;
-                            });
-                          }
-                        }
-                      } catch (e) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                              content:
-                                  Text('Error al seleccionar archivo: $e')),
-                        );
-                      }
-                    },
-                    icon: const Icon(Icons.upload_file),
-                    label: Text(_documentoNombre != null
-                        ? 'Cambiar archivo'
-                        : 'Seleccionar archivo'),
-                  ),
+      title:
+          Text(widget.documento != null ? 'Editar adjunto' : 'Agregar adjunto'),
+      content: SizedBox(
+        width: 400,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(
+                      value: 'url', label: Text('URL'), icon: Icon(Icons.link)),
+                  ButtonSegment(
+                      value: 'documento',
+                      label: Text('Doc'),
+                      icon: Icon(Icons.file_present)),
+                  ButtonSegment(
+                      value: 'imagen',
+                      label: Text('Img'),
+                      icon: Icon(Icons.image)),
                 ],
+                selected: {_tipo},
+                onSelectionChanged: (Set<String> selection) {
+                  setState(() {
+                    _tipo = selection.first;
+                  });
+                },
               ),
-          ],
+              const SizedBox(height: 16),
+              if (showNombreField)
+                TextFormField(
+                  controller: _nombreController,
+                  decoration: const InputDecoration(
+                    labelText: 'Nombre',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              if (showNombreField) const SizedBox(height: 16),
+              if (_tipo == 'url')
+                TextFormField(
+                  controller: _urlController,
+                  decoration: const InputDecoration(
+                    labelText: 'URL',
+                    border: OutlineInputBorder(),
+                  ),
+                )
+              else
+                Column(
+                  children: [
+                    if (_documentoNombre != null)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8.0),
+                        child: Row(
+                          children: [
+                            // Miniatura de imagen si es tipo imagen
+                            if (_tipo == 'imagen' && _documentoBytes != null)
+                              GestureDetector(
+                                onTap: () {
+                                  showImageViewerDialog(
+                                    context: context,
+                                    base64Image: base64Encode(_documentoBytes!),
+                                    title: _nombreController.text.isNotEmpty
+                                        ? _nombreController.text
+                                        : _documentoNombre!,
+                                  );
+                                },
+                                child: Container(
+                                  width: 60,
+                                  height: 60,
+                                  margin: const EdgeInsets.only(right: 8),
+                                  decoration: BoxDecoration(
+                                    border: Border.all(color: Colors.grey),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(4),
+                                    child: Image.memory(
+                                      _documentoBytes!,
+                                      fit: BoxFit.cover,
+                                    ),
+                                  ),
+                                ),
+                              )
+                            else
+                              const Icon(Icons.attach_file, size: 20),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _documentoNombre!,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8.0),
+                        child: Text('No se ha seleccionado archivo'),
+                      ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        try {
+                          final allowMultiple =
+                              _tipo == 'imagen' && widget.documento == null;
+                          FilePickerResult? result =
+                              await FilePicker.platform.pickFiles(
+                            type: _tipo == 'imagen'
+                                ? FileType.image
+                                : FileType.any,
+                            allowMultiple: allowMultiple,
+                          );
+                          if (result != null) {
+                            if (allowMultiple) {
+                              // Múltiples imágenes
+                              for (var file in result.files) {
+                                Uint8List? bytes;
+                                if (file.bytes != null) {
+                                  bytes = _resizeImageIfNeeded(file.bytes!);
+                                } else if (file.path != null) {
+                                  final fileObj = File(file.path!);
+                                  final readBytes = await fileObj.readAsBytes();
+                                  bytes = _resizeImageIfNeeded(readBytes);
+                                }
+
+                                if (bytes != null) {
+                                  // Extraer nombre sin extensión
+                                  String nombreSinExt = file.name;
+                                  final lastDot = nombreSinExt.lastIndexOf('.');
+                                  if (lastDot > 0) {
+                                    nombreSinExt =
+                                        nombreSinExt.substring(0, lastDot);
+                                  }
+
+                                  setState(() {
+                                    _imagenes.add({
+                                      'bytes': bytes,
+                                      'nombre': nombreSinExt,
+                                    });
+                                  });
+                                }
+                              }
+                              if (_imagenes.isNotEmpty &&
+                                  _selectedImageIndex == null) {
+                                setState(() {
+                                  _selectedImageIndex = 0;
+                                  _selectedImageNombreController.text =
+                                      _imagenes[0]['nombre'];
+                                });
+                              }
+                            } else {
+                              // Una sola imagen/documento
+                              if (result.files.single.bytes != null) {
+                                final pickedBytes = _tipo == 'imagen'
+                                    ? _resizeImageIfNeeded(
+                                        result.files.single.bytes!)
+                                    : result.files.single.bytes!;
+                                setState(() {
+                                  _documentoBytes = pickedBytes;
+                                  _documentoNombre = result.files.single.name;
+                                });
+                              } else if (result.files.single.path != null) {
+                                // Para plataformas de escritorio, leer los bytes del archivo
+                                final file = File(result.files.single.path!);
+                                final bytes = await file.readAsBytes();
+                                final pickedBytes = _tipo == 'imagen'
+                                    ? _resizeImageIfNeeded(bytes)
+                                    : bytes;
+                                setState(() {
+                                  _documentoBytes = pickedBytes;
+                                  _documentoNombre = result.files.single.name;
+                                });
+                              }
+                            }
+                          }
+                        } catch (e) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                                content:
+                                    Text('Error al seleccionar archivo: $e')),
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.upload_file),
+                      label: Text(_documentoNombre != null
+                          ? (_tipo == 'imagen'
+                              ? 'Cambiar imagen'
+                              : 'Cambiar archivo')
+                          : (_tipo == 'imagen'
+                              ? (_imagenes.isEmpty
+                                  ? 'Seleccionar imágenes'
+                                  : 'Añadir más imágenes')
+                              : 'Seleccionar archivo')),
+                    ),
+                    if (_tipo == 'imagen' &&
+                        _maxImageWidth != null &&
+                        _maxImageHeight != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8.0),
+                        child: Text(
+                          'Máximo: ${_maxImageWidth}x${_maxImageHeight}px',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ),
+                    // Carrusel de miniaturas para múltiples imágenes
+                    if (_tipo == 'imagen' && _imagenes.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      const Divider(),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${_imagenes.length} imagen${_imagenes.length == 1 ? '' : 'es'} seleccionada${_imagenes.length == 1 ? '' : 's'}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        height: 120,
+                        child: ListView.builder(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: _imagenes.length,
+                          itemBuilder: (context, index) {
+                            final imagen = _imagenes[index];
+                            final isSelected = _selectedImageIndex == index;
+                            return GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  _selectedImageIndex = index;
+                                  _selectedImageNombreController.text =
+                                      _imagenes[index]['nombre'];
+                                });
+                              },
+                              child: Container(
+                                width: 100,
+                                margin: const EdgeInsets.only(right: 8),
+                                decoration: BoxDecoration(
+                                  border: Border.all(
+                                    color: isSelected
+                                        ? Theme.of(context).primaryColor
+                                        : Colors.grey.shade300,
+                                    width: isSelected ? 3 : 1,
+                                  ),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Stack(
+                                  children: [
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: Image.memory(
+                                        imagen['bytes'],
+                                        width: 100,
+                                        height: 120,
+                                        fit: BoxFit.cover,
+                                      ),
+                                    ),
+                                    Positioned(
+                                      top: 4,
+                                      right: 4,
+                                      child: Container(
+                                        decoration: const BoxDecoration(
+                                          color: Colors.black54,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: IconButton(
+                                          icon: const Icon(
+                                            Icons.close,
+                                            color: Colors.white,
+                                            size: 18,
+                                          ),
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(
+                                            minWidth: 28,
+                                            minHeight: 28,
+                                          ),
+                                          onPressed: () {
+                                            setState(() {
+                                              _imagenes.removeAt(index);
+                                              if (_selectedImageIndex ==
+                                                  index) {
+                                                _selectedImageIndex =
+                                                    _imagenes.isNotEmpty
+                                                        ? 0
+                                                        : null;
+                                                if (_selectedImageIndex !=
+                                                    null) {
+                                                  _selectedImageNombreController
+                                                          .text =
+                                                      _imagenes[0]['nombre'];
+                                                } else {
+                                                  _selectedImageNombreController
+                                                      .clear();
+                                                }
+                                              } else if (_selectedImageIndex !=
+                                                      null &&
+                                                  _selectedImageIndex! >
+                                                      index) {
+                                                _selectedImageIndex =
+                                                    _selectedImageIndex! - 1;
+                                              }
+                                            });
+                                          },
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      if (_selectedImageIndex != null) ...[
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          controller: _selectedImageNombreController,
+                          decoration: InputDecoration(
+                            labelText:
+                                'Nombre para mostrar (imagen ${_selectedImageIndex! + 1})',
+                            border: const OutlineInputBorder(),
+                            helperText:
+                                'Pulse en una miniatura para editar su nombre',
+                          ),
+                          onChanged: (value) {
+                            if (_selectedImageIndex != null) {
+                              _imagenes[_selectedImageIndex!]['nombre'] = value
+                                      .isEmpty
+                                  ? _imagenes[_selectedImageIndex!]['nombre']
+                                  : value;
+                            }
+                          },
+                        ),
+                      ],
+                    ],
+                  ],
+                ),
+            ],
+          ),
         ),
       ),
       actions: [
@@ -1783,20 +2638,45 @@ class _DocumentoDialogState extends State<_DocumentoDialog> {
               );
               return;
             }
-            if (_tipo == 'documento' && _documentoBytes == null) {
+
+            // Validación para múltiples imágenes
+            if (_tipo == 'imagen' && _imagenes.isNotEmpty) {
+              // Devolver lista de imágenes
+              final resultados = _imagenes.map((img) {
+                return {
+                  'tipo': 'imagen',
+                  'nombre': img['nombre'],
+                  'url': null,
+                  'documento': base64Encode(img['bytes']),
+                };
+              }).toList();
+              _lastSelectedTipo = _tipo; // Guardar último tipo
+              Navigator.pop(context, {'multiple': true, 'items': resultados});
+              return;
+            }
+
+            // Validación para documento/imagen única
+            if ((_tipo == 'documento' || _tipo == 'imagen') &&
+                _documentoBytes == null &&
+                _imagenes.isEmpty) {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Debe seleccionar un archivo')),
+                SnackBar(
+                    content: Text(_tipo == 'imagen'
+                        ? 'Debe seleccionar una imagen'
+                        : 'Debe seleccionar un archivo')),
               );
               return;
             }
 
+            _lastSelectedTipo = _tipo; // Guardar último tipo
             Navigator.pop(context, {
               'tipo': _tipo,
               'nombre': _nombreController.text.isEmpty
                   ? _documentoNombre ?? _urlController.text
                   : _nombreController.text,
               'url': _tipo == 'url' ? _urlController.text : null,
-              'documento': _tipo == 'documento' && _documentoBytes != null
+              'documento': (_tipo == 'documento' || _tipo == 'imagen') &&
+                      _documentoBytes != null
                   ? base64Encode(_documentoBytes!)
                   : null,
             });
@@ -1811,6 +2691,7 @@ class _DocumentoDialogState extends State<_DocumentoDialog> {
   void dispose() {
     _nombreController.dispose();
     _urlController.dispose();
+    _selectedImageNombreController.dispose();
     super.dispose();
   }
 }

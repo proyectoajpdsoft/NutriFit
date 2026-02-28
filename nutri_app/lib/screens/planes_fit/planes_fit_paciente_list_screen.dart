@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'package:intl/intl.dart';
 import 'package:nutri_app/models/plan_fit.dart';
@@ -11,7 +12,7 @@ import 'package:nutri_app/widgets/image_viewer_dialog.dart';
 import 'package:nutri_app/screens/entrenamiento_edit_screen.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:provider/provider.dart';
-// import 'package:url_launcher/url_launcher.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 
 class PlanesFitPacienteListScreen extends StatefulWidget {
   const PlanesFitPacienteListScreen({super.key});
@@ -23,6 +24,9 @@ class PlanesFitPacienteListScreen extends StatefulWidget {
 
 class _PlanesFitPacienteListScreenState
     extends State<PlanesFitPacienteListScreen> {
+  static const MethodChannel _externalUrlChannel =
+      MethodChannel('nutri_app/external_url');
+
   final ApiService _apiService = ApiService();
   late Future<List<PlanFit>> _planesFuture;
   String? _patientCode;
@@ -234,10 +238,9 @@ class _PlanesFitPacienteListScreenState
                 ],
                 if (hasVideo) ...[
                   const SizedBox(height: 6),
-                  const InkWell(
-                    onTap:
-                        null, // () => _launchUrlExternal(ejercicio.urlVideo ?? ''),
-                    child: Row(
+                  InkWell(
+                    onTap: () => _launchUrlExternal(ejercicio.urlVideo ?? ''),
+                    child: const Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
@@ -387,8 +390,8 @@ class _PlanesFitPacienteListScreenState
                               if (plan.url != null && plan.url!.isNotEmpty)
                                 Expanded(
                                   child: ElevatedButton.icon(
-                                    onPressed:
-                                        null, // () => _launchUrlExternal(plan.url ?? ''),
+                                    onPressed: () =>
+                                        _launchUrlExternal(plan.url ?? ''),
                                     icon: const Icon(Icons.open_in_browser),
                                     label: const Text('Web'),
                                   ),
@@ -520,25 +523,23 @@ class _PlanesFitPacienteListScreenState
     );
   }
 
-  // Future<void> _launchUrlExternal(String url) async {
-  //   final trimmed = url.trim();
-  //   if (trimmed.isEmpty) return;
-  //   Uri? uri = Uri.tryParse(trimmed);
-  //   if (uri == null) return;
-  //   if (uri.scheme.isEmpty) {
-  //     uri = Uri.tryParse('https://$trimmed');
-  //   }
-  //   if (uri == null) return;
-  //   final launched = await launchUrl(
-  //     uri,
-  //     mode: LaunchMode.externalApplication,
-  //   );
-  //   if (!launched && mounted) {
-  //     ScaffoldMessenger.of(context).showSnackBar(
-  //       const SnackBar(
-  //         content: Text('No se pudo abrir el enlace'),
-  //       ),
-  //     );
-  //   }
-  // }
+  Future<void> _launchUrlExternal(String url) async {
+    try {
+      await launchUrlString(url, mode: LaunchMode.externalApplication);
+    } on PlatformException catch (e) {
+      if (e.code == 'channel-error') {
+        await _externalUrlChannel.invokeMethod('openUrl', {'url': url});
+        return;
+      }
+      rethrow;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('No se pudo abrir el enlace: $url'),
+          ),
+        );
+      }
+    }
+  }
 }

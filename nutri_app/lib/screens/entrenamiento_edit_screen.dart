@@ -12,9 +12,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image/image.dart' as img;
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:audioplayers/audioplayers.dart';
-// import 'package:url_launcher/url_launcher.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../services/auth_error_handler.dart';
+import '../exceptions/auth_exceptions.dart';
 import '../models/entrenamiento.dart';
 import '../models/plan_fit.dart';
 import '../models/plan_fit_dia.dart';
@@ -42,6 +44,11 @@ class EntrenamientoEditScreen extends StatefulWidget {
 
 class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
+  static const MethodChannel _externalUrlChannel =
+      MethodChannel('nutri_app/external_url');
+  static const MethodChannel _screenAwakeChannel =
+      MethodChannel('nutri_app/screen_awake');
+
   Timer? _addTimer;
   Timer? _removeTimer;
 
@@ -94,6 +101,10 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
   bool _metronomeRunning = false;
   double _metronomeInterval = 1.0;
   late AudioPlayer _audioPlayer;
+  bool _isPlayingCountdownAlert = false;
+
+  // Caché para imágenes decodificadas para evitar parpadeos
+  final Map<String, Uint8List> _imageCache = {};
 
   List<PlanFit> _planesFitDisponibles = [];
   int? _planFitSeleccionado;
@@ -344,6 +355,51 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
       final apiService = Provider.of<ApiService>(context, listen: false);
       final ejercicios =
           await apiService.getEntrenamientoEjercicios(codigoEntrenamiento);
+
+      final catalogCodes = ejercicios
+          .where((e) => (e.codigoEjercicioCatalogo ?? 0) > 0)
+          .map((e) => e.codigoEjercicioCatalogo!)
+          .toSet()
+          .toList();
+
+      if (catalogCodes.isNotEmpty) {
+        final catalogByCode = <int, dynamic>{};
+
+        await Future.wait(
+          catalogCodes.map((catalogCode) async {
+            try {
+              final catalogExercise =
+                  await apiService.getPlanFitEjercicioCatalogWithFoto(
+                catalogCode,
+              );
+              if (catalogExercise != null) {
+                catalogByCode[catalogCode] = catalogExercise;
+              }
+            } catch (_) {}
+          }),
+        );
+
+        for (final ejercicio in ejercicios) {
+          final catalogCode = ejercicio.codigoEjercicioCatalogo;
+          if (catalogCode == null || catalogCode <= 0) {
+            continue;
+          }
+
+          final catalogExercise = catalogByCode[catalogCode];
+          if (catalogExercise == null) {
+            continue;
+          }
+
+          ejercicio.fotoMiniatura =
+              (catalogExercise.fotoMiniatura ?? '').toString();
+
+          if ((ejercicio.fotoBase64 ?? '').trim().isEmpty) {
+            ejercicio.fotoBase64 =
+                (catalogExercise.fotoBase64 ?? '').toString();
+          }
+        }
+      }
+
       setState(() {
         _entrenamientoEjercicios = ejercicios;
         _selectedEjercicioIndex = 0;
@@ -846,6 +902,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
             SizedBox(
               width: fieldWidth,
               child: TextFormField(
+                key: controller != null ? ValueKey(controller.text) : null,
                 controller: controller,
                 initialValue: controller == null ? value.toString() : null,
                 keyboardType: TextInputType.number,
@@ -1069,12 +1126,15 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
       totalEsfuerzo += esfuerzo;
       count++;
 
-      final tiempo = ejercicio.tiempoRealizado ?? ejercicio.tiempoPlan ?? 0;
-      final rondas =
-          ejercicio.repeticionesRealizadas ?? ejercicio.repeticionesPlan ?? 0;
-      final descanso = ejercicio.descansoPlan ?? 0;
-      totalSegundos += (tiempo * rondas) + (descanso * rondas);
+      if (ejercicio.realizado == 'S') {
+        final tiempo = ejercicio.tiempoRealizado ?? ejercicio.tiempoPlan ?? 0;
+        final descanso = ejercicio.descansoPlan ?? 0;
+        totalSegundos += tiempo + descanso;
+      }
     }
+
+    final rondasActividad = _vueltas > 1 ? _vueltas : 1;
+    totalSegundos *= rondasActividad;
 
     final promedio = count > 0 ? (totalEsfuerzo / count).round() : 5;
     final horas = totalSegundos ~/ 3600;
@@ -1082,34 +1142,30 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
 
     setState(() {
       _nivelEsfuerzo = _clampInt(promedio, 1, 10);
-      if (_duracionHoras == 0 && _duracionMinutos == 0) {
-        _duracionHoras = horas;
-        _duracionMinutos = minutos;
-      }
+      _duracionHoras = horas;
+      _duracionMinutos = minutos;
     });
   }
 
-  // Future<void> _launchUrlExternal(String url) async {
-  //   final trimmed = url.trim();
-  //   if (trimmed.isEmpty) return;
-  //   Uri? uri = Uri.tryParse(trimmed);
-  //   if (uri == null) return;
-  //   if (uri.scheme.isEmpty) {
-  //     uri = Uri.tryParse('https://$trimmed');
-  //   }
-  //   if (uri == null) return;
-  //   final launched = await launchUrl(
-  //     uri,
-  //     mode: LaunchMode.externalApplication,
-  //   );
-  //   if (!launched && mounted) {
-  //     ScaffoldMessenger.of(context).showSnackBar(
-  //       const SnackBar(
-  //         content: Text('No se pudo abrir el enlace del video'),
-  //       ),
-  //     );
-  //   }
-  // }
+  Future<void> _launchUrlExternal(String url) async {
+    try {
+      await launchUrlString(url, mode: LaunchMode.externalApplication);
+    } on PlatformException catch (e) {
+      if (e.code == 'channel-error') {
+        await _externalUrlChannel.invokeMethod('openUrl', {'url': url});
+        return;
+      }
+      rethrow;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No se pudo abrir el enlace del video'),
+          ),
+        );
+      }
+    }
+  }
 
   void _markDirty() {
     if (_hasChanges) return;
@@ -1177,6 +1233,10 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     int esfuerzo = ejercicio.esfuerzoPercibido ?? 5;
     bool realizado = ejercicio.realizado == 'S';
     bool hasChanges = false;
+
+    // Decodificar la imagen una sola vez al inicio para evitar parpadeos
+    final miniaturaBytes = _getDecodedImage(ejercicio.fotoMiniatura);
+
     Future<bool> confirmExit(BuildContext dialogContext) async {
       if (!hasChanges) return true;
       final shouldExit = await showDialog<bool>(
@@ -1218,9 +1278,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                       children: [
                         ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                          child: (ejercicio.fotoMiniatura ?? '')
-                                  .trim()
-                                  .isNotEmpty
+                          child: miniaturaBytes != null
                               ? GestureDetector(
                                   onTap: ejercicio.fotoBase64 != null &&
                                           ejercicio.fotoBase64!.isNotEmpty
@@ -1231,10 +1289,12 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                                           )
                                       : null,
                                   child: Image.memory(
-                                    base64Decode(ejercicio.fotoMiniatura!),
+                                    miniaturaBytes,
                                     width: 80,
                                     height: 80,
                                     fit: BoxFit.cover,
+                                    cacheWidth: 80,
+                                    cacheHeight: 80,
                                   ),
                                 )
                               : Container(
@@ -1250,6 +1310,46 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                                     color: Colors.grey,
                                   ),
                                 ),
+                        ),
+                        const SizedBox(width: 10),
+                        IconButton.filled(
+                          tooltip: 'Cuenta atrás',
+                          icon: const Icon(Icons.hourglass_bottom_rounded),
+                          iconSize: 22,
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.green.shade700,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.all(9),
+                          ),
+                          onPressed: () async {
+                            final countdownResult =
+                                await _showEjercicioCountdownDialog(
+                              tiempo,
+                              ejercicioNombre: ejercicio.nombre,
+                              ejercicioMiniaturaBase64: ejercicio.fotoMiniatura,
+                              ejercicioFotoBase64: ejercicio.fotoBase64,
+                            );
+                            if (countdownResult == null) return;
+                            print('🔵 Countdown result: $countdownResult');
+                            final newTiempo =
+                                _clampInt(countdownResult, 0, 999999);
+                            print('🔵 New tiempo: $newTiempo');
+                            setStateDialog(() {
+                              tiempo = newTiempo;
+                              tiempoController.text = tiempo.toString();
+                              ejercicio.tiempoRealizado = tiempo;
+                              realizado = true;
+                              hasChanges = true;
+                            });
+                            print(
+                                '🔵 Controller text after update: ${tiempoController.text}');
+                            print(
+                                '🔵 Model tiempoRealizado: ${ejercicio.tiempoRealizado}');
+                            _updateEjercicioControllersAt(
+                              _entrenamientoEjercicios.indexOf(ejercicio),
+                            );
+                            _recalculateActividadFromEjercicios();
+                          },
                         ),
                         const Spacer(),
                         Column(
@@ -1303,6 +1403,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                             controller: tiempoController,
                             min: 0,
                             max: 3600,
+                            fieldWidth: 92,
                             labelSpacing: 0,
                             prefixIcon: Icons.schedule,
                             contentPadding: const EdgeInsets.symmetric(
@@ -1451,10 +1552,11 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                         child: Text(ejercicio.instrucciones ?? ''),
                       ),
                     ],
-                    if (false && (ejercicio.urlVideo ?? '').isNotEmpty) ...[
+                    if ((ejercicio.urlVideo ?? '').isNotEmpty) ...[
                       const SizedBox(height: 12),
                       InkWell(
-                        onTap: () {},
+                        onTap: () =>
+                            _launchUrlExternal(ejercicio.urlVideo ?? ''),
                         child: Text(
                           _getVideoLabel(ejercicio.urlVideo ?? ''),
                           style: TextStyle(
@@ -1536,7 +1638,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         ),
         const SizedBox(height: 8),
         SizedBox(
-          height: 288,
+          height: 240,
           child: Scrollbar(
             controller: _planFitEjerciciosScrollController,
             thumbVisibility: true,
@@ -1571,7 +1673,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                   final showInputs = tiempo > 0 || rondas > 0 || kilos > 0;
 
                   return SizedBox(
-                    width: 200,
+                    width: 140,
                     child: InkWell(
                       onTap: () {
                         setState(() {
@@ -1601,10 +1703,25 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                               Positioned.fill(
                                 child: ejercicio.fotoMiniatura != null &&
                                         ejercicio.fotoMiniatura!.isNotEmpty
-                                    ? Image.memory(
-                                        base64Decode(ejercicio.fotoMiniatura!),
-                                        fit: BoxFit.cover,
-                                      )
+                                    ? _getDecodedImage(
+                                                ejercicio.fotoMiniatura) !=
+                                            null
+                                        ? Image.memory(
+                                            _getDecodedImage(
+                                                ejercicio.fotoMiniatura)!,
+                                            fit: BoxFit.cover,
+                                            cacheWidth: 200,
+                                            cacheHeight: 200,
+                                            key: ValueKey(
+                                                'miniatura_${ejercicio.codigo}'),
+                                          )
+                                        : Container(
+                                            color: Colors.grey.shade200,
+                                            child: const Icon(
+                                                Icons.fitness_center,
+                                                size: 48,
+                                                color: Colors.grey),
+                                          )
                                     : Container(
                                         color: Colors.grey.shade200,
                                         child: const Icon(Icons.fitness_center,
@@ -1615,6 +1732,56 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                                 right: 8,
                                 bottom: overlayHeight,
                                 child: _buildEsfuerzoBadge(esfuerzo),
+                              ),
+                              Positioned(
+                                top: 6,
+                                right: 6,
+                                child: Material(
+                                  color: Colors.black45,
+                                  shape: const CircleBorder(),
+                                  child: IconButton(
+                                    tooltip: 'Cuenta atrás',
+                                    icon: const Icon(
+                                      Icons.hourglass_bottom_rounded,
+                                      color: Colors.white,
+                                      size: 18,
+                                    ),
+                                    visualDensity: VisualDensity.compact,
+                                    onPressed: () async {
+                                      final startSeconds =
+                                          ejercicio.tiempoRealizado ??
+                                              ejercicio.tiempoPlan ??
+                                              0;
+                                      final countdownResult =
+                                          await _showEjercicioCountdownDialog(
+                                        startSeconds,
+                                        ejercicioNombre: ejercicio.nombre,
+                                        ejercicioMiniaturaBase64:
+                                            ejercicio.fotoMiniatura,
+                                        ejercicioFotoBase64:
+                                            ejercicio.fotoBase64,
+                                      );
+                                      if (countdownResult == null || !mounted) {
+                                        return;
+                                      }
+                                      print(
+                                          '🟢 Card countdown result: $countdownResult');
+                                      setState(() {
+                                        ejercicio.tiempoRealizado =
+                                            countdownResult;
+                                        _ejercicioTiempoControllers[index]
+                                            .text = countdownResult.toString();
+                                        ejercicio.realizado = 'S';
+                                      });
+                                      print(
+                                          '🟢 Card controller text: ${_ejercicioTiempoControllers[index].text}');
+                                      print(
+                                          '🟢 Card model tiempoRealizado: ${ejercicio.tiempoRealizado}');
+                                      _markDirty();
+                                      _recalculateActividadFromEjercicios();
+                                    },
+                                  ),
+                                ),
                               ),
                               Positioned(
                                 left: 0,
@@ -1763,6 +1930,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     _actividadCustomController.dispose();
     _planFitEjerciciosScrollController.dispose();
     _vueltasNotifier.dispose();
+    _imageCache.clear(); // Limpiar caché de imágenes
     for (final controller in _ejercicioTiempoControllers) {
       controller.dispose();
     }
@@ -1789,6 +1957,9 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         _timer = null;
         // El Stopwatch sigue corriendo en segundo plano
       } else if (state == AppLifecycleState.resumed) {
+        unawaited(WakelockPlus.enable());
+        unawaited(_setScreenAwake(true));
+
         // App vuelve al primer plano: reiniciar Timer y actualizar desde Stopwatch
         _timer?.cancel();
         _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
@@ -2671,12 +2842,30 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
             if (image != null) {
               img.Image? resizedImage = image;
 
-              // Redimensionar si es necesario
+              // Redimensionar si es necesario manteniendo proporción de aspecto
               if (image.width > maxWidth || image.height > maxHeight) {
+                // Calcular el factor de escala manteniendo la relación de aspecto
+                double scale = 1.0;
+
+                if (image.width > maxWidth) {
+                  scale = maxWidth / image.width;
+                }
+
+                if (image.height > maxHeight) {
+                  final scaleHeight = maxHeight / image.height;
+                  if (scaleHeight < scale) {
+                    scale = scaleHeight;
+                  }
+                }
+
+                final newWidth = (image.width * scale).toInt();
+                final newHeight = (image.height * scale).toInt();
+
                 resizedImage = img.copyResize(
                   image,
-                  width: maxWidth,
-                  height: maxHeight,
+                  width: newWidth,
+                  height: newHeight,
+                  interpolation: img.Interpolation.linear,
                 );
               }
 
@@ -2798,6 +2987,13 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         url += 'update_entrenamiento&codigo=${widget.entrenamiento!.codigo}';
         final response = await apiService.put(url, body: jsonEncode(data));
 
+        if (_isExpiredTokenResponse(response.statusCode, response.body)) {
+          AuthErrorHandler.handleAuthErrorGlobal(
+            TokenExpiredException(originalError: response.body),
+          );
+          return;
+        }
+
         if (response.statusCode == 200 ||
             response.statusCode == 201 ||
             response.statusCode == 204) {
@@ -2832,6 +3028,13 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
       } else {
         url += 'create_entrenamiento';
         final response = await apiService.post(url, body: jsonEncode(data));
+
+        if (_isExpiredTokenResponse(response.statusCode, response.body)) {
+          AuthErrorHandler.handleAuthErrorGlobal(
+            TokenExpiredException(originalError: response.body),
+          );
+          return;
+        }
 
         if (response.statusCode == 201 || response.statusCode == 200) {
           int? codigoCreado;
@@ -2870,6 +3073,10 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         }
       }
     } catch (e) {
+      if (e is TokenExpiredException || e is UnauthorizedException) {
+        AuthErrorHandler.handleAuthErrorGlobal(e);
+        return;
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
@@ -2879,6 +3086,25 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
       setState(() {
         _isLoading = false;
       });
+    }
+  }
+
+  bool _isExpiredTokenResponse(int statusCode, String responseBody) {
+    if (statusCode != 401) return false;
+    try {
+      final decoded = json.decode(responseBody);
+      final code = decoded['code']?.toString().toUpperCase();
+      final errorText = decoded['error']?.toString().toLowerCase() ?? '';
+      return code == 'INVALID_TOKEN' ||
+          errorText.contains('expirado') ||
+          errorText.contains('inválido') ||
+          errorText.contains('invalido');
+    } catch (_) {
+      final body = responseBody.toLowerCase();
+      return body.contains('invalid_token') ||
+          body.contains('token expirado') ||
+          body.contains('token inválido') ||
+          body.contains('token invalido');
     }
   }
 
@@ -3045,7 +3271,8 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     });
 
     // Mantener la pantalla encendida mientras el temporizador está activo
-    WakelockPlus.enable();
+    unawaited(WakelockPlus.enable());
+    unawaited(_setScreenAwake(true));
 
     // Actualizar el display más frecuentemente para mayor responsividad
     _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
@@ -3070,7 +3297,10 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     setState(() {
       _timerPaused = true;
     });
-    // Mantener wakelock incluso en pausa
+    // Al pausar, permitir que el sistema vuelva a bloquear pantalla
+    unawaited(WakelockPlus.disable());
+    unawaited(_setScreenAwake(false));
+
     if (_sheetSetState != null) {
       _sheetSetState!(() {});
     }
@@ -3085,7 +3315,8 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     });
 
     // Mantener la pantalla encendida
-    WakelockPlus.enable();
+    unawaited(WakelockPlus.enable());
+    unawaited(_setScreenAwake(true));
 
     _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
       if (!mounted) return;
@@ -3105,8 +3336,9 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     _timer = null;
     _stopwatch.stop();
 
-    // Desabilitar wakelock cuando se detiene el temporizador
-    WakelockPlus.disable();
+    // Al detener, permitir que el sistema vuelva a bloquear pantalla
+    unawaited(WakelockPlus.disable());
+    unawaited(_setScreenAwake(false));
 
     if (!mounted) return;
     setState(() {
@@ -3148,6 +3380,475 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     final hours = totalSeconds ~/ 3600;
     final minutes = (totalSeconds % 3600) ~/ 60;
     return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}';
+  }
+
+  // Decodificar imagen con caché para evitar parpadeos
+  Uint8List? _getDecodedImage(String? base64String) {
+    if (base64String == null || base64String.trim().isEmpty) {
+      return null;
+    }
+
+    if (!_imageCache.containsKey(base64String)) {
+      try {
+        _imageCache[base64String] = base64Decode(base64String);
+      } catch (e) {
+        print('Error decoding image: $e');
+        return null;
+      }
+    }
+
+    return _imageCache[base64String];
+  }
+
+  String _formatCountdownSeconds(int totalSeconds) {
+    final safeValue = totalSeconds < 0 ? 0 : totalSeconds;
+    return safeValue.toString().padLeft(3, '0');
+  }
+
+  Future<int?> _showEjercicioCountdownDialog(
+    int initialSeconds, {
+    required String ejercicioNombre,
+    String? ejercicioMiniaturaBase64,
+    String? ejercicioFotoBase64,
+  }) async {
+    int baseSeconds = _clampInt(initialSeconds, 0, 999);
+    bool running = false;
+    bool paused = false;
+
+    // Cargar estado de fullscreen desde SharedPreferences
+    final prefs = await SharedPreferences.getInstance();
+    bool fullscreen = prefs.getBool('countdown_fullscreen') ?? false;
+
+    bool reachedZero = baseSeconds == 0;
+    int elapsedSeconds = 0;
+    int remainingSeconds = baseSeconds;
+    int extraSeconds = 0;
+
+    Timer? ticker;
+    DateTime? runningSince;
+    Duration accumulatedDuration = Duration.zero;
+
+    void recalculate({bool allowBeep = false}) {
+      final now = DateTime.now();
+      final activeDuration =
+          runningSince == null ? Duration.zero : now.difference(runningSince!);
+      final totalDuration = accumulatedDuration + activeDuration;
+      final totalElapsed = totalDuration.inSeconds;
+      final wasZero = reachedZero;
+
+      elapsedSeconds = totalElapsed;
+      if (totalElapsed >= baseSeconds) {
+        remainingSeconds = 0;
+        extraSeconds = totalElapsed - baseSeconds;
+        reachedZero = true;
+      } else {
+        remainingSeconds = baseSeconds - totalElapsed;
+        extraSeconds = 0;
+        reachedZero = false;
+      }
+
+      if (allowBeep && !wasZero && reachedZero) {
+        unawaited(_playCountdownReachedZeroAlert());
+      }
+    }
+
+    void stopTicker() {
+      ticker?.cancel();
+      ticker = null;
+    }
+
+    void startTicker(StateSetter setDialogState) {
+      stopTicker();
+      ticker = Timer.periodic(const Duration(milliseconds: 200), (_) {
+        recalculate(allowBeep: true);
+        setDialogState(() {});
+      });
+    }
+
+    Future<void> setCountdownWakelock(bool enabled) async {
+      try {
+        if (enabled) {
+          await WakelockPlus.enable();
+        } else {
+          await WakelockPlus.disable();
+        }
+      } catch (e) {
+        print('⚠️ Countdown wakelock error: $e');
+      }
+
+      await _setScreenAwake(enabled);
+    }
+
+    try {
+      recalculate();
+      return await showDialog<int>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (dialogContext, setDialogState) {
+              void pauseCountdown() {
+                if (!running || runningSince == null) return;
+                accumulatedDuration += DateTime.now().difference(runningSince!);
+                runningSince = null;
+                running = false;
+                paused = true;
+                recalculate();
+                stopTicker();
+                unawaited(setCountdownWakelock(false));
+                setDialogState(() {});
+              }
+
+              void playCountdown() {
+                if (running) return;
+                running = true;
+                paused = false;
+                runningSince = DateTime.now();
+                recalculate(allowBeep: true);
+                startTicker(setDialogState);
+                unawaited(setCountdownWakelock(true));
+                setDialogState(() {});
+              }
+
+              void adjustBaseSeconds(int delta) {
+                if (running) return;
+                baseSeconds = _clampInt(baseSeconds + delta, 0, 999);
+                if (elapsedSeconds > baseSeconds) {
+                  elapsedSeconds = baseSeconds;
+                }
+                accumulatedDuration = Duration(seconds: elapsedSeconds);
+                reachedZero = elapsedSeconds >= baseSeconds;
+                recalculate();
+                setDialogState(() {});
+              }
+
+              void saveAndClose() {
+                if (running && runningSince != null) {
+                  accumulatedDuration +=
+                      DateTime.now().difference(runningSince!);
+                  runningSince = null;
+                }
+                recalculate();
+                print('🔴 saveAndClose - elapsedSeconds: $elapsedSeconds');
+                print('🔴 saveAndClose - baseSeconds: $baseSeconds');
+                print('🔴 saveAndClose - extraSeconds: $extraSeconds');
+                stopTicker();
+                running = false;
+                paused = false;
+                // Guardar estado fullscreen
+                prefs.setBool('countdown_fullscreen', fullscreen);
+                unawaited(setCountdownWakelock(false));
+                if (dialogContext.mounted) {
+                  Navigator.of(dialogContext).pop(elapsedSeconds);
+                }
+              }
+
+              void closeWithoutSave() async {
+                // Si el contador está corriendo, mostrar diálogo de confirmación
+                if (running) {
+                  final action = await showDialog<String>(
+                        context: dialogContext,
+                        barrierDismissible: false,
+                        builder: (ctx) => AlertDialog(
+                          title: const Text('Cerrar cuenta atras'),
+                          content: const Text(
+                              'Hay cambios en el ejercicio. ¿Desea guardar antes de cerrar?'),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(ctx, 'continue'),
+                              child: const Text('Continuar entrenamiento'),
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.pop(ctx, 'save'),
+                              child: const Text('Guardar y cerrar'),
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.pop(ctx, 'discard'),
+                              style: TextButton.styleFrom(
+                                foregroundColor: Colors.red,
+                              ),
+                              child: const Text('Descartar'),
+                            ),
+                          ],
+                        ),
+                      ) ??
+                      'continue';
+
+                  if (action == 'save') {
+                    saveAndClose();
+                    return;
+                  }
+
+                  if (action != 'discard') return;
+                }
+
+                stopTicker();
+                running = false;
+                paused = false;
+                // Guardar estado fullscreen
+                prefs.setBool('countdown_fullscreen', fullscreen);
+                unawaited(setCountdownWakelock(false));
+                if (dialogContext.mounted) {
+                  Navigator.of(dialogContext).pop();
+                }
+              }
+
+              final widthFactor = fullscreen ? 1.0 : 0.74;
+              final heightFactor = fullscreen ? 1.0 : 0.70;
+              final screenSize = MediaQuery.of(dialogContext).size;
+              final isLandscape = screenSize.width > screenSize.height;
+              final actionButtonSize =
+                  fullscreen ? (isLandscape ? 86.0 : 120.0) : 50.0;
+              final actionIconSize =
+                  fullscreen ? (isLandscape ? 44.0 : 60.0) : 24.0;
+              final actionSpacing =
+                  fullscreen ? (isLandscape ? 20.0 : 40.0) : 16.0;
+              final actionBottomPadding =
+                  fullscreen ? (isLandscape ? 10.0 : 32.0) : 0.0;
+              final markerValue = reachedZero
+                  ? '+${_formatCountdownSeconds(extraSeconds)}'
+                  : _formatCountdownSeconds(remainingSeconds);
+              final markerColor = reachedZero
+                  ? Colors.orange.shade700
+                  : Theme.of(context).colorScheme.primary;
+
+              Uint8List? miniaturaBytes =
+                  _getDecodedImage(ejercicioMiniaturaBase64);
+
+              final content = SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Cuenta atrás ejercicio',
+                              style: Theme.of(dialogContext)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: fullscreen ? 'Restaurar' : 'Maximizar',
+                            onPressed: () {
+                              fullscreen = !fullscreen;
+                              setDialogState(() {});
+                            },
+                            icon: Icon(
+                              fullscreen
+                                  ? Icons.fullscreen_exit
+                                  : Icons.fullscreen,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Cerrar',
+                            onPressed: closeWithoutSave,
+                            icon: const Icon(Icons.close),
+                          ),
+                        ],
+                      ),
+                      if (fullscreen)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: miniaturaBytes != null
+                                    ? GestureDetector(
+                                        onTap: () {
+                                          final imageToShow =
+                                              (ejercicioFotoBase64 != null &&
+                                                      ejercicioFotoBase64
+                                                          .isNotEmpty)
+                                                  ? ejercicioFotoBase64
+                                                  : ejercicioMiniaturaBase64;
+                                          if (imageToShow == null ||
+                                              imageToShow.isEmpty) {
+                                            return;
+                                          }
+                                          showImageViewerDialog(
+                                            context: dialogContext,
+                                            base64Image: imageToShow,
+                                            title: ejercicioNombre,
+                                          );
+                                        },
+                                        child: Image.memory(
+                                          miniaturaBytes,
+                                          width: 44,
+                                          height: 44,
+                                          fit: BoxFit.cover,
+                                        ),
+                                      )
+                                    : Container(
+                                        width: 44,
+                                        height: 44,
+                                        color: Colors.grey.shade200,
+                                        child: const Icon(
+                                          Icons.fitness_center,
+                                          size: 22,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  ejercicioNombre,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(dialogContext)
+                                      .textTheme
+                                      .titleSmall
+                                      ?.copyWith(fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      Expanded(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final markerSize = (constraints.maxHeight * 0.26)
+                                .clamp(38.0, 120.0)
+                                .toDouble();
+                            return Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text(
+                                    markerValue,
+                                    maxLines: 1,
+                                    style: TextStyle(
+                                      fontSize: markerSize,
+                                      fontWeight: FontWeight.w800,
+                                      color: markerColor,
+                                      fontFeatures: const [
+                                        FontFeature.tabularFigures(),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  reachedZero
+                                      ? 'Tiempo extra'
+                                      : 'Tiempo restante',
+                                  style: Theme.of(context).textTheme.titleSmall,
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'Objetivo: ${_formatCountdownSeconds(baseSeconds)} s',
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                ),
+                                const SizedBox(height: 14),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    SizedBox(
+                                      width: 96,
+                                      height: 54,
+                                      child: ElevatedButton(
+                                        onPressed: running
+                                            ? null
+                                            : () => adjustBaseSeconds(-1),
+                                        child:
+                                            const Icon(Icons.remove, size: 30),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 16),
+                                    SizedBox(
+                                      width: 96,
+                                      height: 54,
+                                      child: ElevatedButton(
+                                        onPressed: running
+                                            ? null
+                                            : () => adjustBaseSeconds(1),
+                                        child: const Icon(Icons.add, size: 30),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      ),
+                      Padding(
+                        padding: EdgeInsets.only(bottom: actionBottomPadding),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: actionButtonSize,
+                              height: actionButtonSize,
+                              child: ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  padding: EdgeInsets.zero,
+                                ),
+                                onPressed:
+                                    running ? pauseCountdown : playCountdown,
+                                child: Icon(
+                                  running
+                                      ? Icons.pause_rounded
+                                      : Icons.play_arrow_rounded,
+                                  size: actionIconSize,
+                                ),
+                              ),
+                            ),
+                            SizedBox(width: actionSpacing),
+                            SizedBox(
+                              width: actionButtonSize,
+                              height: actionButtonSize,
+                              child: ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  padding: EdgeInsets.zero,
+                                ),
+                                onPressed: saveAndClose,
+                                child: Icon(
+                                  Icons.check_rounded,
+                                  size: actionIconSize,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+
+              if (fullscreen) {
+                return Dialog.fullscreen(child: content);
+              }
+
+              return Dialog(
+                insetPadding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+                child: SizedBox(
+                  width: MediaQuery.of(dialogContext).size.width * widthFactor,
+                  height:
+                      MediaQuery.of(dialogContext).size.height * heightFactor,
+                  child: content,
+                ),
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      ticker?.cancel();
+      try {
+        await WakelockPlus.disable();
+      } catch (e) {
+        print('⚠️ Wakelock disable error in finally: $e');
+      }
+    }
   }
 
   Future<bool> _confirmCloseTimerIfNeeded() async {
@@ -3235,42 +3936,46 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     });
   }
 
+  Future<void> _playCountdownReachedZeroAlert() async {
+    if (_isPlayingCountdownAlert) return;
+
+    _isPlayingCountdownAlert = true;
+    try {
+      await _playBeep();
+      await Future.delayed(const Duration(milliseconds: 180));
+      await _playBeep();
+    } finally {
+      _isPlayingCountdownAlert = false;
+    }
+  }
+
+  Future<void> _setScreenAwake(bool enabled) async {
+    try {
+      await _screenAwakeChannel.invokeMethod('setScreenAwake', {
+        'enabled': enabled,
+      });
+    } catch (e) {
+      print('⚠️ Native screen_awake error: $e');
+    }
+  }
+
   Future<void> _playBeep() async {
     try {
-      // Usar un sonido de beep generado o del sistema
-      if (kIsWeb) {
-        // En web, usar audioplayers con un sonido local
-        try {
-          await _audioPlayer.play(
-            AssetSource('sounds/beep.wav'),
-            volume: 0.5,
-          );
-        } catch (e) {
-          // debugPrint('Error loading beep asset: $e');
-        }
-      } else {
-        // En Android e iOS, usar SystemSound con mejor compatibilidad
-        try {
-          if (Platform.isAndroid) {
-            // Android: intentar con audioplayers primero
-            try {
-              await _audioPlayer.play(
-                AssetSource('sounds/beep.wav'),
-                volume: 0.5,
-              );
-              return;
-            } catch (e) {
-              // debugPrint('Android audio asset failed, using system sound');
-            }
-          }
-          // Fallback: usar SystemSound
-          await SystemSound.play(SystemSoundType.click);
-        } catch (e) {
-          // debugPrint('SystemSound failed: $e');
-        }
+      await _audioPlayer.stop();
+      await _audioPlayer.setVolume(1.0);
+      await _audioPlayer.setPlayerMode(PlayerMode.lowLatency);
+      await _audioPlayer.setReleaseMode(ReleaseMode.stop);
+      try {
+        await _audioPlayer.play(AssetSource('sounds/beep.wav'));
+      } catch (_) {
+        await _audioPlayer.play(AssetSource('assets/sounds/beep.wav'));
       }
     } catch (e) {
-      // debugPrint('Error playing beep: $e');
+      try {
+        if (!kIsWeb) {
+          await SystemSound.play(SystemSoundType.alert);
+        }
+      } catch (_) {}
     }
   }
 

@@ -32,6 +32,18 @@ switch($request_method) {
             get_consejo_paciente($_GET["paciente"], $_GET["consejo_codigo"]);
         } else if(isset($_GET["destacados_no_leidos"]) && isset($_GET["paciente"])) {
             get_destacados_no_leidos($_GET["paciente"]);
+        } else if(isset($_GET["count_no_leidos"]) && isset($_GET["paciente"])) {
+            get_count_no_leidos($_GET["paciente"]);
+        } else if(isset($_GET["has_personalizados"]) && isset($_GET["paciente"])) {
+            has_personalizados($_GET["paciente"]);
+        } else if(isset($_GET["personalizados_no_leidos"]) && isset($_GET["paciente"])) {
+            get_personalizados_no_leidos($_GET["paciente"]);
+        } else if(isset($_GET["count_personalizados_no_leidos"]) && isset($_GET["paciente"])) {
+            count_personalizados_no_leidos($_GET["paciente"]);
+        } else if(isset($_GET["personalizados_paciente"]) && isset($_GET["paciente"])) {
+            get_personalizados_paciente($_GET["paciente"], $_GET["codigo_usuario"] ?? null);
+        } else if(isset($_GET["todos_paciente"]) && isset($_GET["paciente"])) {
+            get_todos_consejos_paciente($_GET["paciente"], $_GET["codigo_usuario"] ?? null);
         } else if(isset($_GET["favoritos"]) && isset($_GET["paciente"])) {
             get_favoritos($_GET["paciente"]);
         }
@@ -80,7 +92,8 @@ function get_consejo_paciente($paciente_codigo, $consejo_codigo) {
     global $db;
     
     $query = "SELECT * FROM nu_consejo_usuario 
-              WHERE codigo_paciente = :paciente AND codigo_consejo = :consejo";
+              WHERE codigo_consejo = :consejo
+              AND (codigo_usuario = :paciente OR codigo_paciente = :paciente)";
     
     $stmt = $db->prepare($query);
     $stmt->bindParam(':paciente', $paciente_codigo);
@@ -96,72 +109,147 @@ function get_consejo_paciente($paciente_codigo, $consejo_codigo) {
     }
 }
 
+function resolve_usuario_codigo_by_paciente($paciente_codigo) {
+    global $db;
+
+    if (empty($paciente_codigo)) {
+        return null;
+    }
+
+    $query = "SELECT codigo FROM usuario WHERE codigo_paciente = :paciente LIMIT 1";
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(':paciente', $paciente_codigo);
+    $stmt->execute();
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$row || !isset($row['codigo'])) {
+        return null;
+    }
+
+    return intval($row['codigo']);
+}
+
 function assign_pacientes() {
     global $db;
-    $data = json_decode(file_get_contents("php://input"));
-    
-    // Log para debug
-    error_log("assign_pacientes - Datos recibidos: " . json_encode($data));
-    
-    if(empty($data->codigo_consejo)) {
-        http_response_code(400);
-        ob_clean();
-        echo json_encode(array("message" => "Falta codigo_consejo."));
-        return;
-    }
-    
-    if(!isset($data->codigos_pacientes) || !is_array($data->codigos_pacientes) || count($data->codigos_pacientes) == 0) {
-        http_response_code(400);
-        ob_clean();
-        echo json_encode(array("message" => "Falta codigos_pacientes o está vacío."));
-        return;
-    }
-    
-    $codusuarioa = isset($data->codusuarioa) ? $data->codusuarioa : 1;
-    $success_count = 0;
-    $error_count = 0;
-    
-    // Primero eliminar asignaciones previas
-    $delete_query = "DELETE FROM nu_consejo_usuario WHERE codigo_consejo = :consejo";
-    $delete_stmt = $db->prepare($delete_query);
-    $delete_stmt->bindParam(':consejo', $data->codigo_consejo);
-    $delete_stmt->execute();
-    
-    error_log("Eliminadas asignaciones previas del consejo " . $data->codigo_consejo);
-    
-    // Insertar nuevas asignaciones
-    $query = "INSERT INTO nu_consejo_usuario SET
+
+    try {
+        $data = json_decode(file_get_contents("php://input"));
+
+        // Log para debug
+        error_log("assign_pacientes - Datos recibidos: " . json_encode($data));
+
+        if (!$data) {
+            http_response_code(400);
+            ob_clean();
+            echo json_encode(array("message" => "JSON inválido o vacío."));
+            return;
+        }
+
+        if (empty($data->codigo_consejo)) {
+            http_response_code(400);
+            ob_clean();
+            echo json_encode(array("message" => "Falta codigo_consejo."));
+            return;
+        }
+
+        if (!isset($data->codigos_pacientes) || !is_array($data->codigos_pacientes)) {
+            http_response_code(400);
+            ob_clean();
+            echo json_encode(array("message" => "Falta codigos_pacientes o no es un array."));
+            return;
+        }
+
+        if (!table_exists($db, 'nu_consejo_usuario')) {
+            http_response_code(500);
+            ob_clean();
+            echo json_encode(array("message" => "Tabla nu_consejo_usuario no existe."));
+            return;
+        }
+
+        $codusuarioa = isset($data->codusuarioa) ? $data->codusuarioa : 1;
+        $success_count = 0;
+        $error_count = 0;
+
+        // Primero eliminar asignaciones previas
+        $delete_query = "DELETE FROM nu_consejo_usuario WHERE codigo_consejo = :consejo";
+        $delete_stmt = $db->prepare($delete_query);
+        if (!$delete_stmt) {
+            http_response_code(500);
+            ob_clean();
+            echo json_encode(array("message" => "Error preparando DELETE.", "error" => $db->errorInfo()));
+            return;
+        }
+        $delete_stmt->bindParam(':consejo', $data->codigo_consejo);
+        $delete_stmt->execute();
+
+        error_log("Eliminadas asignaciones previas del consejo " . $data->codigo_consejo);
+
+        // Si la lista de pacientes está vacía, solo se eliminan las asignaciones y se termina
+        if (count($data->codigos_pacientes) == 0) {
+            http_response_code(200);
+            ob_clean();
+            echo json_encode(array(
+                "message" => "Asignaciones eliminadas (sin pacientes asignados).",
+                "success" => 0,
+                "errors" => 0
+            ));
+            return;
+        }
+
+        // Insertar nuevas asignaciones
+        $query = "INSERT INTO nu_consejo_usuario SET
                 codigo_consejo = :codigo_consejo,
                 codigo_paciente = :codigo_paciente,
+                codigo_usuario = :codigo_usuario,
                 me_gusta = 'N',
                 leido = 'N',
                 fechaa = NOW(),
                 codusuarioa = :codusuarioa";
-    
-    $stmt = $db->prepare($query);
-    
-    foreach($data->codigos_pacientes as $codigo_paciente) {
-        error_log("Insertando paciente $codigo_paciente al consejo " . $data->codigo_consejo);
-        $stmt->bindParam(":codigo_consejo", $data->codigo_consejo);
-        $stmt->bindParam(":codigo_paciente", $codigo_paciente);
-        $stmt->bindParam(":codusuarioa", $codusuarioa);
-        
-        if($stmt->execute()) {
-            $success_count++;
-            error_log("Éxito al insertar paciente $codigo_paciente");
-        } else {
-            $error_count++;
-            error_log("Error al insertar paciente $codigo_paciente: " . json_encode($stmt->errorInfo()));
+
+        $stmt = $db->prepare($query);
+        if (!$stmt) {
+            http_response_code(500);
+            ob_clean();
+            echo json_encode(array("message" => "Error preparando INSERT.", "error" => $db->errorInfo()));
+            return;
         }
+
+        foreach ($data->codigos_pacientes as $codigo_paciente) {
+            $codigo_usuario = resolve_usuario_codigo_by_paciente($codigo_paciente);
+            error_log("Insertando paciente $codigo_paciente (usuario " . ($codigo_usuario ?? 'null') . ") al consejo " . $data->codigo_consejo);
+            $stmt->bindParam(":codigo_consejo", $data->codigo_consejo);
+            $stmt->bindParam(":codigo_paciente", $codigo_paciente);
+            if ($codigo_usuario === null) {
+                $stmt->bindValue(":codigo_usuario", null, PDO::PARAM_NULL);
+            } else {
+                $stmt->bindValue(":codigo_usuario", $codigo_usuario, PDO::PARAM_INT);
+            }
+            $stmt->bindParam(":codusuarioa", $codusuarioa);
+
+            if ($stmt->execute()) {
+                $success_count++;
+                error_log("Éxito al insertar paciente $codigo_paciente");
+            } else {
+                $error_count++;
+                error_log("Error al insertar paciente $codigo_paciente: " . json_encode($stmt->errorInfo()));
+            }
+        }
+
+        http_response_code(200);
+        ob_clean();
+        echo json_encode(array(
+            "message" => "Pacientes asignados.",
+            "success" => $success_count,
+            "errors" => $error_count
+        ));
+    } catch (Throwable $e) {
+        http_response_code(500);
+        ob_clean();
+        echo json_encode(array(
+            "message" => "Error interno asignando pacientes.",
+            "error" => $e->getMessage()
+        ));
     }
-    
-    http_response_code(200);
-    ob_clean();
-    echo json_encode(array(
-        "message" => "Pacientes asignados.",
-        "success" => $success_count,
-        "errors" => $error_count
-    ));
 }
 
 function toggle_like() {
@@ -272,19 +360,34 @@ function marcar_leido() {
     global $db;
     $data = json_decode(file_get_contents("php://input"));
     
-    if(empty($data->codigo_consejo) || empty($data->codigo_paciente)) {
+    if(empty($data->codigo_consejo) || (empty($data->codigo_paciente) && empty($data->codigo_usuario))) {
         http_response_code(400);
         ob_clean();
         echo json_encode(array("message" => "Faltan datos requeridos."));
         return;
     }
-    
-    // Verificar si existe el registro
-    $check_query = "SELECT codigo, leido FROM nu_consejo_usuario 
-                    WHERE codigo_consejo = :consejo AND codigo_paciente = :paciente";
+
+    $codigo_usuario = isset($data->codigo_usuario) ? intval($data->codigo_usuario) : null;
+    $codigo_paciente = isset($data->codigo_paciente) ? intval($data->codigo_paciente) : null;
+
+    // Verificar si existe el registro por usuario o por paciente
+    $check_query = "SELECT codigo, leido FROM nu_consejo_usuario
+                    WHERE codigo_consejo = :consejo
+                    AND ((:usuario IS NOT NULL AND codigo_usuario = :usuario)
+                         OR (:paciente IS NOT NULL AND codigo_paciente = :paciente))
+                    LIMIT 1";
     $check_stmt = $db->prepare($check_query);
     $check_stmt->bindParam(':consejo', $data->codigo_consejo);
-    $check_stmt->bindParam(':paciente', $data->codigo_paciente);
+    if ($codigo_usuario === null) {
+        $check_stmt->bindValue(':usuario', null, PDO::PARAM_NULL);
+    } else {
+        $check_stmt->bindValue(':usuario', $codigo_usuario, PDO::PARAM_INT);
+    }
+    if ($codigo_paciente === null) {
+        $check_stmt->bindValue(':paciente', null, PDO::PARAM_NULL);
+    } else {
+        $check_stmt->bindValue(':paciente', $codigo_paciente, PDO::PARAM_INT);
+    }
     $check_stmt->execute();
     $existing = $check_stmt->fetch(PDO::FETCH_ASSOC);
     
@@ -292,6 +395,7 @@ function marcar_leido() {
         // Marcar como leído
         $update_query = "UPDATE nu_consejo_usuario SET 
                         leido = 'S',
+                        fecha_leido = NOW(),
                         fecham = NOW()
                         WHERE codigo = :codigo";
         
@@ -311,9 +415,45 @@ function marcar_leido() {
             echo json_encode(array("message" => "No se pudo marcar como leído."));
         }
     } else {
-        http_response_code(404);
-        ob_clean();
-        echo json_encode(array("message" => "El consejo no está asignado a este paciente."));
+        // Si no existe registro (p.ej. visible_para_todos), crearlo ya marcado como leído
+        $insert_query = "INSERT INTO nu_consejo_usuario SET
+                        codigo_consejo = :codigo_consejo,
+                        codigo_usuario = :codigo_usuario,
+                        codigo_paciente = :codigo_paciente,
+                        me_gusta = 'N',
+                        favorito = 'N',
+                        leido = 'S',
+                        fecha_leido = NOW(),
+                        fechaa = NOW(),
+                        codusuarioa = :codusuarioa";
+
+        $insert_stmt = $db->prepare($insert_query);
+        $insert_stmt->bindParam(':codigo_consejo', $data->codigo_consejo);
+        if ($codigo_usuario === null) {
+            $insert_stmt->bindValue(':codigo_usuario', null, PDO::PARAM_NULL);
+            $insert_stmt->bindValue(':codusuarioa', 1, PDO::PARAM_INT);
+        } else {
+            $insert_stmt->bindValue(':codigo_usuario', $codigo_usuario, PDO::PARAM_INT);
+            $insert_stmt->bindValue(':codusuarioa', $codigo_usuario, PDO::PARAM_INT);
+        }
+        if ($codigo_paciente === null) {
+            $insert_stmt->bindValue(':codigo_paciente', null, PDO::PARAM_NULL);
+        } else {
+            $insert_stmt->bindValue(':codigo_paciente', $codigo_paciente, PDO::PARAM_INT);
+        }
+
+        if($insert_stmt->execute()) {
+            http_response_code(200);
+            ob_clean();
+            echo json_encode(array(
+                "message" => "Consejo marcado como leído.",
+                "leido" => "S"
+            ));
+        } else {
+            http_response_code(503);
+            ob_clean();
+            echo json_encode(array("message" => "No se pudo marcar como leído."));
+        }
     }
 }
 
@@ -329,7 +469,7 @@ function get_destacados_no_leidos($paciente_codigo) {
         
         $has_consejo_paciente = table_exists($db, 'nu_consejo_usuario');
     
-        // Si paciente_codigo es 0 o está vacío, mostrar solo consejos visible_para_todos
+        // Si usuario_codigo es 0 o está vacío, mostrar solo consejos visible_para_todos
         if($paciente_codigo == '0' || empty($paciente_codigo)) {
             $likes_select = $has_consejo_paciente
                 ? "(SELECT COUNT(*) FROM nu_consejo_usuario WHERE codigo_consejo = c.codigo AND me_gusta = 'S')"
@@ -348,27 +488,45 @@ function get_destacados_no_leidos($paciente_codigo) {
             $stmt = $db->prepare($query);
             $stmt->execute();
         } else {
-            // Para pacientes con código asignado, buscar en nu_consejo_usuario
+            // Para usuarios con código asignado, buscar:
+            // 1. Obtener el codigo_paciente del usuario autenticado
+            // 2. Consejos asignados por codigo_paciente o codigo_usuario (leido='N')
+            // 3. Consejos con visible_para_todos='S' (si no están marcados como leídos)
             if (!$has_consejo_paciente) {
                 ob_clean();
                 echo json_encode([]);
                 return;
             }
             
-            $query = "SELECT c.*, cp.me_gusta, cp.leido,
+            // Obtener codigo_paciente del usuario autenticado
+            $query_usuario = "SELECT codigo_paciente FROM usuario WHERE codigo = :codigo_usuario";
+            $stmt_usuario = $db->prepare($query_usuario);
+            $stmt_usuario->bindParam(':codigo_usuario', $paciente_codigo);
+            $stmt_usuario->execute();
+            $usuario_data = $stmt_usuario->fetch(PDO::FETCH_ASSOC);
+            $codigo_paciente_usuario = $usuario_data ? $usuario_data['codigo_paciente'] : null;
+            
+            $query = "SELECT c.*, 
+                      COALESCE(cp.me_gusta, 'N') as me_gusta, 
+                      COALESCE(cp.leido, 'N') as leido,
                       (SELECT COUNT(*) FROM nu_consejo_usuario WHERE codigo_consejo = c.codigo AND me_gusta = 'S') as totalLikes
                       FROM nu_consejo c
-                      INNER JOIN nu_consejo_usuario cp ON c.codigo = cp.codigo_consejo
-                      WHERE cp.codigo_paciente = :paciente
-                      AND c.activo = 'S'
+                      LEFT JOIN nu_consejo_usuario cp ON c.codigo = cp.codigo_consejo 
+                          AND (cp.codigo_usuario = :usuario OR cp.codigo_paciente = :codigo_paciente)
+                      WHERE c.activo = 'S'
                       AND c.mostrar_portada = 'S'
-                      AND cp.leido = 'N'
                       AND (c.fecha_inicio IS NULL OR c.fecha_inicio <= CURDATE())
                       AND (c.fecha_fin IS NULL OR c.fecha_fin >= CURDATE())
+                      AND (
+                          (cp.codigo_usuario = :usuario AND cp.leido = 'N')
+                          OR (cp.codigo_paciente = :codigo_paciente AND cp.leido = 'N')
+                          OR (c.visible_para_todos = 'S' AND (cp.leido IS NULL OR cp.leido = 'N'))
+                      )
                       ORDER BY c.fechaa DESC";
             
             $stmt = $db->prepare($query);
-            $stmt->bindParam(':paciente', $paciente_codigo);
+            $stmt->bindParam(':usuario', $paciente_codigo);
+            $stmt->bindParam(':codigo_paciente', $codigo_paciente_usuario);
             $stmt->execute();
         }
         
@@ -386,6 +544,284 @@ function get_destacados_no_leidos($paciente_codigo) {
     } catch (PDOException $e) {
         ob_clean();
         echo json_encode([]);
+    }
+}
+
+function get_count_no_leidos($paciente_codigo) {
+    global $db;
+    
+    try {
+        if (!table_exists($db, 'nu_consejo')) {
+            ob_clean();
+            echo json_encode(array("count" => 0));
+            return;
+        }
+        
+        $has_consejo_paciente = table_exists($db, 'nu_consejo_usuario');
+    
+        // Si usuario_codigo es 0 o está vacío, contar solo consejos visible_para_todos con portada
+        if($paciente_codigo == '0' || empty($paciente_codigo)) {
+            $query = "SELECT COUNT(DISTINCT c.codigo) as count
+                      FROM nu_consejo c
+                      WHERE c.activo = 'S'
+                      AND c.mostrar_portada = 'S'
+                      AND c.visible_para_todos = 'S'
+                      AND (c.fecha_inicio IS NULL OR c.fecha_inicio <= CURDATE())
+                      AND (c.fecha_fin IS NULL OR c.fecha_fin >= CURDATE())";
+            
+            $stmt = $db->prepare($query);
+            $stmt->execute();
+        } else {
+            // Para usuarios con código asignado, contar:
+            // 1. Obtener el codigo_paciente del usuario autenticado
+            // 2. Consejos asignados por codigo_paciente o codigo_usuario (leido='N')
+            // 3. Consejos con visible_para_todos='S' (si no están marcados como leídos)
+            if (!$has_consejo_paciente) {
+                ob_clean();
+                echo json_encode(array("count" => 0));
+                return;
+            }
+            
+            // Obtener codigo_paciente del usuario autenticado
+            $query_usuario = "SELECT codigo_paciente FROM usuario WHERE codigo = :codigo_usuario";
+            $stmt_usuario = $db->prepare($query_usuario);
+            $stmt_usuario->bindParam(':codigo_usuario', $paciente_codigo);
+            $stmt_usuario->execute();
+            $usuario_data = $stmt_usuario->fetch(PDO::FETCH_ASSOC);
+            $codigo_paciente_usuario = $usuario_data ? $usuario_data['codigo_paciente'] : null;
+            
+            $query = "SELECT COUNT(DISTINCT c.codigo) as count
+                      FROM nu_consejo c
+                      LEFT JOIN nu_consejo_usuario cp ON c.codigo = cp.codigo_consejo 
+                          AND (cp.codigo_usuario = :usuario OR cp.codigo_paciente = :codigo_paciente)
+                      WHERE c.activo = 'S'
+                      AND c.mostrar_portada = 'S'
+                      AND (c.fecha_inicio IS NULL OR c.fecha_inicio <= CURDATE())
+                      AND (c.fecha_fin IS NULL OR c.fecha_fin >= CURDATE())
+                      AND (
+                          (cp.codigo_usuario = :usuario AND cp.leido = 'N')
+                          OR (cp.codigo_paciente = :codigo_paciente AND cp.leido = 'N')
+                          OR (c.visible_para_todos = 'S' AND (cp.leido IS NULL OR cp.leido = 'N'))
+                      )";
+            
+            $stmt = $db->prepare($query);
+            $stmt->bindParam(':usuario', $paciente_codigo);
+            $stmt->bindParam(':codigo_paciente', $codigo_paciente_usuario);
+            $stmt->execute();
+        }
+        
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        ob_clean();
+        echo json_encode(array("count" => (int)$result['count']));
+    } catch (PDOException $e) {
+        ob_clean();
+        echo json_encode(array("count" => 0));
+    }
+}
+
+function has_personalizados($paciente_codigo) {
+    global $db;
+    
+    try {
+        if (!table_exists($db, 'nu_consejo')) {
+            ob_clean();
+            echo json_encode(array("has_personalizados" => false));
+            return;
+        }
+        
+        $has_consejo_usuario = table_exists($db, 'nu_consejo_usuario');
+        
+        if (!$has_consejo_usuario || $paciente_codigo == '0' || empty($paciente_codigo)) {
+            ob_clean();
+            echo json_encode(array("has_personalizados" => false));
+            return;
+        }
+        
+        // Obtener codigo_paciente del usuario autenticado
+        $query_usuario = "SELECT codigo_paciente FROM usuario WHERE codigo = :codigo_usuario";
+        $stmt_usuario = $db->prepare($query_usuario);
+        $stmt_usuario->bindParam(':codigo_usuario', $paciente_codigo);
+        $stmt_usuario->execute();
+        $usuario_data = $stmt_usuario->fetch(PDO::FETCH_ASSOC);
+        $codigo_paciente_usuario = $usuario_data ? $usuario_data['codigo_paciente'] : null;
+        
+        if (empty($codigo_paciente_usuario)) {
+            ob_clean();
+            echo json_encode(array("has_personalizados" => false));
+            return;
+        }
+        
+        // Verificar si existe al menos un consejo asignado al codigo_paciente
+        $query = "SELECT COUNT(*) as count
+                  FROM nu_consejo c
+                  INNER JOIN nu_consejo_usuario cp ON c.codigo = cp.codigo_consejo 
+                      AND cp.codigo_paciente = :codigo_paciente
+                  WHERE c.activo = 'S'
+                  AND (c.fecha_inicio IS NULL OR c.fecha_inicio <= CURDATE())
+                  AND (c.fecha_fin IS NULL OR c.fecha_fin >= CURDATE())";
+        
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(':codigo_paciente', $codigo_paciente_usuario);
+        $stmt->execute();
+        
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        $has_personalizados = (int)$result['count'] > 0;
+        
+        ob_clean();
+        echo json_encode(array("has_personalizados" => $has_personalizados));
+    } catch (PDOException $e) {
+        ob_clean();
+        echo json_encode(array("has_personalizados" => false));
+    }
+}
+
+function get_personalizados_no_leidos($paciente_codigo) {
+    global $db;
+    
+    try {
+        if (!table_exists($db, 'nu_consejo')) {
+            ob_clean();
+            echo json_encode([]);
+            return;
+        }
+        
+        $has_consejo_usuario = table_exists($db, 'nu_consejo_usuario');
+        $has_consejo_categoria = table_exists($db, 'nu_consejo_categoria');
+        $has_consejo_categoria_rel = table_exists($db, 'nu_consejo_categoria_rel');
+        
+        if (!$has_consejo_usuario || $paciente_codigo == '0' || empty($paciente_codigo)) {
+            ob_clean();
+            echo json_encode([]);
+            return;
+        }
+        
+        // Obtener codigo_paciente del usuario autenticado
+        $query_usuario = "SELECT codigo_paciente FROM usuario WHERE codigo = :codigo_usuario";
+        $stmt_usuario = $db->prepare($query_usuario);
+        $stmt_usuario->bindParam(':codigo_usuario', $paciente_codigo);
+        $stmt_usuario->execute();
+        $usuario_data = $stmt_usuario->fetch(PDO::FETCH_ASSOC);
+        $codigo_paciente_usuario = $usuario_data ? $usuario_data['codigo_paciente'] : null;
+        
+        if (empty($codigo_paciente_usuario)) {
+            ob_clean();
+            echo json_encode([]);
+            return;
+        }
+        
+        // Construir las partes de la query dinámicamente
+        $likes_select = "(SELECT COUNT(*) FROM nu_consejo_usuario WHERE codigo_consejo = c.codigo AND me_gusta = 'S')";
+        
+        $categorias_joins = "";
+        $categorias_select = "";
+        if ($has_consejo_categoria && $has_consejo_categoria_rel) {
+            $categorias_joins = "LEFT JOIN nu_consejo_categoria_rel ccr ON c.codigo = ccr.codigo_consejo
+                                 LEFT JOIN nu_consejo_categoria cc ON ccr.codigo_categoria = cc.codigo AND cc.activo = 'S'";
+            $categorias_select = ", GROUP_CONCAT(DISTINCT cc.codigo ORDER BY cc.nombre SEPARATOR ',') as categorias_ids,
+                                   GROUP_CONCAT(DISTINCT cc.nombre ORDER BY cc.nombre SEPARATOR ',') as categorias_nombres";
+        } else {
+            $categorias_select = ", '' as categorias_ids, '' as categorias_nombres";
+        }
+        
+        // Obtener SOLO los consejos asignados al codigo_paciente que NO han sido leídos
+        $query = "SELECT c.codigo, c.titulo, c.texto, c.activo, c.fecha_inicio, c.fecha_fin,
+                  c.mostrar_portada, c.visible_para_todos, c.imagen_portada_nombre, c.imagen_miniatura,
+                  c.fechaa, c.codusuarioa, c.fecham, c.codusuariom,
+                  COALESCE(cp.me_gusta, 'N') as me_gusta, 
+                  COALESCE(cp.leido, 'N') as leido,
+                  COALESCE(cp.favorito, 'N') as favorito,
+                  $likes_select as total_likes
+                  $categorias_select
+                  FROM nu_consejo c
+                  INNER JOIN nu_consejo_usuario cp ON c.codigo = cp.codigo_consejo 
+                      AND cp.codigo_paciente = :codigo_paciente
+                      AND cp.leido = 'N'
+                  $categorias_joins
+                  WHERE c.activo = 'S'
+                  AND (c.fecha_inicio IS NULL OR c.fecha_inicio <= CURDATE())
+                  AND (c.fecha_fin IS NULL OR c.fecha_fin >= CURDATE())
+                  GROUP BY c.codigo
+                  ORDER BY c.fechaa DESC
+                  LIMIT 3";
+        
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(':codigo_paciente', $codigo_paciente_usuario);
+        $stmt->execute();
+        
+        $consejos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        // Convertir imágenes a base64
+        foreach($consejos as &$consejo) {
+            if($consejo['imagen_portada']) {
+                $consejo['imagen_portada'] = base64_encode($consejo['imagen_portada']);
+            }
+            if($consejo['imagen_miniatura']) {
+                $consejo['imagen_miniatura'] = base64_encode($consejo['imagen_miniatura']);
+            }
+        }
+        
+        ob_clean();
+        echo json_encode($consejos);
+    } catch (PDOException $e) {
+        ob_clean();
+        echo json_encode([]);
+    }
+}
+
+function count_personalizados_no_leidos($paciente_codigo) {
+    global $db;
+    
+    try {
+        if (!table_exists($db, 'nu_consejo')) {
+            ob_clean();
+            echo json_encode(array("count" => 0));
+            return;
+        }
+        
+        $has_consejo_usuario = table_exists($db, 'nu_consejo_usuario');
+        
+        if (!$has_consejo_usuario || $paciente_codigo == '0' || empty($paciente_codigo)) {
+            ob_clean();
+            echo json_encode(array("count" => 0));
+            return;
+        }
+        
+        // Obtener codigo_paciente del usuario autenticado
+        $query_usuario = "SELECT codigo_paciente FROM usuario WHERE codigo = :codigo_usuario";
+        $stmt_usuario = $db->prepare($query_usuario);
+        $stmt_usuario->bindParam(':codigo_usuario', $paciente_codigo);
+        $stmt_usuario->execute();
+        $usuario_data = $stmt_usuario->fetch(PDO::FETCH_ASSOC);
+        $codigo_paciente_usuario = $usuario_data ? $usuario_data['codigo_paciente'] : null;
+        
+        if (empty($codigo_paciente_usuario)) {
+            ob_clean();
+            echo json_encode(array("count" => 0));
+            return;
+        }
+        
+        // Contar consejos personalizados no leídos
+        $query = "SELECT COUNT(*) as count
+                  FROM nu_consejo c
+                  INNER JOIN nu_consejo_usuario cp ON c.codigo = cp.codigo_consejo 
+                      AND cp.codigo_paciente = :codigo_paciente
+                      AND cp.leido = 'N'
+                  WHERE c.activo = 'S'
+                  AND (c.fecha_inicio IS NULL OR c.fecha_inicio <= CURDATE())
+                  AND (c.fecha_fin IS NULL OR c.fecha_fin >= CURDATE())";
+        
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(':codigo_paciente', $codigo_paciente_usuario);
+        $stmt->execute();
+        
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        ob_clean();
+        echo json_encode(array("count" => (int)$result['count']));
+    } catch (PDOException $e) {
+        ob_clean();
+        echo json_encode(array("count" => 0));
     }
 }
 
@@ -491,12 +927,20 @@ function get_favoritos($paciente_codigo) {
             return;
         }
         
-        // Si paciente_codigo es NULL o 'null', usar operador NULL-safe
+        // Obtener codigo_paciente del usuario autenticado
+        $query_usuario = "SELECT codigo_paciente FROM usuario WHERE codigo = :codigo_usuario";
+        $stmt_usuario = $db->prepare($query_usuario);
+        $stmt_usuario->bindParam(':codigo_usuario', $paciente_codigo);
+        $stmt_usuario->execute();
+        $usuario_data = $stmt_usuario->fetch(PDO::FETCH_ASSOC);
+        $codigo_paciente_usuario = $usuario_data ? $usuario_data['codigo_paciente'] : null;
+        
+        // Buscar consejos favoritos asignados por codigo_usuario o codigo_paciente
         $query = "SELECT c.*, cp.me_gusta, cp.leido, cp.favorito,
               (SELECT COUNT(*) FROM nu_consejo_usuario WHERE codigo_consejo = c.codigo AND me_gusta = 'S') as total_likes
               FROM nu_consejo c
               INNER JOIN nu_consejo_usuario cp ON c.codigo = cp.codigo_consejo
-                  WHERE cp.codigo_paciente <=> :paciente
+                  WHERE (cp.codigo_usuario = :usuario OR cp.codigo_paciente = :codigo_paciente)
                   AND c.activo = 'S'
                   AND cp.favorito = 'S'
                   AND (c.fecha_inicio IS NULL OR c.fecha_inicio <= CURDATE())
@@ -504,9 +948,8 @@ function get_favoritos($paciente_codigo) {
                   ORDER BY cp.fecha_favorito DESC";
         
         $stmt = $db->prepare($query);
-        // Convertir 'null' string a null real
-        $paciente_real = ($paciente_codigo === 'null' || $paciente_codigo === null) ? null : $paciente_codigo;
-        $stmt->bindParam(':paciente', $paciente_real);
+        $stmt->bindParam(':usuario', $paciente_codigo);
+        $stmt->bindParam(':codigo_paciente', $codigo_paciente_usuario);
         $stmt->execute();
         $consejos = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
@@ -514,6 +957,226 @@ function get_favoritos($paciente_codigo) {
         foreach($consejos as &$consejo) {
             if($consejo['imagen_portada']) {
                 $consejo['imagen_portada'] = base64_encode($consejo['imagen_portada']);
+            }
+        }
+        
+        ob_clean();
+        echo json_encode($consejos);
+    } catch (PDOException $e) {
+        ob_clean();
+        echo json_encode([]);
+    }
+}
+
+function get_personalizados_paciente($paciente_codigo, $codigo_usuario = null) {
+    global $db;
+    
+    try {
+        if (!table_exists($db, 'nu_consejo')) {
+            ob_clean();
+            echo json_encode([]);
+            return;
+        }
+        
+        $has_consejo_usuario = table_exists($db, 'nu_consejo_usuario');
+        $has_consejo_categoria = table_exists($db, 'nu_consejo_categoria');
+        $has_consejo_categoria_rel = table_exists($db, 'nu_consejo_categoria_rel');
+        
+        // Construir las partes de la query dinámicamente
+        $likes_select = $has_consejo_usuario
+            ? "(SELECT COUNT(*) FROM nu_consejo_usuario WHERE codigo_consejo = c.codigo AND me_gusta = 'S')"
+            : "0";
+        
+        $categorias_joins = "";
+        $categorias_select = "";
+        if ($has_consejo_categoria && $has_consejo_categoria_rel) {
+            $categorias_joins = "LEFT JOIN nu_consejo_categoria_rel ccr ON c.codigo = ccr.codigo_consejo
+                                 LEFT JOIN nu_consejo_categoria cc ON ccr.codigo_categoria = cc.codigo AND cc.activo = 'S'";
+            $categorias_select = ", GROUP_CONCAT(DISTINCT cc.codigo ORDER BY cc.nombre SEPARATOR ',') as categorias_ids,
+                                   GROUP_CONCAT(DISTINCT cc.nombre ORDER BY cc.nombre SEPARATOR ',') as categorias_nombres";
+        } else {
+            $categorias_select = ", '' as categorias_ids, '' as categorias_nombres";
+        }
+    
+        // Si usuario_codigo es 0 o está vacío, retornar vacío (no hay personalizados)
+        if($paciente_codigo == '0' || empty($paciente_codigo)) {
+            ob_clean();
+            echo json_encode([]);
+            return;
+        }
+        
+        // Para usuarios con código asignado, buscar SOLO consejos asignados (personalizados)
+        // NO incluir los visible_para_todos generales
+        if (!$has_consejo_usuario) {
+            ob_clean();
+            echo json_encode([]);
+            return;
+        }
+        
+        // Obtener codigo_paciente del usuario autenticado
+        $query_usuario = "SELECT codigo_paciente FROM usuario WHERE codigo = :codigo_usuario";
+        $stmt_usuario = $db->prepare($query_usuario);
+        $stmt_usuario->bindParam(':codigo_usuario', $paciente_codigo);
+        $stmt_usuario->execute();
+        $usuario_data = $stmt_usuario->fetch(PDO::FETCH_ASSOC);
+        $codigo_paciente_usuario = $usuario_data ? $usuario_data['codigo_paciente'] : null;
+        
+        // Si no hay codigo_paciente, retornar vacío
+        if (empty($codigo_paciente_usuario)) {
+            ob_clean();
+            echo json_encode([]);
+            return;
+        }
+        
+        // Obtener SOLO los consejos asignados al codigo_paciente (personalizados)
+        $query = "SELECT c.codigo, c.titulo, c.texto, c.activo, c.fecha_inicio, c.fecha_fin,
+                  c.mostrar_portada, c.visible_para_todos, c.imagen_portada_nombre, c.imagen_miniatura,
+                  c.fechaa, c.codusuarioa, c.fecham, c.codusuariom,
+                  COALESCE(cp.me_gusta, 'N') as me_gusta, 
+                  COALESCE(cp.leido, 'N') as leido,
+                  COALESCE(cp.favorito, 'N') as favorito,
+                  $likes_select as total_likes
+                  $categorias_select
+                  FROM nu_consejo c
+                  INNER JOIN nu_consejo_usuario cp ON c.codigo = cp.codigo_consejo 
+                      AND cp.codigo_paciente = :codigo_paciente
+                  $categorias_joins
+                  WHERE c.activo = 'S'
+                  AND (c.fecha_inicio IS NULL OR c.fecha_inicio <= CURDATE())
+                  AND (c.fecha_fin IS NULL OR c.fecha_fin >= CURDATE())
+                  GROUP BY c.codigo
+                  ORDER BY cp.leido ASC, c.fechaa DESC";
+        
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(':codigo_paciente', $codigo_paciente_usuario);
+        $stmt->execute();
+        
+        $consejos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        // Convertir imágenes a base64
+        foreach($consejos as &$consejo) {
+            if($consejo['imagen_portada']) {
+                $consejo['imagen_portada'] = base64_encode($consejo['imagen_portada']);
+            }
+            if($consejo['imagen_miniatura']) {
+                $consejo['imagen_miniatura'] = base64_encode($consejo['imagen_miniatura']);
+            }
+        }
+        
+        ob_clean();
+        echo json_encode($consejos);
+    } catch (PDOException $e) {
+        ob_clean();
+        echo json_encode([]);
+    }
+}
+
+function get_todos_consejos_paciente($paciente_codigo, $codigo_usuario = null) {
+    global $db;
+    
+    try {
+        if (!table_exists($db, 'nu_consejo')) {
+            ob_clean();
+            echo json_encode([]);
+            return;
+        }
+        
+        $has_consejo_usuario = table_exists($db, 'nu_consejo_usuario');
+        $has_consejo_categoria = table_exists($db, 'nu_consejo_categoria');
+        $has_consejo_categoria_rel = table_exists($db, 'nu_consejo_categoria_rel');
+        
+        // Construir las partes de la query dinámicamente
+        $likes_select = $has_consejo_usuario
+            ? "(SELECT COUNT(*) FROM nu_consejo_usuario WHERE codigo_consejo = c.codigo AND me_gusta = 'S')"
+            : "0";
+        
+        $categorias_joins = "";
+        $categorias_select = "";
+        if ($has_consejo_categoria && $has_consejo_categoria_rel) {
+            $categorias_joins = "LEFT JOIN nu_consejo_categoria_rel ccr ON c.codigo = ccr.codigo_consejo
+                                 LEFT JOIN nu_consejo_categoria cc ON ccr.codigo_categoria = cc.codigo AND cc.activo = 'S'";
+            $categorias_select = ", GROUP_CONCAT(DISTINCT cc.codigo ORDER BY cc.nombre SEPARATOR ',') as categorias_ids,
+                                   GROUP_CONCAT(DISTINCT cc.nombre ORDER BY cc.nombre SEPARATOR ',') as categorias_nombres";
+        } else {
+            $categorias_select = ", '' as categorias_ids, '' as categorias_nombres";
+        }
+    
+        // Si usuario_codigo es 0 o está vacío, mostrar solo consejos visible_para_todos
+        if($paciente_codigo == '0' || empty($paciente_codigo)) {
+            $query = "SELECT c.codigo, c.titulo, c.texto, c.activo, c.fecha_inicio, c.fecha_fin,
+                      c.mostrar_portada, c.visible_para_todos, c.imagen_portada, c.imagen_portada_nombre, c.imagen_miniatura,
+                      c.fechaa, c.codusuarioa, c.fecham, c.codusuariom,
+                      'N' as me_gusta, 'N' as leido, 'N' as favorito,
+                      $likes_select as total_likes
+                      $categorias_select
+                      FROM nu_consejo c
+                      $categorias_joins
+                      WHERE c.activo = 'S'
+                      AND c.visible_para_todos = 'S'
+                      AND (c.fecha_inicio IS NULL OR c.fecha_inicio <= CURDATE())
+                      AND (c.fecha_fin IS NULL OR c.fecha_fin >= CURDATE())
+                      GROUP BY c.codigo
+                      ORDER BY c.fechaa DESC";
+            
+            $stmt = $db->prepare($query);
+            $stmt->execute();
+        } else {
+            // Para usuarios con código asignado, buscar:
+            // 1. Obtener codigo_paciente del usuario autenticado
+            // 2. Consejos asignados por codigo_usuario o codigo_paciente
+            // 3. Consejos con visible_para_todos='S'
+            if (!$has_consejo_usuario) {
+                ob_clean();
+                echo json_encode([]);
+                return;
+            }
+            
+            // Obtener codigo_paciente del usuario autenticado
+            $query_usuario = "SELECT codigo_paciente FROM usuario WHERE codigo = :codigo_usuario";
+            $stmt_usuario = $db->prepare($query_usuario);
+            $stmt_usuario->bindParam(':codigo_usuario', $paciente_codigo);
+            $stmt_usuario->execute();
+            $usuario_data = $stmt_usuario->fetch(PDO::FETCH_ASSOC);
+            $codigo_paciente_usuario = $usuario_data ? $usuario_data['codigo_paciente'] : null;
+            
+            $query = "SELECT c.codigo, c.titulo, c.texto, c.activo, c.fecha_inicio, c.fecha_fin,
+                      c.mostrar_portada, c.visible_para_todos, c.imagen_portada, c.imagen_portada_nombre, c.imagen_miniatura,
+                      c.fechaa, c.codusuarioa, c.fecham, c.codusuariom,
+                      COALESCE(cp.me_gusta, 'N') as me_gusta, 
+                      COALESCE(cp.leido, 'N') as leido,
+                      COALESCE(cp.favorito, 'N') as favorito,
+                      $likes_select as total_likes
+                      $categorias_select
+                      FROM nu_consejo c
+                      LEFT JOIN nu_consejo_usuario cp ON c.codigo = cp.codigo_consejo 
+                          AND (cp.codigo_usuario = :usuario OR cp.codigo_paciente = :codigo_paciente)
+                      $categorias_joins
+                      WHERE c.activo = 'S'
+                      AND (c.fecha_inicio IS NULL OR c.fecha_inicio <= CURDATE())
+                      AND (c.fecha_fin IS NULL OR c.fecha_fin >= CURDATE())
+                      AND (
+                          (cp.codigo_usuario = :usuario AND cp.leido = 'N')
+                          OR (cp.codigo_paciente = :codigo_paciente AND cp.leido = 'N')
+                          OR c.visible_para_todos = 'S'
+                      )
+                      GROUP BY c.codigo
+                      ORDER BY c.fechaa DESC";
+            
+            $stmt = $db->prepare($query);
+            $stmt->bindParam(':usuario', $paciente_codigo);
+            $stmt->bindParam(':codigo_paciente', $codigo_paciente_usuario);
+            $stmt->execute();
+        }
+        
+        $consejos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        // Convertir imágenes a base64
+        foreach($consejos as &$consejo) {
+            if($consejo['imagen_portada']) {
+                $consejo['imagen_portada'] = base64_encode($consejo['imagen_portada']);
+            }
+            if($consejo['imagen_miniatura']) {
+                $consejo['imagen_miniatura'] = base64_encode($consejo['imagen_miniatura']);
             }
         }
         

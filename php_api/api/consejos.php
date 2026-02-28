@@ -214,17 +214,25 @@ function get_consejos() {
     global $db;
     ensure_consejo_categoria_tables();
     
+    // Primera consulta: obtener consejos con categorías
     $query = "SELECT c.codigo, c.titulo, c.texto, c.activo, c.fecha_inicio, c.fecha_fin,
               c.mostrar_portada, c.visible_para_todos, c.imagen_portada_nombre, c.imagen_miniatura,
               c.fechaa, c.codusuarioa, c.fecham, c.codusuariom,
               (SELECT COUNT(*) FROM nu_consejo_usuario cu WHERE cu.codigo_consejo = c.codigo AND cu.me_gusta = 'S') as total_likes,
-              (SELECT COUNT(*) FROM nu_consejo_usuario cu WHERE cu.codigo_consejo = c.codigo) as total_usuarios,
-              GROUP_CONCAT(DISTINCT cc.codigo ORDER BY cc.nombre SEPARATOR ',') as categorias_ids,
-              GROUP_CONCAT(DISTINCT cc.nombre ORDER BY cc.nombre SEPARATOR ',') as categorias_nombres
-              FROM nu_consejo c 
-              LEFT JOIN nu_consejo_categoria_rel ccr ON c.codigo = ccr.codigo_consejo
-              LEFT JOIN nu_consejo_categoria cc ON ccr.codigo_categoria = cc.codigo AND cc.activo = 'S'
-              GROUP BY c.codigo
+              (SELECT COUNT(DISTINCT CASE WHEN cu.codigo_paciente IS NOT NULL THEN cu.codigo_paciente END) FROM nu_consejo_usuario cu WHERE cu.codigo_consejo = c.codigo) as total_pacientes,
+              (SELECT GROUP_CONCAT(DISTINCT cc.codigo ORDER BY cc.nombre SEPARATOR ',') 
+               FROM nu_consejo_categoria_rel ccr 
+               LEFT JOIN nu_consejo_categoria cc ON ccr.codigo_categoria = cc.codigo AND cc.activo = 'S'
+               WHERE ccr.codigo_consejo = c.codigo) as categorias_ids,
+              (SELECT GROUP_CONCAT(DISTINCT cc.nombre ORDER BY cc.nombre SEPARATOR ',') 
+               FROM nu_consejo_categoria_rel ccr 
+               LEFT JOIN nu_consejo_categoria cc ON ccr.codigo_categoria = cc.codigo AND cc.activo = 'S'
+               WHERE ccr.codigo_consejo = c.codigo) as categorias_nombres,
+              (SELECT GROUP_CONCAT(DISTINCT p.nombre ORDER BY p.nombre SEPARATOR ', ') 
+               FROM nu_consejo_usuario cu2 
+               LEFT JOIN nu_paciente p ON cu2.codigo_paciente = p.codigo 
+               WHERE cu2.codigo_consejo = c.codigo AND cu2.codigo_paciente IS NOT NULL) as pacientes_nombres
+              FROM nu_consejo c
               ORDER BY c.fechaa DESC";
     
     $stmt = $db->prepare($query);
@@ -258,7 +266,7 @@ function get_consejo($codigo) {
     
     $query = "SELECT c.*,
               (SELECT COUNT(*) FROM nu_consejo_usuario cu WHERE cu.codigo_consejo = c.codigo AND cu.me_gusta = 'S') as total_likes,
-              (SELECT COUNT(*) FROM nu_consejo_usuario cu WHERE cu.codigo_consejo = c.codigo) as total_usuarios,
+              (SELECT COUNT(DISTINCT CASE WHEN cu.codigo_paciente IS NOT NULL THEN cu.codigo_paciente END) FROM nu_consejo_usuario cu WHERE cu.codigo_consejo = c.codigo) as total_pacientes,
               GROUP_CONCAT(DISTINCT cc.codigo ORDER BY cc.nombre SEPARATOR ',') as categorias_ids,
               GROUP_CONCAT(DISTINCT cc.nombre ORDER BY cc.nombre SEPARATOR ',') as categorias_nombres
               FROM nu_consejo c 
@@ -356,9 +364,22 @@ function get_consejos_portada_paciente($paciente_codigo, $codigo_usuario = null)
     
     $hoy = date('Y-m-d');
     
-    // Si se proporciona codigo_usuario, hacer JOIN para obtener estado de favorito y me_gusta
+    // El parámetro $paciente_codigo representa el codigo_paciente del paciente
+    // El parámetro $codigo_usuario (si existe) representa el codigo_usuario autenticado
+    
+    // Si se proporciona codigo_usuario, obtener su codigo_paciente y hacer JOIN para obtener estado personalizados
+    $codigo_paciente = null;
     if ($codigo_usuario !== null) {
-          $query = "SELECT c.codigo, c.titulo, c.texto, c.activo, c.fecha_inicio, c.fecha_fin,
+        $query_usuario = "SELECT codigo_paciente FROM usuario WHERE codigo = :codigo_usuario";
+        $stmt_usuario = $db->prepare($query_usuario);
+        $stmt_usuario->bindParam(':codigo_usuario', $codigo_usuario);
+        $stmt_usuario->execute();
+        $usuario_data = $stmt_usuario->fetch(PDO::FETCH_ASSOC);
+        $codigo_paciente = $usuario_data ? $usuario_data['codigo_paciente'] : null;
+    }
+    
+    if ($codigo_usuario !== null && $codigo_paciente !== null) {
+        $query = "SELECT c.codigo, c.titulo, c.texto, c.activo, c.fecha_inicio, c.fecha_fin,
               c.mostrar_portada, c.visible_para_todos, c.imagen_portada, c.imagen_portada_nombre, c.imagen_miniatura,
               c.fechaa, c.codusuarioa, c.fecham, c.codusuariom,
               MAX(COALESCE(cu.me_gusta, 'N')) as me_gusta, 
@@ -367,12 +388,13 @@ function get_consejos_portada_paciente($paciente_codigo, $codigo_usuario = null)
               GROUP_CONCAT(DISTINCT cc.codigo ORDER BY cc.nombre SEPARATOR ',') as categorias_ids,
               GROUP_CONCAT(DISTINCT cc.nombre ORDER BY cc.nombre SEPARATOR ',') as categorias_nombres
               FROM nu_consejo c
-              LEFT JOIN nu_consejo_usuario cu ON c.codigo = cu.codigo_consejo AND cu.codigo_usuario = :codigo_usuario
+              LEFT JOIN nu_consejo_usuario cu ON c.codigo = cu.codigo_consejo 
+                  AND (cu.codigo_usuario = :codigo_usuario OR cu.codigo_paciente = :codigo_paciente)
               LEFT JOIN nu_consejo_categoria_rel ccr ON c.codigo = ccr.codigo_consejo
               LEFT JOIN nu_consejo_categoria cc ON ccr.codigo_categoria = cc.codigo AND cc.activo = 'S'
               WHERE c.activo = 'S'
               AND c.mostrar_portada = 'S'
-              AND c.visible_para_todos = 'S'
+              AND (c.visible_para_todos = 'S' OR cu.codigo_usuario = :codigo_usuario OR cu.codigo_paciente = :codigo_paciente)
               AND (c.fecha_inicio IS NULL OR c.fecha_inicio <= :hoy)
               AND (c.fecha_fin IS NULL OR c.fecha_fin >= :hoy)
               GROUP BY c.codigo
@@ -380,10 +402,11 @@ function get_consejos_portada_paciente($paciente_codigo, $codigo_usuario = null)
         
         $stmt = $db->prepare($query);
         $stmt->bindParam(':codigo_usuario', $codigo_usuario);
+        $stmt->bindParam(':codigo_paciente', $codigo_paciente);
         $stmt->bindParam(':hoy', $hoy);
     } else {
-        // Sin codigo_usuario, devolver valores por defecto
-          $query = "SELECT c.codigo, c.titulo, c.texto, c.activo, c.fecha_inicio, c.fecha_fin,
+        // Sin codigo_usuario, devolver solo visible_para_todos
+        $query = "SELECT c.codigo, c.titulo, c.texto, c.activo, c.fecha_inicio, c.fecha_fin,
               c.mostrar_portada, c.visible_para_todos, c.imagen_portada, c.imagen_portada_nombre, c.imagen_miniatura,
               c.fechaa, c.codusuarioa, c.fecham, c.codusuariom,
               'N' as me_gusta, 

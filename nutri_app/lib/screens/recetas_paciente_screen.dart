@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-// import 'package:url_launcher/url_launcher.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 // import 'package:youtube_player_flutter/youtube_player_flutter.dart'; // Deshabilitado para web
 import 'dart:convert';
 import 'dart:io';
@@ -41,17 +41,42 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
   List<Map<String, dynamic>> _categoriasCatalogo = [];
   List<int> _selectedCategoriaIds = [];
   bool _categoriaMatchAll = false;
+  final Map<String, MemoryImage> _coverImageProviderCache = {};
+
+  String _buildCoverCacheKey(Receta receta) {
+    final raw = (receta.imagenPortada ?? '').trim();
+    if (raw.isEmpty) return '';
+    return '${receta.codigo ?? 'noid'}:${raw.hashCode}:${raw.length}';
+  }
+
+  ImageProvider? _getCachedCoverProvider(Receta receta) {
+    final raw = (receta.imagenPortada ?? '').trim();
+    if (raw.isEmpty) return null;
+
+    final key = _buildCoverCacheKey(receta);
+    final cached = _coverImageProviderCache[key];
+    if (cached != null) return cached;
+
+    try {
+      final provider = MemoryImage(base64Decode(raw));
+      _coverImageProviderCache[key] = provider;
+      return provider;
+    } catch (_) {
+      return null;
+    }
+  }
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
     final authService = Provider.of<AuthService>(context, listen: false);
     _patientCode = authService.patientCode;
     _userCode = authService.userCode;
     _isGuestMode = authService.isGuestMode;
-    _loadRecetas();
+    _tabController = TabController(length: 3, vsync: this);
+
     _loadRecetasPortada();
+    _loadRecetas();
     _loadRecetasFavoritas();
     _loadCategorias();
   }
@@ -65,10 +90,12 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
       final response = await apiService.get('api/recetas.php?categorias=1');
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
-        setState(() {
-          _categoriasCatalogo =
-              data.map((item) => Map<String, dynamic>.from(item)).toList();
-        });
+        if (mounted) {
+          setState(() {
+            _categoriasCatalogo =
+                data.map((item) => Map<String, dynamic>.from(item)).toList();
+          });
+        }
       }
     } finally {
       if (mounted) {
@@ -252,6 +279,17 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
     });
   }
 
+  Future<void> _refreshCurrentTab() async {
+    final tabIndex = _tabController.index;
+    if (tabIndex == 0) {
+      await _loadRecetasPortada();
+    } else if (tabIndex == 1) {
+      await _loadRecetas();
+    } else {
+      await _loadRecetasFavoritas();
+    }
+  }
+
   Future<void> _loadRecetas() async {
     setState(() {
       _isLoading = true;
@@ -359,12 +397,23 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
+        final parsed = <Receta>[];
+        for (final item in data) {
+          try {
+            parsed.add(Receta.fromJson(item));
+          } catch (_) {}
+        }
         if (mounted) {
           setState(() {
-            _recetasFavoritas =
-                data.map((item) => Receta.fromJson(item)).toList();
+            _recetasFavoritas = parsed;
           });
         }
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _recetasFavoritas = [];
+        });
       }
     } finally {
       if (mounted) {
@@ -485,6 +534,7 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
   }
 
   Widget _buildRecetaCard(Receta receta) {
+    final coverProvider = _getCachedCoverProvider(receta);
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       clipBehavior: Clip.antiAlias,
@@ -518,12 +568,15 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Imagen de portada
-            if (receta.imagenPortada != null)
-              Image.memory(
-                base64Decode(receta.imagenPortada!),
-                height: 250,
-                width: double.infinity,
-                fit: BoxFit.contain,
+            if (coverProvider != null)
+              RepaintBoundary(
+                child: Image(
+                  image: coverProvider,
+                  height: 250,
+                  width: double.infinity,
+                  fit: BoxFit.contain,
+                  gaplessPlayback: true,
+                ),
               )
             else
               Container(
@@ -644,6 +697,11 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
             tooltip: 'Filtrar categorias',
             icon: const Icon(Icons.filter_list),
             onPressed: _showCategoriaFilterDialog,
+          ),
+          IconButton(
+            tooltip: 'Refrescar',
+            icon: const Icon(Icons.refresh),
+            onPressed: _refreshCurrentTab,
           ),
           PopupMenuButton<String>(
             tooltip: 'Ordenar',
@@ -837,6 +895,7 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
         titulo: receta.titulo,
         contenido: receta.texto,
         tipo: 'receta',
+        imagenPortadaBase64: receta.imagenPortada,
       );
     } catch (e) {
       if (mounted) {
@@ -852,6 +911,7 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
 
   @override
   void dispose() {
+    _coverImageProviderCache.clear();
     _tabController.dispose();
     super.dispose();
   }
@@ -876,16 +936,87 @@ class RecetaDetailScreen extends StatefulWidget {
 }
 
 class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
+  static const MethodChannel _externalUrlChannel =
+      MethodChannel('nutri_app/external_url');
+  static final RegExp _contentTokenRegex =
+      RegExp(r'\[\[(img|documento|enlace):(\d+)\]\]');
+  static final RegExp _hashtagRegex =
+      RegExp(r'#[\wáéíóúÁÉÍÓÚñÑüÜ]+', caseSensitive: false);
+  static final RegExp _wordRegex =
+      RegExp(r'[a-záéíóúñü]{3,}', caseSensitive: false);
+  static const Set<String> _stopWords = {
+    'para',
+    'con',
+    'sin',
+    'por',
+    'que',
+    'como',
+    'del',
+    'las',
+    'los',
+    'una',
+    'uno',
+    'unos',
+    'unas',
+    'pero',
+    'sobre',
+    'entre',
+    'desde',
+    'hasta',
+    'cuando',
+    'donde',
+    'este',
+    'esta',
+    'estos',
+    'estas',
+    'solo',
+    'cada',
+    'muy',
+    'mas',
+    'más',
+    'tambien',
+    'también',
+    'porque',
+    'sus',
+    'ese',
+    'esa',
+    'eso',
+  };
+
   List<RecetaDocumento> _documentos = [];
+  List<Receta> _relacionados = [];
   bool _isLoading = true;
+  bool _isLoadingRelacionados = true;
+  int _maxRelacionados = 5;
   late Receta _receta;
   final ScrollController _documentosScrollController = ScrollController();
+  final ScrollController _relacionadosScrollController = ScrollController();
+  final Map<String, MemoryImage> _detailImageProviderCache = {};
+
+  ImageProvider? _getDetailCachedImageProvider(int? codigo, String? base64) {
+    final raw = (base64 ?? '').trim();
+    if (raw.isEmpty) return null;
+    final key = '${codigo ?? 'noid'}:${raw.hashCode}:${raw.length}';
+    final cached = _detailImageProviderCache[key];
+    if (cached != null) return cached;
+    try {
+      final provider = MemoryImage(base64Decode(raw));
+      _detailImageProviderCache[key] = provider;
+      return provider;
+    } catch (_) {
+      return null;
+    }
+  }
+  // final PageController _imagenesPageController = PageController(); // REMOVIDO: carrusel de imágenes adjuntas
+  // int _currentImagenIndex = 0; // REMOVIDO: carrusel de imágenes adjuntas
+  // bool _isDraggingImagenesCarousel = false; // REMOVIDO: carrusel de imágenes adjuntas
 
   @override
   void initState() {
     super.initState();
     _receta = widget.receta;
     _loadDocumentos();
+    _loadRelacionados();
     if (!widget.isPreviewMode) {
       _marcarComoLeido();
     }
@@ -893,29 +1024,270 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
 
   @override
   void dispose() {
+    _detailImageProviderCache.clear();
     _documentosScrollController.dispose();
+    _relacionadosScrollController.dispose();
+    // _imagenesPageController.dispose(); // REMOVIDO: carrusel de imágenes adjuntas
     super.dispose();
+  }
+
+  int _parseMaxRelacionados(dynamic rawValue) {
+    final parsed = int.tryParse((rawValue ?? '').toString());
+    if (parsed == null || parsed <= 0) return 5;
+    if (parsed > 20) return 20;
+    return parsed;
+  }
+
+  String _cleanTextForSimilarity(String text) {
+    return text
+        .replaceAll(_contentTokenRegex, ' ')
+        .replaceAll(RegExp(r'[^\wáéíóúñü# ]', caseSensitive: false), ' ')
+        .toLowerCase();
+  }
+
+  Set<String> _extractHashtags(String text) {
+    return _hashtagRegex
+        .allMatches(text.toLowerCase())
+        .map((match) => (match.group(0) ?? '').trim())
+        .where((value) => value.isNotEmpty)
+        .toSet();
+  }
+
+  Set<String> _extractWords(String text) {
+    final cleaned = _cleanTextForSimilarity(text);
+    return _wordRegex
+        .allMatches(cleaned)
+        .map((match) => (match.group(0) ?? '').trim())
+        .where((word) => word.isNotEmpty && !_stopWords.contains(word))
+        .toSet();
+  }
+
+  double _jaccardSimilarity(Set<dynamic> a, Set<dynamic> b) {
+    if (a.isEmpty || b.isEmpty) return 0;
+    final intersection = a.intersection(b).length;
+    if (intersection == 0) return 0;
+    final union = a.union(b).length;
+    if (union == 0) return 0;
+    return intersection / union;
+  }
+
+  double _similarityScore(Receta base, Receta candidate) {
+    final baseCategorias = base.categoriaIds.toSet();
+    final candidateCategorias = candidate.categoriaIds.toSet();
+
+    final baseHashtags = _extractHashtags('${base.titulo} ${base.texto}');
+    final candidateHashtags =
+        _extractHashtags('${candidate.titulo} ${candidate.texto}');
+
+    final baseTitleWords = _extractWords(base.titulo);
+    final candidateTitleWords = _extractWords(candidate.titulo);
+
+    final baseBodyWords = _extractWords(base.texto);
+    final candidateBodyWords = _extractWords(candidate.texto);
+
+    final categoryScore =
+        _jaccardSimilarity(baseCategorias, candidateCategorias);
+    final hashtagScore = _jaccardSimilarity(baseHashtags, candidateHashtags);
+    final titleScore = _jaccardSimilarity(baseTitleWords, candidateTitleWords);
+    final bodyScore = _jaccardSimilarity(baseBodyWords, candidateBodyWords);
+
+    var total = (categoryScore * 4.0) +
+        (hashtagScore * 5.0) +
+        (titleScore * 3.0) +
+        (bodyScore * 2.0);
+
+    final crossOverlapA =
+        baseTitleWords.intersection(candidateBodyWords).isNotEmpty;
+    final crossOverlapB =
+        candidateTitleWords.intersection(baseBodyWords).isNotEmpty;
+    if (crossOverlapA || crossOverlapB) {
+      total += 1.0;
+    }
+
+    return total;
+  }
+
+  Future<void> _loadRelacionados() async {
+    setState(() {
+      _isLoadingRelacionados = true;
+    });
+
+    try {
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final apiService = Provider.of<ApiService>(context, listen: false);
+
+      final maxParam = await apiService
+          .getParametro('numero_maximo_relacionados_consejos_recetas');
+      final maxRelacionados = _parseMaxRelacionados(maxParam?['valor']);
+
+      final patientParam = authService.patientCode ?? '0';
+      String url =
+          'api/recetas.php?get_recetas_paciente=1&paciente=$patientParam';
+      if (authService.userCode != null && !authService.isGuestMode) {
+        url += '&codigo_usuario=${authService.userCode}';
+      }
+
+      final response = await apiService.get(url);
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+        final allRecetas = data.map((item) => Receta.fromJson(item)).toList();
+
+        final candidatos = allRecetas.where((item) {
+          if (item.codigo == null || _receta.codigo == null) {
+            return false;
+          }
+          return item.codigo != _receta.codigo;
+        }).toList();
+
+        final scored = candidatos
+            .map((item) => MapEntry(item, _similarityScore(_receta, item)))
+            .where((entry) => entry.value > 0)
+            .toList();
+
+        scored.sort((a, b) {
+          final byScore = b.value.compareTo(a.value);
+          if (byScore != 0) return byScore;
+          final byLikes =
+              (b.key.totalLikes ?? 0).compareTo(a.key.totalLikes ?? 0);
+          if (byLikes != 0) return byLikes;
+          final dateA = a.key.fechaInicio ?? a.key.fechaa ?? DateTime(1970);
+          final dateB = b.key.fechaInicio ?? b.key.fechaa ?? DateTime(1970);
+          return dateB.compareTo(dateA);
+        });
+
+        if (mounted) {
+          setState(() {
+            _maxRelacionados = maxRelacionados;
+            _relacionados =
+                scored.map((entry) => entry.key).take(maxRelacionados).toList();
+          });
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _relacionados = [];
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingRelacionados = false;
+        });
+      }
+    }
+  }
+
+  String _buildResumenRelacionado(String text) {
+    final cleaned = text
+        .replaceAll(_contentTokenRegex, ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (cleaned.length <= 100) return cleaned;
+    return '${cleaned.substring(0, 100)}...';
+  }
+
+  Widget _buildRelacionadoCard(Receta item) {
+    final relatedCoverProvider =
+        _getDetailCachedImageProvider(item.codigo, item.imagenPortada);
+    Widget header;
+    if (relatedCoverProvider != null) {
+      header = ClipRRect(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+        child: RepaintBoundary(
+          child: Image(
+            image: relatedCoverProvider,
+            height: 95,
+            width: double.infinity,
+            fit: BoxFit.contain,
+            gaplessPlayback: true,
+          ),
+        ),
+      );
+    } else {
+      header = Container(
+        height: 95,
+        color: Colors.grey[200],
+        child: const Icon(Icons.restaurant_menu, size: 28),
+      );
+    }
+
+    return SizedBox(
+      width: 220,
+      child: Card(
+        elevation: 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => RecetaDetailScreen(
+                  receta: item,
+                  onFavoritoChanged: widget.onFavoritoChanged,
+                  onFavoritoChangedFromDetail:
+                      widget.onFavoritoChangedFromDetail,
+                ),
+              ),
+            );
+          },
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              header,
+              Padding(
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.titulo,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _buildResumenRelacionado(item.texto),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _marcarComoLeido() async {
     final authService = Provider.of<AuthService>(context, listen: false);
     final patientCode = authService.patientCode;
-    if (patientCode == null) return;
+    final userCode = authService.userCode;
+    if (userCode == null) return;
 
     try {
       final apiService = Provider.of<ApiService>(context, listen: false);
       final data = {
         'codigo_receta': _receta.codigo,
-        'codigo_paciente': int.parse(patientCode),
+        'codigo_usuario': int.parse(userCode),
+        if (patientCode != null && patientCode.isNotEmpty)
+          'codigo_paciente': int.parse(patientCode),
       };
 
       await apiService.post(
         'api/receta_pacientes.php?marcar_leido=1',
         body: json.encode(data),
       );
-    } catch (e) {
-      // Ignorar errores
-    }
+    } catch (_) {}
   }
 
   Future<void> _loadDocumentos() async {
@@ -937,7 +1309,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
           _isLoading = false;
         });
       }
-    } catch (e) {
+    } catch (_) {
       setState(() {
         _isLoading = false;
       });
@@ -1065,7 +1437,12 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
 
   Future<void> _copyToClipboard() async {
     try {
-      final textToCopy = '${_receta.titulo}\n\n${_receta.texto}';
+      final cleanedBody = _receta.texto
+          .replaceAll(_contentTokenRegex, '')
+          .replaceAll(RegExp(r'[ \t]+\n'), '\n')
+          .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+          .trim();
+      final textToCopy = '${_receta.titulo}\n\n$cleanedBody';
       await Clipboard.setData(ClipboardData(text: textToCopy));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1090,12 +1467,24 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
   Future<void> _generateRecetaPdf() async {
     try {
       final apiService = Provider.of<ApiService>(context, listen: false);
+      final imagenesInlineById = <int, String>{};
+      for (final doc in _documentos) {
+        if (doc.tipo == 'imagen' && doc.codigo != null) {
+          final base64Image = (doc.documento ?? '').trim();
+          if (base64Image.isNotEmpty) {
+            imagenesInlineById[doc.codigo!] = base64Image;
+          }
+        }
+      }
+
       await ConsejoRecetaPdfService.generatePdf(
         context: context,
         apiService: apiService,
         titulo: _receta.titulo,
         contenido: _receta.texto,
         tipo: 'receta',
+        imagenPortadaBase64: _receta.imagenPortada,
+        imagenesInlineById: imagenesInlineById,
       );
     } catch (e) {
       if (mounted) {
@@ -1109,21 +1498,24 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
     }
   }
 
-  // Future<void> _launchUrl(String url) async {
-  //   try {
-  //     final uri = Uri.parse(url);
-  //     if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-  //       throw Exception('No se pudo abrir el enlace');
-  //     }
-  //   } catch (e) {
-  //     if (mounted) {
-  //       final errorMessage = e.toString().replaceFirst('Exception: ', '');
-  //       ScaffoldMessenger.of(context).showSnackBar(
-  //         SnackBar(content: Text('Error al abrir enlace. $errorMessage')),
-  //       );
-  //     }
-  //   }
-  // }
+  Future<void> _launchUrl(String url) async {
+    try {
+      await launchUrlString(url, mode: LaunchMode.externalApplication);
+    } on PlatformException catch (e) {
+      if (e.code == 'channel-error') {
+        await _externalUrlChannel.invokeMethod('openUrl', {'url': url});
+        return;
+      }
+      rethrow;
+    } catch (e) {
+      if (mounted) {
+        final errorMessage = e.toString().replaceFirst('Exception: ', '');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al abrir enlace. $errorMessage')),
+        );
+      }
+    }
+  }
 
   Future<void> _openDocumento(RecetaDocumento doc) async {
     try {
@@ -1245,8 +1637,406 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
     }
   }
 
+  Future<String?> _getImagenDocumentoBase64(RecetaDocumento doc) async {
+    final local = (doc.documento ?? '').trim();
+    if (local.isNotEmpty) {
+      return local;
+    }
+
+    if (doc.codigo == null) return null;
+
+    try {
+      final apiService = Provider.of<ApiService>(context, listen: false);
+      final response = await apiService.get(
+        'api/receta_documentos.php?codigo=${doc.codigo}',
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data is Map && data['documento'] != null) {
+          final value = data['documento'].toString().trim();
+          if (value.isNotEmpty) {
+            return value;
+          }
+        }
+      }
+    } catch (_) {}
+
+    return null;
+  }
+
+  Future<void> _openImagenDocumento(RecetaDocumento doc) async {
+    final imageBase64 = await _getImagenDocumentoBase64(doc);
+    if (!mounted) return;
+
+    if (imageBase64 == null || imageBase64.isEmpty) {
+      // Solo mostrar error a administradores
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final isAdmin = authService.userType == 'Nutricionista' ||
+          authService.userType == 'Administrador';
+
+      if (isAdmin) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'IMAGEN NO ENCONTRADA. ID: ${doc.codigo}',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            backgroundColor: Colors.red[700],
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+      return;
+    }
+
+    showImageViewerDialog(
+      context: context,
+      base64Image: imageBase64,
+      title: doc.nombre ?? 'Imagen',
+    );
+  }
+
+  Widget _buildInlineImagenDesdeToken(int imageId) {
+    final doc = _documentos.firstWhere(
+      (item) => item.tipo == 'imagen' && item.codigo == imageId,
+      orElse: () => RecetaDocumento(
+        codigo: imageId,
+        codigoReceta: _receta.codigo ?? 0,
+        tipo: 'imagen',
+        nombre: 'Imagen $imageId',
+      ),
+    );
+
+    final hasDoc = doc.codigo != null &&
+        _documentos
+            .any((item) => item.tipo == 'imagen' && item.codigo == imageId);
+    if (!hasDoc) {
+      // Solo mostrar error a administradores
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final isAdmin = authService.userType == 'Nutricionista' ||
+          authService.userType == 'Administrador';
+
+      if (!isAdmin) {
+        return const SizedBox.shrink();
+      }
+
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.red[50],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.red[700]!, width: 2),
+        ),
+        child: Text(
+          '⚠️ IMAGEN NO ENCONTRADA. ID: $imageId',
+          style: TextStyle(
+            color: Colors.red[900],
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+    }
+
+    final base64Image = (doc.documento ?? '').trim();
+    if (base64Image.isEmpty) {
+      // Solo mostrar error a administradores
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final isAdmin = authService.userType == 'Nutricionista' ||
+          authService.userType == 'Administrador';
+
+      if (!isAdmin) {
+        return const SizedBox.shrink();
+      }
+
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.red[50],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.red[700]!, width: 2),
+        ),
+        child: Text(
+          '⚠️ IMAGEN NO DISPONIBLE. ID: $imageId',
+          style: TextStyle(
+            color: Colors.red[900],
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+    }
+
+    try {
+      final imageBytes = base64Decode(base64Image);
+      return GestureDetector(
+        onTap: () => _openImagenDocumento(doc),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Image.memory(
+            imageBytes,
+            width: double.infinity,
+            fit: BoxFit.contain,
+          ),
+        ),
+      );
+    } catch (_) {
+      // Solo mostrar error a administradores
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final isAdmin = authService.userType == 'Nutricionista' ||
+          authService.userType == 'Administrador';
+
+      if (!isAdmin) {
+        return const SizedBox.shrink();
+      }
+
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.red[50],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.red[700]!, width: 2),
+        ),
+        child: Text(
+          '⚠️ IMAGEN INVÁLIDA. ID: $imageId',
+          style: TextStyle(
+            color: Colors.red[900],
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+    }
+  }
+
+  Widget _buildInlineDocumentoDesdeToken(int documentId) {
+    final matchingDocs = _documentos
+        .where((item) => item.tipo == 'documento' && item.codigo == documentId)
+        .toList();
+
+    if (matchingDocs.isEmpty) {
+      // Solo mostrar error a administradores
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final isAdmin = authService.userType == 'Nutricionista' ||
+          authService.userType == 'Administrador';
+
+      if (!isAdmin) {
+        return const SizedBox.shrink();
+      }
+
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.red[50],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.red[700]!, width: 2),
+        ),
+        child: Text(
+          '⚠️ DOCUMENTO NO ENCONTRADO. ID: $documentId',
+          style: TextStyle(
+            color: Colors.red[900],
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+    }
+
+    final doc = matchingDocs.first;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey[300]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Text(
+              (doc.nombre ?? '').trim().isNotEmpty
+                  ? doc.nombre!.trim()
+                  : 'Documento $documentId',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Colors.blueGrey[700],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Center(
+            child: OutlinedButton.icon(
+              onPressed: () => _openDocumento(doc),
+              icon: const Icon(Icons.download),
+              label: const Text('Descargar documento'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInlineEnlaceDesdeToken(int enlaceId) {
+    final matchingLinks = _documentos
+        .where((item) => item.tipo == 'url' && item.codigo == enlaceId)
+        .toList();
+
+    if (matchingLinks.isEmpty) {
+      // Solo mostrar error a administradores
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final isAdmin = authService.userType == 'Nutricionista' ||
+          authService.userType == 'Administrador';
+
+      if (!isAdmin) {
+        return const SizedBox.shrink();
+      }
+
+      return Text(
+        '⚠️ ENLACE NO ENCONTRADO. ID: $enlaceId',
+        style: TextStyle(
+          color: Colors.red[900],
+          fontWeight: FontWeight.bold,
+        ),
+      );
+    }
+
+    final linkDoc = matchingLinks.first;
+    final url = (linkDoc.url ?? '').trim();
+    final nombre = (linkDoc.nombre ?? '').trim();
+    final label = nombre.isNotEmpty ? nombre : url;
+
+    if (label.isEmpty) {
+      // Solo mostrar error a administradores
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final isAdmin = authService.userType == 'Nutricionista' ||
+          authService.userType == 'Administrador';
+
+      if (!isAdmin) {
+        return const SizedBox.shrink();
+      }
+
+      return Text(
+        '⚠️ ENLACE VACÍO. ID: $enlaceId',
+        style: TextStyle(
+          color: Colors.red[900],
+          fontWeight: FontWeight.bold,
+        ),
+      );
+    }
+
+    if (url.isEmpty) {
+      return Text(
+        label,
+        style: TextStyle(
+          color: Colors.grey[600],
+          fontStyle: FontStyle.italic,
+        ),
+      );
+    }
+
+    return GestureDetector(
+      onTap: () => _launchUrl(url),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.blue,
+          decoration: TextDecoration.underline,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetalleTextoConImagenes() {
+    final texto = _receta.texto;
+    final matches = _contentTokenRegex.allMatches(texto).toList();
+
+    if (matches.isEmpty) {
+      return HashtagText(
+        text: texto,
+        style: const TextStyle(fontSize: 16, height: 1.5),
+      );
+    }
+
+    final widgets = <Widget>[];
+    int cursor = 0;
+
+    for (final match in matches) {
+      if (match.start > cursor) {
+        final textChunk = texto.substring(cursor, match.start);
+        if (textChunk.trim().isNotEmpty) {
+          widgets.add(
+            HashtagText(
+              text: textChunk,
+              style: const TextStyle(fontSize: 16, height: 1.5),
+            ),
+          );
+          widgets.add(const SizedBox(height: 12));
+        }
+      }
+
+      final tokenType = match.group(1) ?? '';
+      final tokenId = int.tryParse(match.group(2) ?? '');
+
+      if (tokenId != null && tokenType == 'img') {
+        widgets.add(_buildInlineImagenDesdeToken(tokenId));
+      } else if (tokenId != null && tokenType == 'documento') {
+        widgets.add(_buildInlineDocumentoDesdeToken(tokenId));
+      } else if (tokenId != null && tokenType == 'enlace') {
+        widgets.add(_buildInlineEnlaceDesdeToken(tokenId));
+      } else {
+        widgets.add(
+          HashtagText(
+            text: match.group(0) ?? '',
+            style: const TextStyle(fontSize: 16, height: 1.5),
+          ),
+        );
+      }
+      widgets.add(const SizedBox(height: 12));
+
+      cursor = match.end;
+    }
+
+    if (cursor < texto.length) {
+      final trailingText = texto.substring(cursor);
+      if (trailingText.trim().isNotEmpty) {
+        widgets.add(
+          HashtagText(
+            text: trailingText,
+            style: const TextStyle(fontSize: 16, height: 1.5),
+          ),
+        );
+      }
+    }
+
+    if (widgets.isEmpty) {
+      return HashtagText(
+        text: texto,
+        style: const TextStyle(fontSize: 16, height: 1.5),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: widgets,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final imagenesAdjuntas =
+        _documentos.where((doc) => doc.tipo == 'imagen').toList();
+    final documentosYEnlaces =
+        _documentos.where((doc) => doc.tipo != 'imagen').toList();
+    final detailCoverProvider =
+        _getDetailCachedImageProvider(_receta.codigo, _receta.imagenPortada);
+
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -1276,6 +2066,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
         ],
       ),
       body: SingleChildScrollView(
+        physics: const ClampingScrollPhysics(),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1290,7 +2081,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Modo Vista Previa - Así verá la receta el paciente',
+                        'Vista Previa - Así verán la receta los usuarios',
                         style: TextStyle(
                           color: Colors.blue[800],
                           fontWeight: FontWeight.w500,
@@ -1300,18 +2091,21 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
                   ],
                 ),
               ),
-            if (_receta.imagenPortada != null)
+            if (detailCoverProvider != null)
               GestureDetector(
                 onTap: () => showImageViewerDialog(
                   context: context,
                   base64Image: _receta.imagenPortada!,
                   title: _receta.titulo,
                 ),
-                child: Image.memory(
-                  base64Decode(_receta.imagenPortada!),
-                  width: double.infinity,
-                  height: 300,
-                  fit: BoxFit.contain,
+                child: RepaintBoundary(
+                  child: Image(
+                    image: detailCoverProvider,
+                    width: double.infinity,
+                    height: 300,
+                    fit: BoxFit.contain,
+                    gaplessPlayback: true,
+                  ),
                 ),
               ),
             Padding(
@@ -1356,12 +2150,9 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
                         ),
                   ),
                   const SizedBox(height: 16),
-                  HashtagText(
-                    text: _receta.texto,
-                    style: const TextStyle(fontSize: 16, height: 1.5),
-                  ),
+                  _buildDetalleTextoConImagenes(),
                   const SizedBox(height: 24),
-                  if (_documentos.isNotEmpty) ...[
+                  if (documentosYEnlaces.isNotEmpty) ...[
                     const Text(
                       'Documentos y enlaces',
                       style: TextStyle(
@@ -1381,13 +2172,13 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
                           child: ListView.builder(
                             controller: _documentosScrollController,
                             scrollDirection: Axis.horizontal,
-                            itemCount: _documentos.length,
+                            itemCount: documentosYEnlaces.length,
                             itemBuilder: (context, index) {
-                              final doc = _documentos[index];
+                              final doc = documentosYEnlaces[index];
                               return GestureDetector(
                                 onTap: () {
                                   if (doc.tipo == 'url' && doc.url != null) {
-                                    // _launchUrl(doc.url!);
+                                    _launchUrl(doc.url!);
                                   } else {
                                     _openDocumento(doc);
                                   }
@@ -1429,6 +2220,31 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
                           ),
                         ),
                       ),
+                  ],
+                  // Sección de relacionados (solo si hay contenido)
+                  if (!_isLoadingRelacionados && _relacionados.isNotEmpty) ...[
+                    const SizedBox(height: 24),
+                    const Text(
+                      'También te puede interesar...',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: 195,
+                      child: ListView.separated(
+                        controller: _relacionadosScrollController,
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _relacionados.length > _maxRelacionados
+                            ? _maxRelacionados
+                            : _relacionados.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 12),
+                        itemBuilder: (context, index) =>
+                            _buildRelacionadoCard(_relacionados[index]),
+                      ),
+                    ),
                   ],
                 ],
               ),
@@ -1523,93 +2339,91 @@ class _RecetasHashtagScreenState extends State<RecetasHashtagScreen> {
                     ],
                   ),
                 )
-              : RefreshIndicator(
-                  onRefresh: _loadRecetas,
-                  child: ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _recetas.length,
-                    itemBuilder: (context, index) {
-                      final receta = _recetas[index];
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 16),
-                        child: InkWell(
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) =>
-                                    RecetaDetailScreen(receta: receta),
-                              ),
-                            );
-                          },
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (receta.imagenPortada != null)
-                                ClipRRect(
-                                  borderRadius: const BorderRadius.vertical(
-                                    top: Radius.circular(12),
-                                  ),
-                                  child: Image.memory(
-                                    base64Decode(receta.imagenPortada!),
-                                    height: 200,
-                                    width: double.infinity,
-                                    fit: BoxFit.contain,
-                                  ),
+              : ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: _recetas.length,
+                  itemBuilder: (context, index) {
+                    final receta = _recetas[index];
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 16),
+                      child: InkWell(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  RecetaDetailScreen(receta: receta),
+                            ),
+                          );
+                        },
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (receta.imagenPortada != null)
+                              ClipRRect(
+                                borderRadius: const BorderRadius.vertical(
+                                  top: Radius.circular(12),
                                 ),
-                              Padding(
-                                padding: const EdgeInsets.all(16.0),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      receta.titulo,
-                                      style: const TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
+                                child: Image.memory(
+                                  base64Decode(receta.imagenPortada!),
+                                  height: 200,
+                                  width: double.infinity,
+                                  fit: BoxFit.contain,
+                                  gaplessPlayback: true,
+                                ),
+                              ),
+                            Padding(
+                              padding: const EdgeInsets.all(16.0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    receta.titulo,
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  HashtagText(
+                                    text: receta.texto.length > 150
+                                        ? '${receta.texto.substring(0, 150)}...'
+                                        : receta.texto,
+                                    style: TextStyle(color: Colors.grey[700]),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.favorite,
+                                        size: 16,
+                                        color: Colors.red[300],
                                       ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    HashtagText(
-                                      text: receta.texto.length > 150
-                                          ? '${receta.texto.substring(0, 150)}...'
-                                          : receta.texto,
-                                      style: TextStyle(color: Colors.grey[700]),
-                                    ),
-                                    const SizedBox(height: 12),
-                                    Row(
-                                      children: [
-                                        Icon(
-                                          Icons.favorite,
-                                          size: 16,
-                                          color: Colors.red[300],
+                                      const SizedBox(width: 4),
+                                      Text('${receta.totalLikes ?? 0}'),
+                                      const SizedBox(width: 16),
+                                      Icon(
+                                        Icons.tag,
+                                        size: 16,
+                                        color: Colors.blue[300],
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        widget.hashtag,
+                                        style: const TextStyle(
+                                          color: Colors.blue,
                                         ),
-                                        const SizedBox(width: 4),
-                                        Text('${receta.totalLikes ?? 0}'),
-                                        const SizedBox(width: 16),
-                                        Icon(
-                                          Icons.tag,
-                                          size: 16,
-                                          color: Colors.blue[300],
-                                        ),
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          widget.hashtag,
-                                          style: const TextStyle(
-                                            color: Colors.blue,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-                      );
-                    },
-                  ),
+                      ),
+                    );
+                  },
                 ),
     );
   }

@@ -201,28 +201,60 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
 
       try {
         bool success;
+        Map<String, dynamic> response = {};
+
         if (widget.usuario != null) {
           // Update
           if (_password.isNotEmpty) {
             usuarioData['contrasena'] = _password;
           }
-          success = await _apiService.updateUsuario(usuarioData);
+          response = await _apiService.updateUsuarioWithSync(usuarioData);
+          success = response.isNotEmpty;
         } else {
           // Create
           usuarioData['contrasena'] = _password;
-          success = await _apiService.createUsuario(usuarioData);
+          response = await _apiService.createUsuarioWithSync(usuarioData);
+          success = response.isNotEmpty;
         }
 
         if (success) {
           // Mostrar mensaje según sea alta o modificación
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(widget.usuario == null
-                  ? 'Usuario añadido correctamente'
-                  : 'Usuario modificado correctamente'),
-              backgroundColor: Colors.green,
-            ),
-          );
+          String mainMessage = widget.usuario == null
+              ? 'Usuario añadido correctamente'
+              : 'Usuario modificado correctamente';
+
+          // Verificar si hay información de sincronización
+          String? syncMessage = response['sync_message'] as String?;
+
+          if (syncMessage != null && syncMessage.isNotEmpty) {
+            // Mostrar mensaje con sincronización de consejos y recetas
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(mainMessage),
+                    const SizedBox(height: 8),
+                    Text(
+                      syncMessage,
+                      style: const TextStyle(fontStyle: FontStyle.italic),
+                    ),
+                  ],
+                ),
+                backgroundColor: Colors.green,
+                duration: const Duration(seconds: 4),
+              ),
+            );
+          } else {
+            // Mostrar mensaje simple
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(mainMessage),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
           Navigator.of(context).pop(true);
         }
       } catch (e) {

@@ -6,6 +6,8 @@ class Receta {
   DateTime? fechaInicio;
   DateTime? fechaFin;
   String mostrarPortada;
+  DateTime? fechaInicioPortada;
+  DateTime? fechaFinPortada;
   String visibleParaTodos;
   String? imagenPortada; // Base64
   String? imagenPortadaNombre;
@@ -29,6 +31,8 @@ class Receta {
     this.fechaInicio,
     this.fechaFin,
     this.mostrarPortada = 'N',
+    this.fechaInicioPortada,
+    this.fechaFinPortada,
     this.visibleParaTodos = 'S',
     this.imagenPortada,
     this.imagenPortadaNombre,
@@ -59,6 +63,12 @@ class Receta {
       fechaFin:
           json['fecha_fin'] != null ? DateTime.parse(json['fecha_fin']) : null,
       mostrarPortada: json['mostrar_portada'] ?? 'N',
+      fechaInicioPortada: json['fecha_inicio_portada'] != null
+          ? DateTime.parse(json['fecha_inicio_portada'])
+          : null,
+      fechaFinPortada: json['fecha_fin_portada'] != null
+          ? DateTime.parse(json['fecha_fin_portada'])
+          : null,
       visibleParaTodos: json['visible_para_todos'] ?? 'S',
       imagenPortada: json['imagen_portada'],
       imagenPortadaNombre: json['imagen_portada_nombre'],
@@ -120,6 +130,9 @@ class Receta {
       'fecha_inicio': fechaInicio?.toIso8601String().split('T')[0],
       'fecha_fin': fechaFin?.toIso8601String().split('T')[0],
       'mostrar_portada': mostrarPortada,
+      'fecha_inicio_portada':
+          fechaInicioPortada?.toIso8601String().split('T')[0],
+      'fecha_fin_portada': fechaFinPortada?.toIso8601String().split('T')[0],
       'visible_para_todos': visibleParaTodos,
       'imagen_portada': imagenPortada,
       'imagen_portada_nombre': imagenPortadaNombre,

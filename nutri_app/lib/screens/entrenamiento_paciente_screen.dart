@@ -140,7 +140,7 @@ class _EntrenamientoPacienteScreenState
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
-              padding: const EdgeInsets.all(12.0),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 28),
               child: Column(
                 children: [
                   // Selector de período

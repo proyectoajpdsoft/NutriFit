@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:image/image.dart' as img;
 import '../models/chat_message.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
@@ -36,10 +37,18 @@ class _ChatScreenState extends State<ChatScreen> {
   Uint8List? _selectedImageBytes;
   String? _selectedImageMime;
 
+  // Caché para imágenes decodificadas para evitar parpadeos
+  final Map<String, Uint8List> _imageCache = {};
+
+  // Parámetros de tamaño de imagen para chat
+  int _maxImageWidth = 150;
+  int _maxImageHeight = 200;
+
   @override
   void initState() {
     super.initState();
     _ensureNotGuest();
+    _loadImageSizeParams();
     _loadMessages();
     _refreshTimer = Timer.periodic(
       const Duration(seconds: 10),
@@ -51,6 +60,25 @@ class _ChatScreenState extends State<ChatScreen> {
         Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
       }
     });
+  }
+
+  Future<void> _loadImageSizeParams() async {
+    try {
+      final apiService = context.read<ApiService>();
+      final param = await apiService.getParametro('tamaño_imagen_chat');
+      if (param != null) {
+        final width = int.tryParse(param['valor'] ?? '150');
+        final height = int.tryParse(param['valor2'] ?? '200');
+        if (width != null && height != null && mounted) {
+          setState(() {
+            _maxImageWidth = width;
+            _maxImageHeight = height;
+          });
+        }
+      }
+    } catch (e) {
+      // Usar valores por defecto si falla
+    }
   }
 
   Future<void> _ensureNotGuest() async {
@@ -109,18 +137,36 @@ class _ChatScreenState extends State<ChatScreen> {
         otherUserId: isNutri ? widget.otherUserId : null,
       );
       if (!mounted) return;
-      setState(() {
-        _messages
-          ..clear()
-          ..addAll(items);
-        _isLoading = false;
-      });
+
+      // Solo actualizar si hay cambios reales (diferente cantidad o IDs diferentes)
+      bool needsUpdate = _messages.length != items.length;
+      if (!needsUpdate && _messages.isNotEmpty) {
+        for (int i = 0; i < _messages.length; i++) {
+          if (_messages[i].id != items[i].id ||
+              _messages[i].read != items[i].read) {
+            needsUpdate = true;
+            break;
+          }
+        }
+      }
+
+      if (needsUpdate) {
+        setState(() {
+          _messages
+            ..clear()
+            ..addAll(items);
+          _isLoading = false;
+        });
+        _scrollToBottom();
+      } else if (_isLoading) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
 
       await apiService.markChatRead(
         otherUserId: isNutri ? widget.otherUserId : null,
       );
-
-      _scrollToBottom();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -145,12 +191,61 @@ class _ChatScreenState extends State<ChatScreen> {
     if (picked == null) return;
 
     final bytes = await picked.readAsBytes();
-    if (!mounted) return;
 
-    setState(() {
-      _selectedImageBytes = bytes;
-      _selectedImageMime = _guessMime(picked.path);
-    });
+    // Redimensionar la imagen si es necesario
+    try {
+      final image = img.decodeImage(bytes);
+      if (image != null) {
+        img.Image? resizedImage = image;
+
+        // Redimensionar si excede los límites
+        if (image.width > _maxImageWidth || image.height > _maxImageHeight) {
+          // Calcular el factor de escala manteniendo la relación de aspecto
+          double scale = 1.0;
+
+          if (image.width > _maxImageWidth) {
+            scale = _maxImageWidth / image.width;
+          }
+
+          if (image.height > _maxImageHeight) {
+            final scaleHeight = _maxImageHeight / image.height;
+            if (scaleHeight < scale) {
+              scale = scaleHeight;
+            }
+          }
+
+          final newWidth = (image.width * scale).toInt();
+          final newHeight = (image.height * scale).toInt();
+
+          resizedImage = img.copyResize(
+            image,
+            width: newWidth,
+            height: newHeight,
+            interpolation: img.Interpolation.linear,
+          );
+        }
+
+        // Codificar la imagen redimensionada
+        final mime = _guessMime(picked.path);
+        final List<int> imageData = mime == 'image/png'
+            ? img.encodePng(resizedImage)
+            : img.encodeJpg(resizedImage, quality: 85);
+
+        if (!mounted) return;
+
+        setState(() {
+          _selectedImageBytes = Uint8List.fromList(imageData);
+          _selectedImageMime = mime;
+        });
+      }
+    } catch (e) {
+      // Si falla el resize, usar la imagen original
+      if (!mounted) return;
+      setState(() {
+        _selectedImageBytes = bytes;
+        _selectedImageMime = _guessMime(picked.path);
+      });
+    }
   }
 
   String _guessMime(String path) {
@@ -158,6 +253,25 @@ class _ChatScreenState extends State<ChatScreen> {
     if (lower.endsWith('.png')) return 'image/png';
     if (lower.endsWith('.webp')) return 'image/webp';
     return 'image/jpeg';
+  }
+
+  /// Obtiene una imagen decodificada desde el caché o la decodifica si no existe
+  Uint8List? _getDecodedImage(String? base64Image) {
+    if (base64Image == null || base64Image.isEmpty) return null;
+
+    // Verificar si ya está en caché
+    if (_imageCache.containsKey(base64Image)) {
+      return _imageCache[base64Image];
+    }
+
+    // Decodificar y guardar en caché
+    try {
+      final bytes = base64Decode(base64Image);
+      _imageCache[base64Image] = bytes;
+      return bytes;
+    } catch (e) {
+      return null;
+    }
   }
 
   Future<void> _sendMessage() async {
@@ -303,23 +417,38 @@ class _ChatScreenState extends State<ChatScreen> {
             child: Column(
               crossAxisAlignment: align,
               children: [
-                if (hasImage)
-                  GestureDetector(
-                    onTap: () => showImageViewerDialog(
-                      context: context,
-                      base64Image: message.imageBase64!,
-                      title: 'Imagen',
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: Image.memory(
-                        base64Decode(message.imageBase64!),
-                        width: 220,
-                        height: 180,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
+                if (hasImage) ...[
+                  Builder(
+                    builder: (context) {
+                      final imageBytes = _getDecodedImage(message.imageBase64);
+                      if (imageBytes == null) {
+                        return const SizedBox(
+                          width: 220,
+                          height: 180,
+                          child: Center(child: Icon(Icons.broken_image)),
+                        );
+                      }
+                      return GestureDetector(
+                        onTap: () => showImageViewerDialog(
+                          context: context,
+                          base64Image: message.imageBase64!,
+                          title: 'Imagen',
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: Image.memory(
+                            imageBytes,
+                            width: 220,
+                            height: 180,
+                            fit: BoxFit.cover,
+                            gaplessPlayback:
+                                true, // Evita parpadeos en actualizaciones
+                          ),
+                        ),
+                      );
+                    },
                   ),
+                ],
                 if (hasText) ...[
                   if (hasImage) const SizedBox(height: 8),
                   Text(message.body ?? ''),

@@ -6,6 +6,7 @@ header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers
 
 include_once '../config/database.php';
 include_once '../auth/token_validator.php';
+include_once '../auth/auto_validator.php';
 include_once '../auth/permissions.php';
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -18,10 +19,14 @@ $db = $database->getConnection();
 
 $request_method = $_SERVER["REQUEST_METHOD"];
 
-// Validar token
-$validator = new TokenValidator($db);
-$user = $validator->validateToken();
-PermissionManager::checkPermission($user, 'recetas');
+// Validar token (acepta usuario o guest)
+$validator = new AutoValidator($db);
+$user = $validator->validate();
+
+// Solo verificar permisos para operaciones de escritura
+if ($request_method !== 'GET') {
+    PermissionManager::checkPermission($user, 'recetas');
+}
 
 switch($request_method) {
     case 'GET':
@@ -51,7 +56,13 @@ switch($request_method) {
 function get_documentos_by_receta($receta_codigo) {
     global $db;
 
-    $query = "SELECT codigo, codigo_receta, tipo, nombre, url, orden
+        $query = "SELECT codigo, codigo_receta, tipo, nombre,
+                            CASE
+                                WHEN tipo = 'imagen' AND documento IS NOT NULL
+                                THEN documento
+                                ELSE NULL
+                            END as documento,
+                            url, orden
               FROM nu_receta_documento
               WHERE codigo_receta = :receta
               ORDER BY orden ASC";
@@ -61,6 +72,19 @@ function get_documentos_by_receta($receta_codigo) {
     $stmt->execute();
     $documentos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+    foreach ($documentos as &$documento) {
+        if (
+            isset($documento['tipo']) &&
+            $documento['tipo'] == 'imagen' &&
+            isset($documento['documento']) &&
+            $documento['documento'] !== null &&
+            !mb_check_encoding($documento['documento'], 'UTF-8')
+        ) {
+            $documento['documento'] = base64_encode($documento['documento']);
+        }
+    }
+    unset($documento);
+
     ob_clean();
     echo json_encode($documentos);
 }
@@ -69,8 +93,8 @@ function get_documento($codigo) {
     global $db;
 
     $query = "SELECT codigo, codigo_receta, tipo, nombre, 
-              CASE 
-                WHEN tipo = 'documento' AND documento IS NOT NULL 
+                            CASE 
+                                WHEN tipo IN ('documento', 'imagen') AND documento IS NOT NULL 
                 THEN documento 
                 ELSE NULL 
               END as documento,
@@ -83,7 +107,7 @@ function get_documento($codigo) {
     $documento = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if ($documento) {
-        if ($documento['tipo'] == 'documento' && $documento['documento'] !== null) {
+        if (in_array($documento['tipo'], array('documento', 'imagen')) && $documento['documento'] !== null) {
             if (!mb_check_encoding($documento['documento'], 'UTF-8')) {
                 $documento['documento'] = base64_encode($documento['documento']);
             }
@@ -130,7 +154,7 @@ function create_documento() {
     $documento = null;
     $url = null;
 
-    if ($data->tipo == 'documento' && !empty($data->documento)) {
+    if (($data->tipo == 'documento' || $data->tipo == 'imagen') && !empty($data->documento)) {
         $documento = base64_decode($data->documento);
     } else if ($data->tipo == 'url' && !empty($data->url)) {
         $url = $data->url;
@@ -194,7 +218,7 @@ function update_documento() {
     $documento = null;
     $url = null;
 
-    if ($data->tipo == 'documento' && !empty($data->documento)) {
+    if (($data->tipo == 'documento' || $data->tipo == 'imagen') && !empty($data->documento)) {
         $documento = base64_decode($data->documento);
     } else if ($data->tipo == 'url' && !empty($data->url)) {
         $url = $data->url;

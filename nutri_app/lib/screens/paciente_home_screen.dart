@@ -1,4 +1,6 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:nutri_app/models/paciente.dart';
 import 'package:nutri_app/models/usuario.dart';
 import 'package:nutri_app/models/consejo.dart';
@@ -9,12 +11,13 @@ import 'package:nutri_app/screens/consejos_paciente_screen.dart';
 import 'package:nutri_app/screens/contacto_nutricionista_screen.dart';
 import 'package:nutri_app/screens/chat_screen.dart';
 import 'package:nutri_app/screens/messages_inbox_screen.dart';
+import 'package:nutri_app/screens/mediciones/pesos_usuario_screen.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/widgets/app_drawer.dart';
 import 'package:nutri_app/widgets/image_viewer_dialog.dart';
 import 'package:provider/provider.dart';
-// import 'package:url_launcher/url_launcher.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 
@@ -26,6 +29,9 @@ class PacienteHomeScreen extends StatefulWidget {
 }
 
 class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
+  static const MethodChannel _externalUrlChannel =
+      MethodChannel('nutri_app/external_url');
+
   final ApiService _apiService = ApiService();
   bool _isAuthorized = true;
   bool _isLoading = true;
@@ -33,10 +39,14 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   bool _hasPlanes = false;
   Map<String, String> _contactInfo = {};
   List<Consejo> _consejosDestacados = [];
+  List<Consejo> _consejosPersonalizadosNoLeidos = [];
   int _consejosNoLeidos = 0;
+  int _consejosPersonalizadosNoLeidosCount = 0;
   int _comentariosNoLeidos = 0;
   int _chatNoLeidos = 0;
   bool _showWelcomeMessage = false;
+  bool _showContactCardFirstTime = true;
+  bool _hasPersonalizados = false;
 
   @override
   void initState() {
@@ -44,9 +54,12 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     _verifyUser();
     _loadPatientData();
     _loadConsejosDestacados();
+    _loadConsejosPersonalizadosNoLeidos();
     _loadComentariosPendientes();
     _loadChatPendientes();
     _checkFirstTime();
+    _loadContactCardFirstTimeFlag();
+    _loadHasPersonalizados();
   }
 
   Future<void> _loadComentariosPendientes() async {
@@ -82,6 +95,17 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
       setState(() {
         _chatNoLeidos = total;
       });
+    } on SocketException {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No se ha podido realizar el proceso. Revise la conexión a Internet',
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } catch (e) {
       // debugPrint('Error al cargar chat pendientes: $e');
     }
@@ -96,6 +120,62 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
         _showWelcomeMessage = true;
       });
       await prefs.setBool('is_first_time', false);
+    }
+  }
+
+  Future<void> _loadContactCardFirstTimeFlag() async {
+    final authService = context.read<AuthService>();
+    final isPatient = authService.userType == 'Paciente';
+
+    if (isPatient) {
+      final prefs = await SharedPreferences.getInstance();
+      final userCode = authService.userCode ?? '';
+      final key = 'contact_card_shown_$userCode';
+      final alreadyShown = prefs.getBool(key) ?? false;
+
+      if (mounted) {
+        setState(() {
+          _showContactCardFirstTime = !alreadyShown;
+        });
+      }
+
+      // Marcar como mostrado si aún no lo está
+      if (!alreadyShown) {
+        await prefs.setBool(key, true);
+      }
+    }
+  }
+
+  Future<void> _loadHasPersonalizados() async {
+    try {
+      final authService = context.read<AuthService>();
+      final userCode = authService.userCode ?? '';
+
+      if (authService.isGuestMode || userCode.isEmpty || userCode == '0') {
+        if (mounted) {
+          setState(() {
+            _hasPersonalizados = false;
+          });
+        }
+        return;
+      }
+
+      final response = await _apiService.get(
+        'api/consejo_pacientes.php?has_personalizados=1&paciente=$userCode',
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        final data = json.decode(response.body);
+        setState(() {
+          _hasPersonalizados = data['has_personalizados'] ?? false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _hasPersonalizados = false;
+        });
+      }
     }
   }
 
@@ -178,20 +258,44 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   Future<void> _loadConsejosDestacados() async {
     try {
       final authService = context.read<AuthService>();
-      final patientCode = authService.patientCode;
+      final userCode = authService.userCode;
+      final isGuestMode = authService.isGuestMode;
 
-      // Para guest mode o sin patientCode, usar 0 para obtener solo visible_para_todos
-      final patientParam = patientCode ?? '0';
+      // Para guest mode o sin userCode, usar 0 para obtener solo visible_para_todos
+      final userParam = (isGuestMode || userCode == null || userCode.isEmpty)
+          ? '0'
+          : userCode;
+
+      // Cargar consejos destacados para mostrar en home
       final response = await _apiService.get(
-        'api/consejo_usuario.php?destacados_no_leidos=1&paciente=$patientParam',
+        'api/consejo_pacientes.php?destacados_no_leidos=1&paciente=$userParam',
+      );
+
+      // Cargar contador total de no leídos para la campanita
+      final countResponse = await _apiService.get(
+        'api/consejo_pacientes.php?count_no_leidos=1&paciente=$userParam',
       );
 
       if (response.statusCode == 200) {
         try {
           final List<dynamic> data = json.decode(response.body);
+          int totalNoLeidos = 0;
+
+          // Parsear el contador
+          if (countResponse.statusCode == 200) {
+            try {
+              final countData = json.decode(countResponse.body);
+              totalNoLeidos = countData['count'] ?? 0;
+            } catch (_) {
+              totalNoLeidos = data.length;
+            }
+          } else {
+            totalNoLeidos = data.length;
+          }
+
           setState(() {
             _consejosDestacados = data.map((c) => Consejo.fromJson(c)).toList();
-            _consejosNoLeidos = _consejosDestacados.length;
+            _consejosNoLeidos = totalNoLeidos;
           });
         } catch (parseError) {
           // La API devolvió un error HTML en lugar de JSON (error 500, etc)
@@ -208,99 +312,137 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     }
   }
 
+  Future<void> _loadConsejosPersonalizadosNoLeidos() async {
+    try {
+      final authService = context.read<AuthService>();
+      final userCode = authService.userCode;
+      final isGuestMode = authService.isGuestMode;
+
+      // Solo cargar si no es guest y tiene userCode
+      if (isGuestMode ||
+          userCode == null ||
+          userCode.isEmpty ||
+          userCode == '0') {
+        if (mounted) {
+          setState(() {
+            _consejosPersonalizadosNoLeidos = [];
+          });
+        }
+        return;
+      }
+
+      // Cargar recomendaciones personalizadas no leídas (máximo 3)
+      final response = await _apiService.get(
+        'api/consejo_pacientes.php?personalizados_no_leidos=1&paciente=$userCode',
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        try {
+          final List<dynamic> data = json.decode(response.body);
+          setState(() {
+            _consejosPersonalizadosNoLeidos =
+                data.map((c) => Consejo.fromJson(c)).toList();
+          });
+        } catch (parseError) {
+          setState(() {
+            _consejosPersonalizadosNoLeidos = [];
+          });
+        }
+      }
+
+      // Cargar contador total de personalizados no leídos
+      final countResponse = await _apiService.get(
+        'api/consejo_pacientes.php?count_personalizados_no_leidos=1&paciente=$userCode',
+      );
+
+      if (countResponse.statusCode == 200 && mounted) {
+        try {
+          final countData = json.decode(countResponse.body);
+          setState(() {
+            _consejosPersonalizadosNoLeidosCount = countData['count'] ?? 0;
+          });
+        } catch (_) {
+          setState(() {
+            _consejosPersonalizadosNoLeidosCount =
+                _consejosPersonalizadosNoLeidos.length;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _consejosPersonalizadosNoLeidos = [];
+          _consejosPersonalizadosNoLeidosCount = 0;
+        });
+      }
+    }
+  }
+
   Future<void> _marcarConsejoLeido(int consejoId) async {
     try {
       final authService = context.read<AuthService>();
       final patientCode = authService.patientCode;
+      final userCode = authService.userCode;
       final isGuestMode = authService.isGuestMode;
 
       // No marcar como leído en modo guest
-      if (isGuestMode || patientCode == null || patientCode.isEmpty) {
+      if (isGuestMode || userCode == null || userCode.isEmpty) {
         return;
       }
 
       final data = {
         'codigo_consejo': consejoId,
-        'codigo_paciente': int.parse(patientCode),
+        'codigo_usuario': int.parse(userCode),
+        if (patientCode != null && patientCode.isNotEmpty)
+          'codigo_paciente': int.parse(patientCode),
       };
 
       await _apiService.post(
-        'api/consejo_usuario.php?marcar_leido=1',
+        'api/consejo_pacientes.php?marcar_leido=1',
         body: json.encode(data),
       );
 
       // Recargar consejos después de marcar como leído
       await _loadConsejosDestacados();
+      await _loadConsejosPersonalizadosNoLeidos();
+      await _loadHasPersonalizados();
     } catch (e) {
       // debugPrint('Error al marcar consejo como leído: $e');
     }
   }
 
-  // Future<void> _launchEmail(String email) async {
-  //   if (email.isEmpty) return;
-  //
-  //   try {
-  //     final uri = Uri(
-  //       scheme: 'mailto',
-  //       path: email,
-  //       queryParameters: {
-  //         'subject': 'Solicitud de servicios de Nutricionista Online',
-  //         'body': '',
-  //       },
-  //     );
-  //
-  //     if (await canLaunchUrl(uri)) {
-  //       await launchUrl(uri, mode: LaunchMode.externalApplication);
-  //     } else {
-  //       if (mounted) {
-  //         ScaffoldMessenger.of(context).showSnackBar(
-  //           const SnackBar(
-  //             content: Text('No se puede abrir el email'),
-  //             backgroundColor: Colors.red,
-  //           ),
-  //         );
-  //       }
-  //     }
-  //   } catch (e) {
-  //     if (mounted) {
-  //       ScaffoldMessenger.of(context).showSnackBar(
-  //         SnackBar(
-  //           content: Text('Error al abrir el email: $e'),
-  //           backgroundColor: Colors.red,
-  //         ),
-  //       );
-  //     }
-  //   }
-  // }
+  Future<void> _launchExternalUrl(String url) async {
+    try {
+      await launchUrlString(url, mode: LaunchMode.externalApplication);
+    } on PlatformException catch (e) {
+      if (e.code == 'channel-error') {
+        await _externalUrlChannel.invokeMethod('openUrl', {'url': url});
+        return;
+      }
+      rethrow;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No se pudo abrir el enlace'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
 
-  // Future<void> _launchPhone(String phoneNumber) async {
-  //   if (phoneNumber.isEmpty) return;
-  //
-  //   try {
-  //     final uri = Uri(scheme: 'tel', path: phoneNumber);
-  //     if (await canLaunchUrl(uri)) {
-  //       await launchUrl(uri);
-  //     } else {
-  //       if (mounted) {
-  //         ScaffoldMessenger.of(context).showSnackBar(
-  //           const SnackBar(
-  //             content: Text('No se puede realizar la llamada'),
-  //             backgroundColor: Colors.red,
-  //           ),
-  //         );
-  //       }
-  //     }
-  //   } catch (e) {
-  //     if (mounted) {
-  //       ScaffoldMessenger.of(context).showSnackBar(
-  //         SnackBar(
-  //           content: Text('Error al realizar la llamada: $e'),
-  //           backgroundColor: Colors.red,
-  //         ),
-  //       );
-  //     }
-  //   }
-  // }
+  Future<void> _launchEmail(String email) async {
+    if (email.isEmpty) return;
+    await _launchExternalUrl(
+      'mailto:$email?subject=Solicitud de servicios de Nutricionista Online',
+    );
+  }
+
+  Future<void> _launchPhone(String phoneNumber) async {
+    if (phoneNumber.isEmpty) return;
+    await _launchExternalUrl('tel:$phoneNumber');
+  }
 
   Widget _buildWelcomeCard() {
     final genero = _paciente?.sexo ?? '';
@@ -411,6 +553,8 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                     ).then((_) {
                       // Recargar consejos después de ver el detalle
                       _loadConsejosDestacados();
+                      _loadConsejosPersonalizadosNoLeidos();
+                      _loadHasPersonalizados();
                     });
                   },
                   child: const Text('Leer más'),
@@ -418,7 +562,11 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                 ElevatedButton(
                   onPressed: () {
                     Navigator.pop(context);
-                    Navigator.pushNamed(context, '/consejos_paciente');
+                    Navigator.pushNamed(
+                      context,
+                      '/consejos_paciente',
+                      arguments: {'openTodos': true},
+                    );
                   },
                   child: const Text('Ver todos'),
                 ),
@@ -444,13 +592,36 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Nuevo consejo',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.grey,
-                      ),
+                    Row(
+                      children: [
+                        const Text(
+                          'Recomendación personal',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.grey,
+                          ),
+                        ),
+                        if (consejo.leido == 'N') ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.red,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Text(
+                              'NUEVO',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -595,7 +766,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
           _buildSimpleContactRow(
             icon: Icons.email,
             label: 'Email',
-            onTap: () {}, // => _launchEmail(_contactInfo['email'] ?? ''),
+            onTap: () => _launchEmail(_contactInfo['email'] ?? ''),
           ),
         ],
 
@@ -605,7 +776,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
           _buildSimpleContactRow(
             icon: Icons.phone,
             label: 'Llamar a dietista',
-            onTap: () {}, // => _launchPhone(_contactInfo['telefono'] ?? ''),
+            onTap: () => _launchPhone(_contactInfo['telefono'] ?? ''),
           ),
         ],
       ],
@@ -708,7 +879,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                   icon: Icons.email,
                   label: 'Email',
                   value: _contactInfo['email'] ?? '',
-                  onTap: () {}, // => _launchEmail(_contactInfo['email'] ?? ''),
+                  onTap: () => _launchEmail(_contactInfo['email'] ?? ''),
                 ),
 
               // Teléfono
@@ -718,8 +889,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                   icon: Icons.phone,
                   label: 'Teléfono',
                   value: _contactInfo['telefono'] ?? '',
-                  onTap:
-                      () {}, // => _launchPhone(_contactInfo['telefono'] ?? ''),
+                  onTap: () => _launchPhone(_contactInfo['telefono'] ?? ''),
                 ),
               ],
             ],
@@ -853,6 +1023,133 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     }
   }
 
+  void _handleChatDietista() {
+    final authService = context.read<AuthService>();
+
+    if (authService.isGuestMode) {
+      // Mostrar el mismo diálogo que en el drawer
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Registro requerido'),
+          content: const Text(
+            'Para chatear con tu dietista online, por favor, regístrate (es gratis).',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cerrar'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/register');
+              },
+              child: const Text('Registrarse'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    // Usuario registrado: abrir pantalla de chat
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const ChatScreen(
+          otherDisplayName: 'Dietista',
+        ),
+      ),
+    );
+  }
+
+  void _handleRecomendacionesPersonalizadas() {
+    final authService = context.read<AuthService>();
+    final hasPatient = (authService.patientCode ?? '').isNotEmpty;
+
+    // Si no está registrado o no tiene paciente asignado
+    if (authService.isGuestMode || !hasPatient) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.lock_outline,
+                  color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 8),
+              const Expanded(child: Text('Recomendaciones Personalizadas')),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Para acceder a tus recomendaciones personalizadas, primero necesitas contactar con el dietista para que te asigne un plan específico, ajustado a tus necesidades.',
+                  style: TextStyle(fontSize: 14),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  'Formas de contacto:',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                // Email
+                if ((_contactInfo['email'] ?? '').isNotEmpty)
+                  _buildDialogContactRow(
+                    icon: Icons.email,
+                    label: 'Email',
+                    value: _contactInfo['email'] ?? '',
+                    onTap: () => _launchEmail(_contactInfo['email'] ?? ''),
+                  ),
+
+                // Teléfono
+                if ((_contactInfo['telefono'] ?? '').isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _buildDialogContactRow(
+                    icon: Icons.phone,
+                    label: 'Teléfono',
+                    value: _contactInfo['telefono'] ?? '',
+                    onTap: () => _launchPhone(_contactInfo['telefono'] ?? ''),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cerrar'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ContactoNutricionistaScreen(),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.arrow_forward, size: 18),
+              label: const Text('Más formas de contacto'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    // Usuario con paciente asignado: abrir pantalla de consejos con tab "Personales"
+    Navigator.pushNamed(
+      context,
+      '/consejos_paciente',
+      arguments: {'openPersonalizados': true},
+    );
+  }
+
   Widget _buildHomeCard({
     required BuildContext context,
     required IconData icon,
@@ -903,6 +1200,10 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
         ),
       );
     }
+
+    final hasPendientesPersonalizadas =
+        _consejosPersonalizadosNoLeidos.isNotEmpty ||
+            _consejosPersonalizadosNoLeidosCount > 0;
 
     return Scaffold(
       appBar: AppBar(
@@ -961,10 +1262,18 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
               IconButton(
                 icon: const Icon(Icons.notifications_outlined),
                 onPressed: () {
-                  Navigator.pushNamed(context, '/consejos_paciente');
+                  // Si hay recomendaciones personalizadas, abrir la pestaña Personales
+                  // Si no, abrir la pestaña Destacados
+                  Navigator.pushNamed(
+                    context,
+                    '/consejos_paciente',
+                    arguments: _consejosPersonalizadosNoLeidosCount > 0
+                        ? {'openPersonalizados': true}
+                        : {'openDestacados': true},
+                  );
                 },
               ),
-              if (_consejosNoLeidos > 0)
+              if (_consejosPersonalizadosNoLeidosCount > 0)
                 Positioned(
                   right: 8,
                   top: 8,
@@ -979,7 +1288,9 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                       minHeight: 18,
                     ),
                     child: Text(
-                      _consejosNoLeidos > 99 ? '99+' : '$_consejosNoLeidos',
+                      _consejosPersonalizadosNoLeidosCount > 99
+                          ? '99+'
+                          : '$_consejosPersonalizadosNoLeidosCount',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 10,
@@ -1042,6 +1353,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                               Navigator.pushNamed(
                                 context,
                                 '/consejos_paciente',
+                                arguments: {'openDestacados': true},
                               );
                             },
                             icon: const Icon(Icons.arrow_forward),
@@ -1058,8 +1370,64 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
 
                   const SizedBox(height: 8),
 
-                  // Tarjeta de contacto (solo si no tiene planes)
-                  if (!_hasPlanes) _buildContactCard(),
+                  // Tarjeta de contacto (solo si no tiene planes y es la primera vez - solo para pacientes)
+                  if (!_hasPlanes && _showContactCardFirstTime) ...[
+                    _buildContactCard(),
+                    const SizedBox(height: 8),
+                  ],
+
+                  // Recomendaciones personalizadas no leídas (máximo 3)
+                  if (_consejosPersonalizadosNoLeidos.isNotEmpty) ...[
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          Icon(Icons.recommend_outlined,
+                              color: Colors.deepOrange, size: 22),
+                          SizedBox(width: 8),
+                          Text(
+                            'Recomendaciones para ti',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.deepOrange,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    ...(_consejosPersonalizadosNoLeidos
+                        .map((consejo) => _buildConsejoDestacadoCard(consejo))
+                        .toList()),
+                    const SizedBox(height: 8),
+                  ],
+
+                  // Botón destacado: Recomendaciones personalizadas (solo si hay pendientes)
+                  if (hasPendientesPersonalizadas)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: SizedBox(
+                        width: double.infinity,
+                        height: 56,
+                        child: ElevatedButton.icon(
+                          onPressed: _handleRecomendacionesPersonalizadas,
+                          icon: const Icon(Icons.recommend_outlined, size: 24),
+                          label: const Text(
+                            'Recomendaciones personalizadas',
+                            style: TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.deepOrange,
+                            foregroundColor: Colors.white,
+                            elevation: 4,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
 
                   // Grid de botones
                   GridView.count(
@@ -1068,8 +1436,15 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                     crossAxisCount: 2,
                     crossAxisSpacing: 10,
                     mainAxisSpacing: 10,
-                    childAspectRatio: 1.2,
+                    childAspectRatio: 1.5,
                     children: [
+                      if (!hasPendientesPersonalizadas)
+                        _buildHomeCard(
+                          context: context,
+                          icon: Icons.recommend_outlined,
+                          label: 'Recomendaciones',
+                          onTap: _handleRecomendacionesPersonalizadas,
+                        ),
                       _buildHomeCard(
                         context: context,
                         icon: Icons.article_outlined,
@@ -1104,8 +1479,11 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                         context: context,
                         icon: Icons.lightbulb_outlined,
                         label: 'Consejos',
-                        onTap: () =>
-                            Navigator.pushNamed(context, '/consejos_paciente'),
+                        onTap: () => Navigator.pushNamed(
+                          context,
+                          '/consejos_paciente',
+                          arguments: {'openDestacados': true},
+                        ),
                       ),
                       _buildHomeCard(
                         context: context,
@@ -1117,15 +1495,26 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                       _buildHomeCard(
                         context: context,
                         icon: Icons.shopping_cart_outlined,
-                        label: 'Lista Compra',
-                        onTap: () => _handleListaCompraNavigation(context),
-                      ),
-                      _buildHomeCard(
-                        context: context,
-                        icon: Icons.directions_run,
                         label: 'Actividades',
                         onTap: () =>
                             Navigator.pushNamed(context, '/entrenamientos'),
+                      ),
+                      _buildHomeCard(
+                        context: context,
+                        icon: Icons.monitor_weight_outlined,
+                        label: 'Control de peso',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const PesosUsuarioScreen(),
+                          ),
+                        ),
+                      ),
+                      _buildHomeCard(
+                        context: context,
+                        icon: Icons.shopping_cart_outlined,
+                        label: 'Lista Compra',
+                        onTap: () => _handleListaCompraNavigation(context),
                       ),
                     ],
                   ),

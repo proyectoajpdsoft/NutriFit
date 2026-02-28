@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:nutri_app/models/paciente.dart';
 import 'package:nutri_app/models/plan_nutricional.dart';
 import 'package:nutri_app/screens/planes_nutricionales/plan_edit_screen.dart';
@@ -7,8 +8,8 @@ import 'package:nutri_app/services/config_service.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
-// import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 
 class PlanesListScreen extends StatefulWidget {
   final Paciente? paciente;
@@ -19,6 +20,9 @@ class PlanesListScreen extends StatefulWidget {
 }
 
 class _PlanesListScreenState extends State<PlanesListScreen> {
+  static const MethodChannel _externalUrlChannel =
+      MethodChannel('nutri_app/external_url');
+
   final ApiService _apiService = ApiService();
   late Future<List<PlanNutricional>> _planesFuture;
   final TextEditingController _searchController = TextEditingController();
@@ -449,9 +453,8 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
                                       IconButton(
                                         icon: const Icon(Icons.open_in_browser),
                                         color: Colors.blue,
-                                        onPressed: () async {
-                                          // Removed: launchUrl functionality
-                                        },
+                                        onPressed: () =>
+                                            _launchUrlExternal(plan.url ?? ''),
                                         tooltip: 'Ver en navegador',
                                         iconSize: 30,
                                       ),
@@ -772,6 +775,27 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error al clonar plan: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _launchUrlExternal(String url) async {
+    try {
+      await launchUrlString(url, mode: LaunchMode.externalApplication);
+    } on PlatformException catch (e) {
+      if (e.code == 'channel-error') {
+        await _externalUrlChannel.invokeMethod('openUrl', {'url': url});
+        return;
+      }
+      rethrow;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('No se pudo abrir la URL: $url'),
             backgroundColor: Colors.red,
           ),
         );

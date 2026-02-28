@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
 import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:nutri_app/models/usuario.dart';
 import 'package:nutri_app/services/api_service.dart';
@@ -347,6 +348,18 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
             }
             return;
           }
+        } on SocketException {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'No se ha podido realizar el proceso. Revise la conexión a Internet',
+                ),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          return;
         } catch (e) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -390,6 +403,17 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
             );
             Navigator.of(context).pop(true);
           }
+        }
+      } on SocketException {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'No se ha podido realizar el proceso. Revise la conexión a Internet',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
         }
       } catch (e) {
         if (mounted) {

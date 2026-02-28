@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'dart:convert';
 import 'package:nutri_app/models/paciente.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/config_service.dart';
@@ -38,6 +39,11 @@ class _PacienteEditScreenState extends State<PacienteEditScreen> {
   bool _online = false;
   bool _activo = true; // Nuevo campo 'activo', por defecto true
 
+  // --- VARIABLES PARA USUARIO ASIGNADO ---
+  int? _codigoUsuarioSeleccionado;
+  List<Map<String, dynamic>> _usuariosList = [];
+  bool _loadingUsuarios = false;
+
   @override
   void initState() {
     super.initState();
@@ -56,6 +62,8 @@ class _PacienteEditScreenState extends State<PacienteEditScreen> {
     _sexo = p?.sexo;
     _online = p?.online == 'S';
     _activo = p?.activo == 'S'; // Inicializar activo
+    // No hay campo codigo_usuario en el modelo Paciente actualmente, así que inicializamos a null
+    _codigoUsuarioSeleccionado = null;
 
     // Cargar valores por defecto si es un nuevo paciente
     if (p == null) {
@@ -63,6 +71,9 @@ class _PacienteEditScreenState extends State<PacienteEditScreen> {
         _loadDefaultValues();
       });
     }
+
+    // Cargar lista de usuarios
+    _loadUsuarios();
   }
 
   void _markDirty() {
@@ -70,6 +81,41 @@ class _PacienteEditScreenState extends State<PacienteEditScreen> {
     setState(() {
       _hasChanges = true;
     });
+  }
+
+  Future<void> _loadUsuarios() async {
+    if (!mounted) return;
+    setState(() {
+      _loadingUsuarios = true;
+    });
+
+    try {
+      final response = await _apiService.get('/usuarios.php');
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        if (mounted) {
+          setState(() {
+            _usuariosList = List<Map<String, dynamic>>.from(
+              data.map((item) => Map<String, dynamic>.from(item as Map)),
+            );
+            _loadingUsuarios = false;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _loadingUsuarios = false;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error cargando usuarios: $e');
+      if (mounted) {
+        setState(() {
+          _loadingUsuarios = false;
+        });
+      }
+    }
   }
 
   Future<bool> _confirmDiscardChanges() async {
@@ -153,16 +199,24 @@ class _PacienteEditScreenState extends State<PacienteEditScreen> {
 
       // --- INICIO DEPURACIÓN ---
       // Imprimimos el JSON que se va a enviar a la API en la consola de depuración.
-      //debugPrint("DEBUG: Enviando JSON a la API:");
-      //debugPrint(jsonEncode(pacienteData.toJson()));
+      debugPrint(
+          "DEBUG: Paciente seleccionado codigo_usuario: $_codigoUsuarioSeleccionado");
       // --- FIN DEPURACIÓN ---
 
       try {
         bool success;
         if (widget.paciente != null) {
-          success = await _apiService.updatePaciente(pacienteData);
+          // Enviar actualizacion con codigo_usuario si está seleccionado
+          success = await _apiService.updatePacienteWithUser(
+            pacienteData,
+            codigoUsuario: _codigoUsuarioSeleccionado,
+          );
         } else {
-          success = await _apiService.createPaciente(pacienteData);
+          // Para creación de nuevo paciente
+          success = await _apiService.createPacienteWithUser(
+            pacienteData,
+            codigoUsuario: _codigoUsuarioSeleccionado,
+          );
         }
 
         if (success) {
@@ -298,6 +352,57 @@ class _PacienteEditScreenState extends State<PacienteEditScreen> {
                         );
                       },
                     ),
+                    // --- SELECTOR DE USUARIO ASIGNADO ---
+                    const SizedBox(height: 12),
+                    if (_loadingUsuarios)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8.0),
+                        child: CircularProgressIndicator(),
+                      )
+                    else if (_usuariosList.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8.0),
+                        child: Text('No hay usuarios disponibles'),
+                      )
+                    else
+                      FormField<int>(
+                        builder: (state) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('Usuario asignado (opcional)'),
+                              const SizedBox(height: 8),
+                              DropdownButton<int>(
+                                isExpanded: true,
+                                value: _codigoUsuarioSeleccionado,
+                                hint: const Text('Seleccionar usuario...'),
+                                items: [
+                                  // Opción para deseleccionar
+                                  const DropdownMenuItem<int>(
+                                    value: null,
+                                    child: Text('(Sin usuario asignado)'),
+                                  ),
+                                  // Opciones de usuarios
+                                  ..._usuariosList.map((usuario) {
+                                    return DropdownMenuItem<int>(
+                                      value: usuario['codigo'] as int,
+                                      child: Text(usuario['nombre'] ??
+                                          'Usuario desconocido'),
+                                    );
+                                  }).toList(),
+                                ],
+                                onChanged: (value) {
+                                  setState(() {
+                                    _codigoUsuarioSeleccionado = value;
+                                  });
+                                  state.didChange(value);
+                                  _markDirty();
+                                },
+                              ),
+                            ],
+                          );
+                        },
+                      ),
                     TextFormField(
                       controller: _edadController,
                       decoration: const InputDecoration(labelText: 'Edad'),

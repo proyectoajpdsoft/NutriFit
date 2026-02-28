@@ -9,6 +9,7 @@ class EntrenamientoEjercicio {
   int codigo;
   int codigoEntrenamiento;
   int? codigoPlanFitEjercicio;
+  int? codigoEjercicioCatalogo;
   String nombre;
   String? instrucciones;
   String? urlVideo;
@@ -36,6 +37,7 @@ class EntrenamientoEjercicio {
     required this.codigo,
     required this.codigoEntrenamiento,
     this.codigoPlanFitEjercicio,
+    this.codigoEjercicioCatalogo,
     required this.nombre,
     this.instrucciones,
     this.urlVideo,
@@ -71,6 +73,9 @@ class EntrenamientoEjercicio {
       codigoPlanFitEjercicio: json['codigo_plan_fit_ejercicio'] is int
           ? json['codigo_plan_fit_ejercicio']
           : int.tryParse(json['codigo_plan_fit_ejercicio']?.toString() ?? ''),
+      codigoEjercicioCatalogo: json['codigo_ejercicio_catalogo'] is int
+          ? json['codigo_ejercicio_catalogo']
+          : int.tryParse(json['codigo_ejercicio_catalogo']?.toString() ?? ''),
       nombre: json['nombre']?.toString() ?? '',
       instrucciones: json['instrucciones']?.toString(),
       urlVideo: json['url_video']?.toString(),
@@ -131,6 +136,7 @@ class EntrenamientoEjercicio {
         'codigo': codigo,
         'codigo_entrenamiento': codigoEntrenamiento,
         'codigo_plan_fit_ejercicio': codigoPlanFitEjercicio,
+        'codigo_ejercicio_catalogo': codigoEjercicioCatalogo,
         'nombre': nombre,
         'instrucciones': instrucciones,
         'url_video': urlVideo,

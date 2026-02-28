@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:nutri_app/models/paciente.dart';
 import 'package:nutri_app/models/plan_fit.dart';
 import 'package:nutri_app/models/plan_fit_dia.dart';
@@ -10,8 +11,8 @@ import 'package:nutri_app/services/plan_fit_pdf_service.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
-// import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 
 class _PlanFitPdfOptions {
   final bool fichaPorDias;
@@ -36,6 +37,9 @@ class PlanesFitListScreen extends StatefulWidget {
 }
 
 class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
+  static const MethodChannel _externalUrlChannel =
+      MethodChannel('nutri_app/external_url');
+
   static const _pdfFullPrefix = 'plan_fit_pdf_full';
   static const _pdfResumenPrefix = 'plan_fit_pdf_resumen';
   final ApiService _apiService = ApiService();
@@ -677,52 +681,8 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
                                     IconButton(
                                       icon: const Icon(Icons.open_in_browser),
                                       color: Colors.blue,
-                                      onPressed: () async {
-                                        // try {
-                                        //   String urlString =
-                                        //       plan.url?.trim() ?? '';
-                                        //   if (urlString.isEmpty) {
-                                        //     throw Exception('URL vacía');
-                                        //   }
-                                        //   if (!urlString
-                                        //           .startsWith('http://') &&
-                                        //       !urlString
-                                        //           .startsWith('https://')) {
-                                        //     urlString = 'https://$urlString';
-                                        //   }
-                                        //   Uri url;
-                                        //   try {
-                                        //     url = Uri.parse(urlString);
-                                        //   } catch (_) {
-                                        //     url = Uri.parse(
-                                        //         Uri.encodeFull(urlString));
-                                        //   }
-                                        //
-                                        //   if (await canLaunchUrl(url)) {
-                                        //     final opened = await launchUrl(url,
-                                        //         mode: LaunchMode
-                                        //             .externalApplication);
-                                        //     if (!opened) {
-                                        //       throw Exception(
-                                        //           'No se pudo abrir la URL');
-                                        //     }
-                                        //   } else {
-                                        //     throw Exception(
-                                        //         'No se puede lanzar la URL');
-                                        //   }
-                                        // } catch (e) {
-                                        //   if (context.mounted) {
-                                        //     ScaffoldMessenger.of(context)
-                                        //         .showSnackBar(
-                                        //       SnackBar(
-                                        //         content: Text(
-                                        //             'No se pudo abrir la URL: ${plan.url}'),
-                                        //         backgroundColor: Colors.red,
-                                        //       ),
-                                        //     );
-                                        //   }
-                                        // }
-                                      },
+                                      onPressed: () =>
+                                          _launchUrlExternal(plan.url ?? ''),
                                       tooltip: 'Ver en navegador',
                                       iconSize: 30,
                                     ),
@@ -742,33 +702,8 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
                                       IconButton(
                                         icon: const Icon(Icons.open_in_browser),
                                         color: Colors.blue,
-                                        onPressed: () async {
-                                          // try {
-                                          //   String urlString = plan.url!.trim();
-                                          //   if (!urlString
-                                          //           .startsWith('http://') &&
-                                          //       !urlString
-                                          //           .startsWith('https://')) {
-                                          //     urlString = 'https://$urlString';
-                                          //   }
-                                          //   final Uri url =
-                                          //       Uri.parse(urlString);
-                                          //   await launchUrl(url,
-                                          //       mode: LaunchMode
-                                          //           .externalApplication);
-                                          // } catch (e) {
-                                          //   if (context.mounted) {
-                                          //     ScaffoldMessenger.of(context)
-                                          //         .showSnackBar(
-                                          //       SnackBar(
-                                          //         content: Text(
-                                          //             'No se pudo abrir la URL: ${plan.url}'),
-                                          //         backgroundColor: Colors.red,
-                                          //       ),
-                                          //     );
-                                          //   }
-                                          // }
-                                        },
+                                        onPressed: () =>
+                                            _launchUrlExternal(plan.url ?? ''),
                                         tooltip: 'Ver en navegador',
                                         iconSize: 30,
                                       ),
@@ -998,26 +933,104 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
     }
   }
 
+  Future<Paciente?> _mostrarDialogoPacientes() async {
+    try {
+      final pacientes = await _apiService.getPacientes(activo: 'S');
+
+      if (pacientes.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No hay pacientes disponibles'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return null;
+      }
+
+      if (!mounted) return null;
+
+      return await showDialog<Paciente>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Seleccionar paciente'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: pacientes.length,
+              itemBuilder: (context, index) {
+                final paciente = pacientes[index];
+                return ListTile(
+                  title: Text(paciente.nombre),
+                  subtitle:
+                      paciente.email1 != null ? Text(paciente.email1!) : null,
+                  onTap: () => Navigator.of(context).pop(paciente),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(null),
+              child: const Text('Cancelar'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al cargar pacientes: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return null;
+    }
+  }
+
   Future<void> _clonPlan(PlanFit plan) async {
     try {
-      // Confirmación de clonación
-      final confirm = await showDialog<bool>(
+      // Preguntar al usuario si desea clonar al mismo paciente o a otro
+      final opcionClonacion = await showDialog<String>(
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Clonar plan'),
-          content: const Text('¿Desea realizar una copia del Plan Fit actual?'),
+          content: const Text('¿Dónde desea clonar el Plan Fit?'),
           actions: [
             TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('No')),
+              onPressed: () => Navigator.of(context).pop(null),
+              child: const Text('Cancelar'),
+            ),
             TextButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('Sí')),
+              onPressed: () => Navigator.of(context).pop('mismo'),
+              child: const Text('Mismo paciente'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop('otro'),
+              child: const Text('Otro paciente'),
+            ),
           ],
         ),
       );
 
-      if (confirm != true) return;
+      if (opcionClonacion == null) return;
+
+      int? codigoPacienteDestino = plan.codigoPaciente;
+      String? nombrePacienteDestino = plan.nombrePaciente;
+
+      // Si seleccionó "otro paciente", mostrar lista de pacientes
+      if (opcionClonacion == 'otro') {
+        final pacienteSeleccionado = await _mostrarDialogoPacientes();
+        if (pacienteSeleccionado == null) return; // Usuario canceló
+
+        codigoPacienteDestino = pacienteSeleccionado.codigo;
+        nombrePacienteDestino = pacienteSeleccionado.nombre;
+      }
+
       // Mostrar diálogo de progreso
       if (mounted) {
         showDialog(
@@ -1048,7 +1061,7 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
       final hoy = DateTime.now();
       final planNuevo = PlanFit(
         codigo: 0, // El servidor asignará el código
-        codigoPaciente: plan.codigoPaciente,
+        codigoPaciente: codigoPacienteDestino,
         desde: hoy,
         hasta: intervaloDias > 0 ? hoy.add(Duration(days: intervaloDias)) : hoy,
         semanas: plan.semanas,
@@ -1058,7 +1071,7 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
         planIndicaciones: plan.planIndicaciones,
         planIndicacionesVisibleUsuario: plan.planIndicacionesVisibleUsuario,
         url: plan.url,
-        nombrePaciente: plan.nombrePaciente,
+        nombrePaciente: nombrePacienteDestino,
         rondas: plan.rondas,
         consejos: plan.consejos,
         recomendaciones: plan.recomendaciones,
@@ -1072,7 +1085,7 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
 
       // Obtener los planes actualizados para encontrar el nuevo
       final planesActualizado =
-          await _apiService.getPlanesFit(plan.codigoPaciente);
+          await _apiService.getPlanesFit(codigoPacienteDestino);
 
       // Encontrar el plan recién creado (el más nuevo con fecha desde = hoy)
       PlanFit? nuevoPlanCreado;
@@ -1158,10 +1171,12 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
 
       // Mostrar mensaje de éxito
       if (mounted) {
+        final mensajeDestino =
+            (opcionClonacion == 'otro') ? ' para $nombrePacienteDestino' : '';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Plan clonado exitosamente del ${DateFormat('dd/MM/yyyy').format(plan.desde ?? DateTime.now())} '
+              'Plan clonado exitosamente$mensajeDestino del ${DateFormat('dd/MM/yyyy').format(plan.desde ?? DateTime.now())} '
               'al ${DateFormat('dd/MM/yyyy').format(nuevoPlanCreado.hasta ?? DateTime.now())}',
             ),
             backgroundColor: Colors.green,
@@ -1175,6 +1190,27 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error al clonar plan: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _launchUrlExternal(String url) async {
+    try {
+      await launchUrlString(url, mode: LaunchMode.externalApplication);
+    } on PlatformException catch (e) {
+      if (e.code == 'channel-error') {
+        await _externalUrlChannel.invokeMethod('openUrl', {'url': url});
+        return;
+      }
+      rethrow;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('No se pudo abrir la URL: $url'),
             backgroundColor: Colors.red,
           ),
         );

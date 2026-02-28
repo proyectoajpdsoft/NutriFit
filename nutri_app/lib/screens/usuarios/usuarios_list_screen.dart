@@ -25,6 +25,9 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
   bool _filterTodos = true;
   bool _filterActivos = false;
   bool _filterAccesoWeb = false;
+  bool _filterPaciente = false;
+  bool _filterNutricionista = false;
+  bool _filterUsuarioSinPaciente = false;
   bool _showFilters = false;
   final TextEditingController _searchController = TextEditingController();
 
@@ -122,9 +125,24 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
   Future<void> _loadUiState() async {
     final prefs = await SharedPreferences.getInstance();
     final showFilters = prefs.getBool('usuarios_show_filters') ?? false;
+    final filterTodos = prefs.getBool('usuarios_filter_todos') ?? true;
+    final filterActivos = prefs.getBool('usuarios_filter_activos') ?? false;
+    final filterAccesoWeb =
+        prefs.getBool('usuarios_filter_acceso_web') ?? false;
+    final filterPaciente = prefs.getBool('usuarios_filter_paciente') ?? false;
+    final filterNutricionista =
+        prefs.getBool('usuarios_filter_nutricionista') ?? false;
+    final filterUsuarioSinPaciente =
+        prefs.getBool('usuarios_filter_usuario_sin_paciente') ?? false;
     if (!mounted) return;
     setState(() {
       _showFilters = showFilters;
+      _filterTodos = filterTodos;
+      _filterActivos = filterActivos;
+      _filterAccesoWeb = filterAccesoWeb;
+      _filterPaciente = filterPaciente;
+      _filterNutricionista = filterNutricionista;
+      _filterUsuarioSinPaciente = filterUsuarioSinPaciente;
     });
     _refreshUsuarios();
   }
@@ -132,6 +150,15 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
   Future<void> _saveUiState() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('usuarios_show_filters', _showFilters);
+    await prefs.setBool('usuarios_filter_todos', _filterTodos);
+    await prefs.setBool('usuarios_filter_activos', _filterActivos);
+    await prefs.setBool('usuarios_filter_acceso_web', _filterAccesoWeb);
+    await prefs.setBool('usuarios_filter_paciente', _filterPaciente);
+    await prefs.setBool('usuarios_filter_nutricionista', _filterNutricionista);
+    await prefs.setBool(
+      'usuarios_filter_usuario_sin_paciente',
+      _filterUsuarioSinPaciente,
+    );
   }
 
   void _refreshUsuarios() {
@@ -152,25 +179,231 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
 
   Future<void> _deleteUsuario(int codigo) async {
     try {
-      final success = await _apiService.deleteUsuario(codigo);
-      if (success) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Usuario eliminado'),
-              backgroundColor: Colors.green),
+      // Primero verificar si tiene dependencias
+      final dependencies = await _apiService.checkUsuarioDependencies(codigo);
+
+      if (dependencies.isEmpty) {
+        // No tiene dependencias, eliminar directamente con confirmación
+        if (!mounted) return;
+        final shouldDelete = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Confirmar eliminación'),
+            content:
+                const Text('¿Está seguro de que desea eliminar este usuario?'),
+            actions: [
+              TextButton(
+                child: const Text('Cancelar'),
+                onPressed: () => Navigator.pop(context, false),
+              ),
+              TextButton(
+                child: const Text('Eliminar'),
+                onPressed: () => Navigator.pop(context, true),
+              ),
+            ],
+          ),
         );
-        _refreshUsuarios();
+
+        if (shouldDelete ?? false) {
+          final success = await _apiService.deleteUsuario(codigo);
+          if (success) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                  content: Text('Usuario eliminado'),
+                  backgroundColor: Colors.green),
+            );
+            _refreshUsuarios();
+          }
+        }
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Error al eliminar'), backgroundColor: Colors.red),
-        );
+        // Tiene dependencias, mostrar diálogo con opciones
+        if (!mounted) return;
+        _showDependenciesDialog(codigo, dependencies);
       }
     } catch (e) {
       if (!handleAuthError(e)) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
         );
+      }
+    }
+  }
+
+  void _showDependenciesDialog(int codigo, Map<String, dynamic> dependencies) {
+    showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('El usuario tiene registros asociados'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Este usuario tiene los siguientes registros en otras tablas:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              ...dependencies.entries.map((entry) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4.0),
+                    child: Text(
+                      '• ${entry.key}: ${entry.value} registros',
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                  )),
+              const SizedBox(height: 16),
+              const Text(
+                'Seleccione una opción:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('Cancelar'),
+            onPressed: () => Navigator.pop(context, 'cancel'),
+          ),
+          TextButton(
+            child: const Text('Eliminar completo'),
+            onPressed: () => Navigator.pop(context, 'delete'),
+          ),
+          TextButton(
+            child: const Text('Mover a otro usuario'),
+            onPressed: () => Navigator.pop(context, 'move'),
+          ),
+        ],
+      ),
+    ).then((action) async {
+      if (action == 'delete') {
+        await _deleteUsuarioCascade(codigo);
+      } else if (action == 'move') {
+        await _showMoveUsuarioDialog(codigo);
+      }
+    });
+  }
+
+  Future<void> _deleteUsuarioCascade(int codigo) async {
+    try {
+      final success = await _apiService.deleteUsuarioCascade(codigo);
+      if (success) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Usuario y todos sus registros eliminados'),
+                backgroundColor: Colors.green),
+          );
+          _refreshUsuarios();
+        }
+      }
+    } catch (e) {
+      if (!handleAuthError(e)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _showMoveUsuarioDialog(int codigoOrigen) async {
+    // Cargar lista de usuarios para seleccionar el destino
+    try {
+      final response = await _apiService.get('/usuarios.php');
+      if (response.statusCode == 200) {
+        final List<dynamic> usuarios = jsonDecode(response.body);
+        final usuariosList = List<Map<String, dynamic>>.from(
+          usuarios.map((item) => Map<String, dynamic>.from(item as Map)),
+        );
+
+        // Filtrar el usuario actual (no puede mover a sí mismo)
+        usuariosList.removeWhere((u) => u['codigo'] == codigoOrigen);
+
+        if (!mounted) return;
+
+        int? usuarioDestino;
+        await showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Seleccionar usuario destino'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                      'Seleccione a qué usuario desea mover los registros:'),
+                  const SizedBox(height: 12),
+                  DropdownButton<int>(
+                    isExpanded: true,
+                    hint: const Text('Seleccionar usuario...'),
+                    onChanged: (value) {
+                      usuarioDestino = value;
+                    },
+                    items: usuariosList.map((usuario) {
+                      return DropdownMenuItem<int>(
+                        value: usuario['codigo'] as int,
+                        child: Text(usuario['nombre'] ?? 'Usuario desconocido'),
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                child: const Text('Cancelar'),
+                onPressed: () => Navigator.pop(context),
+              ),
+              TextButton(
+                child: const Text('Mover'),
+                onPressed: () {
+                  if (usuarioDestino != null) {
+                    Navigator.pop(context);
+                  }
+                },
+              ),
+            ],
+          ),
+        );
+
+        if (usuarioDestino != null && mounted) {
+          await _moveUsuarioData(codigoOrigen, usuarioDestino!);
+        }
+      }
+    } catch (e) {
+      if (!handleAuthError(e)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _moveUsuarioData(int codigoOrigen, int codigoDestino) async {
+    try {
+      final success =
+          await _apiService.moveUsuarioData(codigoOrigen, codigoDestino);
+      if (success) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content:
+                    Text('Datos movidos y usuario eliminado correctamente'),
+                backgroundColor: Colors.green),
+          );
+          _refreshUsuarios();
+        }
+      }
+    } catch (e) {
+      if (!handleAuthError(e)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          );
+        }
       }
     }
   }
@@ -303,8 +536,26 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
                 !_filterActivos || usuario.activo.toUpperCase() == 'S';
             final matchesAcceso =
                 !_filterAccesoWeb || usuario.accesoweb.toUpperCase() == 'S';
+            final tipoLower = (usuario.tipo ?? '').toLowerCase();
+            final matchesNutricionista =
+                !_filterNutricionista || tipoLower.contains('nutricionista');
 
-            return matchesSearch && matchesActivos && matchesAcceso;
+            final hasPacienteAsignado = (usuario.codigoPaciente ?? 0) > 0;
+            final matchesPaciente = !_filterPaciente || hasPacienteAsignado;
+            final matchesUsuarioSinPaciente =
+                !_filterUsuarioSinPaciente || !hasPacienteAsignado;
+
+            final bothPacienteFiltersSelected =
+                _filterPaciente && _filterUsuarioSinPaciente;
+            final matchesPacienteDimension = bothPacienteFiltersSelected
+                ? true
+                : (matchesPaciente && matchesUsuarioSinPaciente);
+
+            return matchesSearch &&
+                matchesActivos &&
+                matchesAcceso &&
+                matchesNutricionista &&
+                matchesPacienteDimension;
           }).toList();
 
           return Column(
@@ -331,53 +582,122 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
                 ),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  child: Wrap(
-                    spacing: 8,
-                    children: [
-                      FilterChip(
-                        label: const Text('Todos'),
-                        selected: _filterTodos,
-                        onSelected: (selected) {
-                          setState(() {
-                            _filterTodos = selected;
-                            if (selected) {
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        FilterChip(
+                          label: const Text('Todos'),
+                          selected: _filterTodos,
+                          onSelected: (_) {
+                            setState(() {
+                              _filterTodos = true;
                               _filterActivos = false;
                               _filterAccesoWeb = false;
-                            } else if (!_filterActivos && !_filterAccesoWeb) {
-                              _filterTodos = true;
-                            }
-                          });
-                        },
-                      ),
-                      FilterChip(
-                        label: const Text('Activos'),
-                        selected: _filterActivos,
-                        onSelected: (selected) {
-                          setState(() {
-                            _filterActivos = selected;
-                            if (selected) {
+                              _filterPaciente = false;
+                              _filterNutricionista = false;
+                              _filterUsuarioSinPaciente = false;
+                            });
+                            _saveUiState();
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                        FilterChip(
+                          label: const Text('Activos'),
+                          selected: _filterActivos,
+                          onSelected: (selected) {
+                            setState(() {
+                              _filterActivos = selected;
                               _filterTodos = false;
-                            } else if (!_filterAccesoWeb) {
-                              _filterTodos = true;
-                            }
-                          });
-                        },
-                      ),
-                      FilterChip(
-                        label: const Text('Acceso web'),
-                        selected: _filterAccesoWeb,
-                        onSelected: (selected) {
-                          setState(() {
-                            _filterAccesoWeb = selected;
-                            if (selected) {
+                              if (!_filterActivos &&
+                                  !_filterAccesoWeb &&
+                                  !_filterPaciente &&
+                                  !_filterNutricionista &&
+                                  !_filterUsuarioSinPaciente) {
+                                _filterTodos = true;
+                              }
+                            });
+                            _saveUiState();
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                        FilterChip(
+                          label: const Text('Acceso web'),
+                          selected: _filterAccesoWeb,
+                          onSelected: (selected) {
+                            setState(() {
+                              _filterAccesoWeb = selected;
                               _filterTodos = false;
-                            } else if (!_filterActivos) {
-                              _filterTodos = true;
-                            }
-                          });
-                        },
-                      ),
-                    ],
+                              if (!_filterActivos &&
+                                  !_filterAccesoWeb &&
+                                  !_filterPaciente &&
+                                  !_filterNutricionista &&
+                                  !_filterUsuarioSinPaciente) {
+                                _filterTodos = true;
+                              }
+                            });
+                            _saveUiState();
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                        FilterChip(
+                          label: const Text('Paciente'),
+                          selected: _filterPaciente,
+                          onSelected: (selected) {
+                            setState(() {
+                              _filterPaciente = selected;
+                              _filterTodos = false;
+                              if (!_filterActivos &&
+                                  !_filterAccesoWeb &&
+                                  !_filterPaciente &&
+                                  !_filterNutricionista &&
+                                  !_filterUsuarioSinPaciente) {
+                                _filterTodos = true;
+                              }
+                            });
+                            _saveUiState();
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                        FilterChip(
+                          label: const Text('Nutricionista'),
+                          selected: _filterNutricionista,
+                          onSelected: (selected) {
+                            setState(() {
+                              _filterNutricionista = selected;
+                              _filterTodos = false;
+                              if (!_filterActivos &&
+                                  !_filterAccesoWeb &&
+                                  !_filterPaciente &&
+                                  !_filterNutricionista &&
+                                  !_filterUsuarioSinPaciente) {
+                                _filterTodos = true;
+                              }
+                            });
+                            _saveUiState();
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                        FilterChip(
+                          label: const Text('Usuario'),
+                          selected: _filterUsuarioSinPaciente,
+                          onSelected: (selected) {
+                            setState(() {
+                              _filterUsuarioSinPaciente = selected;
+                              _filterTodos = false;
+                              if (!_filterActivos &&
+                                  !_filterAccesoWeb &&
+                                  !_filterPaciente &&
+                                  !_filterNutricionista &&
+                                  !_filterUsuarioSinPaciente) {
+                                _filterTodos = true;
+                              }
+                            });
+                            _saveUiState();
+                          },
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 const Divider(height: 1),

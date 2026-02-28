@@ -21,6 +21,8 @@ class _ConsejosListScreenState extends State<ConsejosListScreen> {
   bool _isLoadingMore = false;
   String _searchQuery = '';
   String _filterActivo = 'todos'; // 'todos', 'S', 'N'
+  bool _filterConPacientes =
+      false; // Filtro para mostrar solo consejos con pacientes
   bool _isSearchVisible = false;
   bool _showFilterConsejos = false;
   late ScrollController _scrollController;
@@ -53,11 +55,14 @@ class _ConsejosListScreenState extends State<ConsejosListScreen> {
     final showSearch = prefs.getBool('consejos_show_search') ?? false;
     final showFilter = prefs.getBool('consejos_show_filter') ?? false;
     final filterValue = prefs.getString('consejos_filter_activo') ?? 'todos';
+    final filterPacientes =
+        prefs.getBool('consejos_filter_con_pacientes') ?? false;
     if (mounted) {
       setState(() {
         _isSearchVisible = showSearch;
         _showFilterConsejos = showFilter;
         _filterActivo = filterValue;
+        _filterConPacientes = filterPacientes;
       });
     }
   }
@@ -67,6 +72,7 @@ class _ConsejosListScreenState extends State<ConsejosListScreen> {
     await prefs.setBool('consejos_show_search', _isSearchVisible);
     await prefs.setBool('consejos_show_filter', _showFilterConsejos);
     await prefs.setString('consejos_filter_activo', _filterActivo);
+    await prefs.setBool('consejos_filter_con_pacientes', _filterConPacientes);
   }
 
   @override
@@ -91,11 +97,19 @@ class _ConsejosListScreenState extends State<ConsejosListScreen> {
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
         setState(() {
-          _consejos = data.map((item) => Consejo.fromJson(item)).toList();
+          _consejos = data.map((item) {
+            try {
+              return Consejo.fromJson(item);
+            } catch (e) {
+              debugPrint('Error al parsear consejo: $e');
+              debugPrint('Item: $item');
+              rethrow;
+            }
+          }).toList();
         });
         _loadMoreConsejos();
       } else {
-        throw Exception('Error al cargar consejos');
+        throw Exception('Error ${response.statusCode}: ${response.body}');
       }
     } catch (e) {
       setState(() {
@@ -148,16 +162,22 @@ class _ConsejosListScreenState extends State<ConsejosListScreen> {
 
   List<Consejo> _getFilteredConsejos(List<Consejo> items) {
     return items.where((consejo) {
-      // Filtro por búsqueda
+      // Filtro por búsqueda (incluye título, texto y nombres de pacientes)
       final matchesSearch = _searchQuery.isEmpty ||
           consejo.titulo.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          consejo.texto.toLowerCase().contains(_searchQuery.toLowerCase());
+          consejo.texto.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+          consejo.pacientesNombres.any((nombre) =>
+              nombre.toLowerCase().contains(_searchQuery.toLowerCase()));
 
       // Filtro por activo
       final matchesActivo =
           _filterActivo == 'todos' || consejo.activo == _filterActivo;
 
-      return matchesSearch && matchesActivo;
+      // Filtro por pacientes
+      final matchesConPacientes = !_filterConPacientes ||
+          (consejo.totalPacientes != null && consejo.totalPacientes! > 0);
+
+      return matchesSearch && matchesActivo && matchesConPacientes;
     }).toList();
   }
 
@@ -339,6 +359,21 @@ class _ConsejosListScreenState extends State<ConsejosListScreen> {
                                   await _saveUiState();
                                   _loadMoreConsejos();
                                 }
+                              },
+                            ),
+                            const SizedBox(width: 8),
+                            FilterChip(
+                              label: const Text('Pacientes'),
+                              selected: _filterConPacientes,
+                              onSelected: (selected) async {
+                                setState(() {
+                                  _filterConPacientes = selected;
+                                  _displayedConsejos = [];
+                                  _currentPage = 1;
+                                  _hasMoreItems = true;
+                                });
+                                await _saveUiState();
+                                _loadMoreConsejos();
                               },
                             ),
                           ],

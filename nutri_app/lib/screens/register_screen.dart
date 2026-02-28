@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:provider/provider.dart';
@@ -50,6 +51,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
         );
         Navigator.of(context).pushReplacementNamed('login');
+      }
+    } on SocketException {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No se ha podido realizar el proceso. Revise la conexión a Internet',
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     } catch (e) {
       final errorMessage = e.toString().replaceFirst('Exception: ', '');

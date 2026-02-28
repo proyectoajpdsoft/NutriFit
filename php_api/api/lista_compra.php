@@ -35,6 +35,13 @@ $validator = new AutoValidator($db);
 $user = $validator->validate();
 PermissionManager::checkPermission($user, 'lista_compra');
 
+function resolve_user_code($user) {
+    if (!empty($user['codigo'])) {
+        return intval($user['codigo']);
+    }
+    return null;
+}
+
 // Función para obtener todos los items de un usuario
 function get_items_usuario($db, $codigo_usuario, $filtro = null) {
     try {
@@ -104,14 +111,14 @@ function get_item($db, $codigo) {
 }
 
 // Función para crear un item
-function create_item($db, $data) {
+function create_item($db, $data, $codigo_usuario_auth) {
     try {
         $query = "INSERT INTO nu_lista_compra (codigo_usuario, nombre, descripcion, categoria, cantidad, unidad, comprado, fecha_caducidad, fecha_compra, notas, codusuarioa, fechaa) VALUES (:codigo_usuario, :nombre, :descripcion, :categoria, :cantidad, :unidad, :comprado, :fecha_caducidad, :fecha_compra, :notas, :codusuarioa, NOW())";
         
         $stmt = $db->prepare($query);
         
         // Preparar variables con valores por defecto
-        $codigo_usuario = isset($data['codigo_usuario']) ? $data['codigo_usuario'] : null;
+        $codigo_usuario = $codigo_usuario_auth;
         $nombre = isset($data['nombre']) ? $data['nombre'] : null;
         $descripcion = isset($data['descripcion']) ? $data['descripcion'] : null;
         $categoria = isset($data['categoria']) ? $data['categoria'] : null;
@@ -121,7 +128,7 @@ function create_item($db, $data) {
         $fecha_caducidad = isset($data['fecha_caducidad']) ? $data['fecha_caducidad'] : null;
         $fecha_compra = isset($data['fecha_compra']) ? $data['fecha_compra'] : null;
         $notas = isset($data['notas']) ? $data['notas'] : null;
-        $codusuarioa = isset($data['codusuarioa']) ? $data['codusuarioa'] : null;
+        $codusuarioa = $codigo_usuario_auth;
         
         $stmt->bindParam(':codigo_usuario', $codigo_usuario);
         $stmt->bindParam(':nombre', $nombre);
@@ -235,10 +242,22 @@ function delete_comprados($db, $codigo_usuario) {
 // Manejar solicitudes
 if ($method == 'GET') {
     try {
+        $codigo_usuario_auth = resolve_user_code($user);
+        if (empty($codigo_usuario_auth)) {
+            http_response_code(401);
+            echo json_encode(array("message" => "Usuario inválido"));
+            exit();
+        }
+
         if (isset($_GET['codigo'])) {
             // Obtener un item específico
             $item = get_item($db, $_GET['codigo']);
             if ($item) {
+                if (intval($item['codigo_usuario']) !== intval($codigo_usuario_auth)) {
+                    http_response_code(403);
+                    echo json_encode(array("message" => "Sin permisos para este item"));
+                    exit();
+                }
                 http_response_code(200);
                 echo json_encode($item);
             } else {
@@ -247,7 +266,7 @@ if ($method == 'GET') {
             }
         } elseif (isset($_GET['usuario']) || isset($_GET['usuario_id'])) {
             // Obtener items de un usuario
-            $codigo_usuario = isset($_GET['usuario']) ? $_GET['usuario'] : $_GET['usuario_id'];
+            $codigo_usuario = $codigo_usuario_auth;
             $filtro = isset($_GET['filtro']) ? $_GET['filtro'] : null;
             $items = get_items_usuario($db, $codigo_usuario, $filtro);
             http_response_code(200);
@@ -269,8 +288,21 @@ if ($method == 'GET') {
 } elseif ($method == 'POST') {
     try {
         $data = json_decode(file_get_contents("php://input"), true);
+        $codigo_usuario_auth = resolve_user_code($user);
+        if (empty($codigo_usuario_auth)) {
+            http_response_code(401);
+            echo json_encode(array("message" => "Usuario inválido"));
+            exit();
+        }
         
         if (isset($_GET['toggle_comprado'])) {
+            $item = get_item($db, $data['codigo']);
+            if (!$item || intval($item['codigo_usuario']) !== intval($codigo_usuario_auth)) {
+                http_response_code(403);
+                echo json_encode(array("message" => "Sin permisos para modificar este item"));
+                exit();
+            }
+
             if (toggle_comprado($db, $data['codigo'])) {
                 http_response_code(200);
                 echo json_encode(array("message" => "Estado actualizado"));
@@ -279,7 +311,7 @@ if ($method == 'GET') {
                 echo json_encode(array("message" => "Error al actualizar estado"));
             }
         } elseif (isset($_GET['delete_comprados'])) {
-            if (delete_comprados($db, $data['codigo_usuario'])) {
+            if (delete_comprados($db, $codigo_usuario_auth)) {
                 http_response_code(200);
                 echo json_encode(array("message" => "Items comprados eliminados"));
             } else {
@@ -287,7 +319,7 @@ if ($method == 'GET') {
                 echo json_encode(array("message" => "Error al eliminar items"));
             }
         } else {
-            $item_id = create_item($db, $data);
+            $item_id = create_item($db, $data, $codigo_usuario_auth);
             if ($item_id) {
                 http_response_code(201);
                 echo json_encode(array("message" => "Item creado", "codigo" => $item_id));
@@ -304,6 +336,19 @@ if ($method == 'GET') {
 } elseif ($method == 'PUT') {
     try {
         $data = json_decode(file_get_contents("php://input"), true);
+        $codigo_usuario_auth = resolve_user_code($user);
+        if (empty($codigo_usuario_auth)) {
+            http_response_code(401);
+            echo json_encode(array("message" => "Usuario inválido"));
+            exit();
+        }
+
+        $item = get_item($db, $data['codigo'] ?? 0);
+        if (!$item || intval($item['codigo_usuario']) !== intval($codigo_usuario_auth)) {
+            http_response_code(403);
+            echo json_encode(array("message" => "Sin permisos para modificar este item"));
+            exit();
+        }
         
         if (update_item($db, $data)) {
             http_response_code(200);
@@ -319,7 +364,21 @@ if ($method == 'GET') {
     
 } elseif ($method == 'DELETE') {
     try {
+        $codigo_usuario_auth = resolve_user_code($user);
+        if (empty($codigo_usuario_auth)) {
+            http_response_code(401);
+            echo json_encode(array("message" => "Usuario inválido"));
+            exit();
+        }
+
         if (isset($_GET['codigo'])) {
+            $item = get_item($db, $_GET['codigo']);
+            if (!$item || intval($item['codigo_usuario']) !== intval($codigo_usuario_auth)) {
+                http_response_code(403);
+                echo json_encode(array("message" => "Sin permisos para eliminar este item"));
+                exit();
+            }
+
             if (delete_item($db, $_GET['codigo'])) {
                 http_response_code(200);
                 echo json_encode(array("message" => "Item eliminado"));

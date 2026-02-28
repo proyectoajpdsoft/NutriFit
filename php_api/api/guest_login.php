@@ -12,6 +12,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 include_once '../config/database.php';
 include_once '../auth/token_validator.php';
 include_once '../auth/auto_validator.php';
+include_once '../auth/token_expiration_config.php';
 
 $database = new Database();
 $db = $database->getConnection();
@@ -60,7 +61,7 @@ try {
         id INT AUTO_INCREMENT PRIMARY KEY,
         token VARCHAR(255) UNIQUE NOT NULL COLLATE utf8mb4_unicode_ci,
         fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
-        fecha_expiracion DATETIME NOT NULL,
+        fecha_expiracion DATETIME NULL,
         ip_publica VARCHAR(45) COLLATE utf8mb4_unicode_ci,
         activo ENUM('S', 'N') DEFAULT 'S',
         INDEX idx_token (token),
@@ -68,13 +69,16 @@ try {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
     $db->exec($create_table);
     
-    // Guardar el token guest en tabla guest_tokens (válido por 24 horas)
+    $guest_hours_to_expire = get_guest_token_expiration_hours($db);
+    $guest_expiration = build_token_expiration_datetime_or_null($guest_hours_to_expire);
+
     $query = "INSERT INTO guest_tokens 
               (token, fecha_expiracion, ip_publica, activo) 
-              VALUES (:token, DATE_ADD(NOW(), INTERVAL 24 HOUR), :ip_publica, 'S')";
+              VALUES (:token, :fecha_expiracion, :ip_publica, 'S')";
     
     $stmt = $db->prepare($query);
     $stmt->bindParam(':token', $token);
+    $stmt->bindParam(':fecha_expiracion', $guest_expiration);
     $stmt->bindParam(':ip_publica', $ip_publica);
     
     if (!$stmt->execute()) {
@@ -95,7 +99,8 @@ try {
         "message" => "Sesión de invitado creada correctamente",
         "token" => $token,
         "user_type" => "Guest",
-        "expires_in" => 86400
+        "expires_in" => $guest_hours_to_expire > 0 ? ($guest_hours_to_expire * 3600) : 0,
+        "token_expira_horas" => $guest_hours_to_expire
     ));
     
 } catch (Exception $e) {

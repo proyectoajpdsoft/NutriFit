@@ -45,7 +45,7 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
   }
 
   String? _getOwnerCode(AuthService authService) {
-    return authService.patientCode ?? authService.userCode;
+    return authService.userCode;
   }
 
   @override

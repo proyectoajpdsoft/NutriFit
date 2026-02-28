@@ -93,6 +93,12 @@ function handle_post_request() {
         check_nick_exists($data);
     } elseif ($action === 'register') {
         register_usuario($data);
+    } elseif ($action === 'check_dependencies') {
+        check_usuario_dependencies($data);
+    } elseif ($action === 'delete_cascade') {
+        delete_usuario_cascade($data);
+    } elseif ($action === 'move_usuario_data') {
+        move_usuario_data($data);
     } else {
         create_usuario($data);
     }
@@ -303,7 +309,6 @@ function create_usuario($data = null) {
     $contrasena_hash = password_hash($data->contrasena, PASSWORD_BCRYPT);
     $codusuarioa = isset($data->codusuarioa) ? $data->codusuarioa : 1;
     
-    $data->codigo_paciente = null;
     $query = "INSERT INTO usuario SET
                 nick = :nick, nombre = :nombre, email = :email, contrasena = :contrasena,
                 tipo = :tipo, activo = :activo, accesoweb = :accesoweb, administrador = :administrador,
@@ -315,8 +320,31 @@ function create_usuario($data = null) {
     $stmt->bindParam(":codusuarioa", $codusuarioa);
     
     if($stmt->execute()){
+        $nuevo_codigo = $db->lastInsertId();
+        
+        // Si se asignó un paciente, sincronizar registros de consejos y recetas
+        $sync_result = array();
+        if (!empty($data->codigo_paciente)) {
+            $sync_result = sync_usuario_paciente_rel(intval($nuevo_codigo), intval($data->codigo_paciente));
+        }
+        
         http_response_code(201);
-        echo json_encode(array("message" => "Usuario creado."));
+        $response = array("message" => "Usuario creado.");
+        if (!empty($sync_result)) {
+            $response["consejos_actualizados"] = $sync_result['consejos'] ?? 0;
+            $response["recetas_actualizadas"] = $sync_result['recetas'] ?? 0;
+            if (($sync_result['consejos'] ?? 0) > 0 || ($sync_result['recetas'] ?? 0) > 0) {
+                $msg = array();
+                if (($sync_result['consejos'] ?? 0) > 0) {
+                    $msg[] = $sync_result['consejos'] . " consejo" . (($sync_result['consejos'] ?? 0) > 1 ? "s" : "");
+                }
+                if (($sync_result['recetas'] ?? 0) > 0) {
+                    $msg[] = $sync_result['recetas'] . " receta" . (($sync_result['recetas'] ?? 0) > 1 ? "s" : "");
+                }
+                $response["sync_message"] = "Se han actualizado con el nuevo usuario: " . implode(" y ", $msg) . ".";
+            }
+        }
+        echo json_encode($response);
     } else {
         http_response_code(503);
         echo json_encode(array(
@@ -339,6 +367,7 @@ function update_usuario() {
     // Verificar si el usuario está actualizando su propio perfil o el de otro
     $authenticated_user = $GLOBALS['authenticated_user'] ?? null;
     $is_updating_own_profile = false;
+    $codigo_paciente_anterior = null;
     
     if ($authenticated_user) {
         // Comparar el código del usuario autenticado con el código que se está actualizando
@@ -362,10 +391,13 @@ function update_usuario() {
         }
     }
     
-    $codusuariom = isset($data->codusuariom) ? $data->codusuariom : 1;
+    // Si se actualiza propio perfil, obtener el paciente anterior y mantenerlo
     if ($is_updating_own_profile) {
-        $data->codigo_paciente = $authenticated_user['codigo_paciente'] ?? null;
+        $codigo_paciente_anterior = $authenticated_user['codigo_paciente'] ?? null;
+        $data->codigo_paciente = $codigo_paciente_anterior;
     }
+    
+    $codusuariom = isset($data->codusuariom) ? $data->codusuariom : 1;
     
     $sql_pass = "";
     // Si se envía una contraseña, se actualiza. Si no, se deja la que estaba.
@@ -391,8 +423,29 @@ function update_usuario() {
     }
 
     if($stmt->execute()){
+        // Si se asignó un paciente por parte de un admin (no es actualización del propio perfil), sincronizar registros
+        $sync_result = array();
+        if (!$is_updating_own_profile && !empty($data->codigo_paciente)) {
+            $sync_result = sync_usuario_paciente_rel(intval($data->codigo), intval($data->codigo_paciente));
+        }
+        
         http_response_code(200);
-        echo json_encode(array("message" => "Usuario actualizado."));
+        $response = array("message" => "Usuario actualizado.");
+        if (!empty($sync_result)) {
+            $response["consejos_actualizados"] = $sync_result['consejos'] ?? 0;
+            $response["recetas_actualizadas"] = $sync_result['recetas'] ?? 0;
+            if (($sync_result['consejos'] ?? 0) > 0 || ($sync_result['recetas'] ?? 0) > 0) {
+                $msg = array();
+                if (($sync_result['consejos'] ?? 0) > 0) {
+                    $msg[] = $sync_result['consejos'] . " consejo" . (($sync_result['consejos'] ?? 0) > 1 ? "s" : "");
+                }
+                if (($sync_result['recetas'] ?? 0) > 0) {
+                    $msg[] = $sync_result['recetas'] . " receta" . (($sync_result['recetas'] ?? 0) > 1 ? "s" : "");
+                }
+                $response["sync_message"] = "Se han actualizado con el usuario: " . implode(" y ", $msg) . ".";
+            }
+        }
+        echo json_encode($response);
     } else {
         http_response_code(503);
         echo json_encode(array(
@@ -400,6 +453,48 @@ function update_usuario() {
             "errorInfo" => $stmt->errorInfo()
         ));
     }
+}
+
+function sync_usuario_paciente_rel($codigo_usuario, $codigo_paciente) {
+    global $db;
+
+    if (empty($codigo_usuario) || empty($codigo_paciente)) {
+        return array();
+    }
+
+    $result = array('consejos' => 0, 'recetas' => 0);
+    $tables = array(
+        'nu_consejo_usuario' => 'consejos',
+        'nu_receta_usuario' => 'recetas'
+    );
+    
+    foreach ($tables as $table => $key) {
+        if (!table_exists_usuarios($db, $table)) {
+            continue;
+        }
+
+        $query = "UPDATE $table
+                  SET codigo_usuario = :usuario
+                  WHERE codigo_paciente = :paciente
+                  AND (codigo_usuario IS NULL OR codigo_usuario = 0)";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(':usuario', $codigo_usuario);
+        $stmt->bindParam(':paciente', $codigo_paciente);
+        $stmt->execute();
+        
+        // Capturar el número de filas afectadas
+        $result[$key] = $stmt->rowCount();
+    }
+    
+    return $result;
+}
+
+function table_exists_usuarios($db, $table_name) {
+    $query = "SHOW TABLES LIKE :table";
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(':table', $table_name);
+    $stmt->execute();
+    return $stmt->rowCount() > 0;
 }
 
 function delete_usuario() {
@@ -433,6 +528,271 @@ function delete_usuario() {
         echo json_encode(array(
             "message" => "No se pudo eliminar el usuario.",
             "errorInfo" => $stmt->errorInfo()
+        ));
+    }
+}
+
+// Función para verificar dependencias de un usuario antes de eliminarlo
+function check_usuario_dependencies($data = null) {
+    global $db;
+    if ($data === null) {
+        $data = json_decode(file_get_contents("php://input"));
+    }
+    
+    if(empty($data->codigo)) {
+        http_response_code(400);
+        echo json_encode(array("message" => "Falta el código del usuario."));
+        return;
+    }
+    
+    $codigo = intval($data->codigo);
+    
+    // No permitir verificar el usuario admin
+    if ($codigo == 1) {
+        http_response_code(403);
+        echo json_encode(array("message" => "No se puede eliminar al usuario administrador principal."));
+        return;
+    }
+    
+    $dependencies = array();
+    
+    // Contar registros en nu_consejo_usuario
+    $query = "SELECT COUNT(*) as count FROM nu_consejo_usuario WHERE codigo_usuario = :codigo";
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(":codigo", $codigo);
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($result['count'] > 0) {
+        $dependencies['nu_consejo_usuario'] = intval($result['count']);
+    }
+    
+    // Contar registros en nu_receta_usuario
+    $query = "SELECT COUNT(*) as count FROM nu_receta_usuario WHERE codigo_usuario = :codigo";
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(":codigo", $codigo);
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($result['count'] > 0) {
+        $dependencies['nu_receta_usuario'] = intval($result['count']);
+    }
+    
+    // Contar registros en nu_entrenamientos_actividad_custom
+    $query = "SELECT COUNT(*) as count FROM nu_entrenamientos_actividad_custom WHERE codigo_usuario = :codigo";
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(":codigo", $codigo);
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($result['count'] > 0) {
+        $dependencies['nu_entrenamientos_actividad_custom'] = intval($result['count']);
+    }
+    
+    // Contar registros en nu_entrenamientos_ejercicios para entrenamientos de este usuario
+    $query = "SELECT COUNT(DISTINCT eej.codigo) as count 
+              FROM nu_entrenamientos_ejercicios eej
+              JOIN nu_entrenamientos e ON eej.codigo_entrenamiento = e.codigo
+              WHERE e.codigo_paciente = :codigo";
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(":codigo", $codigo);
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($result['count'] > 0) {
+        $dependencies['nu_entrenamientos_ejercicios'] = intval($result['count']);
+    }
+    
+    // Contar registros en nu_entrenamientos_imagenes para entrenamientos de este usuario
+    $query = "SELECT COUNT(DISTINCT eei.codigo) as count 
+              FROM nu_entrenamientos_imagenes eei
+              JOIN nu_entrenamientos e ON eei.codigo_entrenamiento = e.codigo
+              WHERE e.codigo_paciente = :codigo";
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(":codigo", $codigo);
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($result['count'] > 0) {
+        $dependencies['nu_entrenamientos_imagenes'] = intval($result['count']);
+    }
+    
+    // Contar registros en nu_entrenamientos
+    $query = "SELECT COUNT(*) as count FROM nu_entrenamientos WHERE codigo_paciente = :codigo";
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(":codigo", $codigo);
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($result['count'] > 0) {
+        $dependencies['nu_entrenamientos'] = intval($result['count']);
+    }
+    
+    http_response_code(200);
+    echo json_encode(array("dependencies" => $dependencies));
+}
+
+// Función para eliminar usuario en cascada (elimina todos los registros relacionados)
+function delete_usuario_cascade($data = null) {
+    global $db;
+    if ($data === null) {
+        $data = json_decode(file_get_contents("php://input"));
+    }
+    
+    if(empty($data->codigo)) {
+        http_response_code(400);
+        echo json_encode(array("message" => "Falta el código del usuario."));
+        return;
+    }
+    
+    $codigo = intval($data->codigo);
+    
+    // No permitir eliminar el usuario admin
+    if ($codigo == 1) {
+        http_response_code(403);
+        echo json_encode(array("message" => "No se puede eliminar al usuario administrador principal."));
+        return;
+    }
+    
+    try {
+        $db->beginTransaction();
+        
+        // Obtener IDs de entrenamientos de este usuario para limpiar sus registros
+        $query = "SELECT codigo FROM nu_entrenamientos WHERE codigo_paciente = :codigo";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(":codigo", $codigo);
+        $stmt->execute();
+        $entrenamientos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $entrenamiento_ids = array_column($entrenamientos, 'codigo');
+        
+        // Eliminar ejercicios de entrenamientos
+        if (!empty($entrenamiento_ids)) {
+            $placeholders = implode(',', array_fill(0, count($entrenamiento_ids), '?'));
+            $query = "DELETE FROM nu_entrenamientos_ejercicios WHERE codigo_entrenamiento IN ($placeholders)";
+            $stmt = $db->prepare($query);
+            $stmt->execute($entrenamiento_ids);
+            
+            // Eliminar imágenes de entrenamientos
+            $query = "DELETE FROM nu_entrenamientos_imagenes WHERE codigo_entrenamiento IN ($placeholders)";
+            $stmt = $db->prepare($query);
+            $stmt->execute($entrenamiento_ids);
+        }
+        
+        // Eliminar entrenamientos
+        $query = "DELETE FROM nu_entrenamientos WHERE codigo_paciente = :codigo";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(":codigo", $codigo);
+        $stmt->execute();
+        
+        // Eliminar actividades custom del usuario
+        $query = "DELETE FROM nu_entrenamientos_actividad_custom WHERE codigo_usuario = :codigo";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(":codigo", $codigo);
+        $stmt->execute();
+        
+        // Eliminar consejos del usuario
+        $query = "DELETE FROM nu_consejo_usuario WHERE codigo_usuario = :codigo";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(":codigo", $codigo);
+        $stmt->execute();
+        
+        // Eliminar recetas del usuario
+        $query = "DELETE FROM nu_receta_usuario WHERE codigo_usuario = :codigo";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(":codigo", $codigo);
+        $stmt->execute();
+        
+        // Finalmente eliminar el usuario
+        $query = "DELETE FROM usuario WHERE codigo = :codigo";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(":codigo", $codigo);
+        $stmt->execute();
+        
+        $db->commit();
+        
+        http_response_code(200);
+        echo json_encode(array("message" => "Usuario y todos sus registros eliminados correctamente."));
+    } catch (Exception $e) {
+        $db->rollBack();
+        http_response_code(503);
+        echo json_encode(array(
+            "message" => "Error al eliminar el usuario.",
+            "error" => $e->getMessage()
+        ));
+    }
+}
+
+// Función para mover todos los registros de un usuario a otro
+function move_usuario_data($data = null) {
+    global $db;
+    if ($data === null) {
+        $data = json_decode(file_get_contents("php://input"));
+    }
+    
+    if(empty($data->codigo_usuario) || empty($data->codigo_usuario_destino)) {
+        http_response_code(400);
+        echo json_encode(array("message" => "Faltan parámetros: codigo_usuario y codigo_usuario_destino."));
+        return;
+    }
+    
+    $codigo_origen = intval($data->codigo_usuario);
+    $codigo_destino = intval($data->codigo_usuario_destino);
+    
+    // No permitir mover datos del usuario admin
+    if ($codigo_origen == 1) {
+        http_response_code(403);
+        echo json_encode(array("message" => "No se puede eliminar al usuario administrador principal."));
+        return;
+    }
+    
+    // No permitir mover a uno mismo
+    if ($codigo_origen == $codigo_destino) {
+        http_response_code(400);
+        echo json_encode(array("message" => "No se pueden mover los datos al mismo usuario."));
+        return;
+    }
+    
+    try {
+        $db->beginTransaction();
+        
+        // Mover registros en nu_consejo_usuario
+        $query = "UPDATE nu_consejo_usuario SET codigo_usuario = :destino WHERE codigo_usuario = :origen";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(":origen", $codigo_origen);
+        $stmt->bindParam(":destino", $codigo_destino);
+        $stmt->execute();
+        
+        // Mover registros en nu_receta_usuario
+        $query = "UPDATE nu_receta_usuario SET codigo_usuario = :destino WHERE codigo_usuario = :origen";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(":origen", $codigo_origen);
+        $stmt->bindParam(":destino", $codigo_destino);
+        $stmt->execute();
+        
+        // Mover registros en nu_entrenamientos_actividad_custom
+        $query = "UPDATE nu_entrenamientos_actividad_custom SET codigo_usuario = :destino WHERE codigo_usuario = :origen";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(":origen", $codigo_origen);
+        $stmt->bindParam(":destino", $codigo_destino);
+        $stmt->execute();
+        
+        // Mover registros en nu_entrenamientos (como código_paciente)
+        $query = "UPDATE nu_entrenamientos SET codigo_paciente = :destino WHERE codigo_paciente = :origen";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(":origen", $codigo_origen);
+        $stmt->bindParam(":destino", $codigo_destino);
+        $stmt->execute();
+        
+        // Eliminar el usuario de origen
+        $query = "DELETE FROM usuario WHERE codigo = :codigo";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(":codigo", $codigo_origen);
+        $stmt->execute();
+        
+        $db->commit();
+        
+        http_response_code(200);
+        echo json_encode(array("message" => "Datos movidos correctamente y usuario eliminado."));
+    } catch (Exception $e) {
+        $db->rollBack();
+        http_response_code(503);
+        echo json_encode(array(
+            "message" => "Error al mover los datos.",
+            "error" => $e->getMessage()
         ));
     }
 }

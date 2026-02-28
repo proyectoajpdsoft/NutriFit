@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:nutri_app/services/api_service.dart';
+import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/screens/chat_screen.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 
 class ContactoNutricionistaScreen extends StatefulWidget {
   const ContactoNutricionistaScreen({super.key});
@@ -12,7 +15,11 @@ class ContactoNutricionistaScreen extends StatefulWidget {
 
 class _ContactoNutricionistaScreenState
     extends State<ContactoNutricionistaScreen> {
+  static const MethodChannel _externalUrlChannel =
+      MethodChannel('nutri_app/external_url');
+
   final ApiService _apiService = ApiService();
+  final AuthService _authService = AuthService();
   Map<String, String> _contactInfo = {};
   bool _isLoading = true;
 
@@ -190,6 +197,18 @@ class _ContactoNutricionistaScreenState
     }
   }
 
+  Future<void> _launchExternalUrl(String url) async {
+    try {
+      await launchUrlString(url, mode: LaunchMode.externalApplication);
+    } on PlatformException catch (e) {
+      if (e.code == 'channel-error') {
+        await _externalUrlChannel.invokeMethod('openUrl', {'url': url});
+        return;
+      }
+      rethrow;
+    }
+  }
+
   Widget _buildContactItem(
     IconData icon,
     String label,
@@ -205,6 +224,32 @@ class _ContactoNutricionistaScreenState
         subtitle: Text(value, maxLines: 1, overflow: TextOverflow.ellipsis),
         trailing: const Icon(Icons.arrow_forward_ios, size: 16),
         onTap: onTap,
+      ),
+    );
+  }
+
+  void _showChatGuestDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Registro requerido'),
+        content: const Text(
+          'Para chatear con tu dietista online, por favor, regístrate (es gratis).',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cerrar'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context); // Cerrar diálogo
+              Navigator.pop(context); // Cerrar pantalla de contacto
+              Navigator.pushNamed(context, '/register');
+            },
+            child: const Text('Registrarse'),
+          ),
+        ],
       ),
     );
   }
@@ -238,12 +283,18 @@ class _ContactoNutricionistaScreenState
                             color: Theme.of(context).colorScheme.primary),
                         title: const Text('Chat con dietista'),
                         trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const ChatScreen(),
-                          ),
-                        ),
+                        onTap: () {
+                          if (_authService.isGuestMode) {
+                            _showChatGuestDialog();
+                            return;
+                          }
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const ChatScreen(),
+                            ),
+                          );
+                        },
                       ),
                     ),
                     // Email
@@ -251,18 +302,18 @@ class _ContactoNutricionistaScreenState
                       Icons.email,
                       'Email',
                       _contactInfo['email'] ?? '',
-                      // URL Launcher disabled - feature temporarily disabled
-                      // () => _launchUrl('mailto:${_contactInfo['email']}'),
-                      () {},
+                      () => _launchExternalUrl(
+                        'mailto:${_contactInfo['email'] ?? ''}',
+                      ),
                     ),
                     // Teléfono
                     _buildContactItem(
                       Icons.phone,
                       'Llamar',
                       _contactInfo['telefono'] ?? '',
-                      // URL Launcher disabled - feature temporarily disabled
-                      // () => _launchPhone(_contactInfo['telefono'] ?? ''),
-                      () {},
+                      () => _launchExternalUrl(
+                        'tel:${_contactInfo['telefono'] ?? ''}',
+                      ),
                     ),
                     // WhatsApp
                     if ((_contactInfo['whatsapp'] ?? '').isNotEmpty)
@@ -308,9 +359,9 @@ class _ContactoNutricionistaScreenState
                       Icons.send,
                       'Telegram',
                       _contactInfo['telegram'] ?? '',
-                      // URL Launcher disabled - feature temporarily disabled
-                      // () => _launchTelegram(_contactInfo['telegram'] ?? ''),
-                      () {},
+                      () => _launchExternalUrl(
+                        'https://t.me/${(_contactInfo['telegram'] ?? '').replaceAll('@', '')}',
+                      ),
                     ),
                     const SizedBox(height: 24),
                     Text(
@@ -323,36 +374,28 @@ class _ContactoNutricionistaScreenState
                       Icons.video_library,
                       'YouTube',
                       _contactInfo['youtube'] ?? '',
-                      // URL Launcher disabled - feature temporarily disabled
-                      // () => _launchUrl(_contactInfo['youtube'] ?? ''),
-                      () {},
+                      () => _launchExternalUrl(_contactInfo['youtube'] ?? ''),
                     ),
                     // Facebook
                     _buildContactItem(
                       Icons.facebook,
                       'Facebook',
                       _contactInfo['facebook'] ?? '',
-                      // URL Launcher disabled - feature temporarily disabled
-                      // () => _launchUrl(_contactInfo['facebook'] ?? ''),
-                      () {},
+                      () => _launchExternalUrl(_contactInfo['facebook'] ?? ''),
                     ),
                     // Instagram
                     _buildContactItem(
                       Icons.camera_alt,
                       'Instagram',
                       _contactInfo['instagram'] ?? '',
-                      // URL Launcher disabled - feature temporarily disabled
-                      // () => _launchUrl(_contactInfo['instagram'] ?? ''),
-                      () {},
+                      () => _launchExternalUrl(_contactInfo['instagram'] ?? ''),
                     ),
                     // Web
                     _buildContactItem(
                       Icons.language,
                       'Sitio Web',
                       _contactInfo['web'] ?? '',
-                      // URL Launcher disabled - feature temporarily disabled
-                      // () => _launchUrl(_contactInfo['web'] ?? ''),
-                      () {},
+                      () => _launchExternalUrl(_contactInfo['web'] ?? ''),
                     ),
                   ],
                 ),

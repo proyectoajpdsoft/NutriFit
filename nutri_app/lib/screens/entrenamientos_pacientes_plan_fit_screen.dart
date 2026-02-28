@@ -48,7 +48,7 @@ class _EntrenamientosPacientesPlanFitScreenState
           );
         }
         return ListView.builder(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
           itemCount: pacientes.length,
           itemBuilder: (context, index) {
             final paciente = pacientes[index];
@@ -186,7 +186,7 @@ class _EntrenamientosPacientePlanFitListScreenState
               ),
               Expanded(
                 child: ListView.builder(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
                   itemCount: items.length,
                   itemBuilder: (context, index) {
                     final entrenamiento = items[index];
@@ -378,6 +378,7 @@ class _EntrenamientoPacientePlanFitDetailScreenState
     extends State<EntrenamientoPacientePlanFitDetailScreen> {
   bool _isLoading = true;
   List<EntrenamientoEjercicio> _ejercicios = [];
+  final Map<int, String> _fullImageCacheByCatalogCode = {};
 
   @override
   void initState() {
@@ -458,6 +459,76 @@ class _EntrenamientoPacientePlanFitDetailScreenState
     }
   }
 
+  Future<void> _showExerciseImage(EntrenamientoEjercicio ejercicio) async {
+    if ((ejercicio.fotoBase64 ?? '').isNotEmpty) {
+      showImageViewerDialog(
+        context: context,
+        base64Image: ejercicio.fotoBase64!,
+        title: ejercicio.nombre,
+      );
+      return;
+    }
+
+    final catalogCode = ejercicio.codigoEjercicioCatalogo;
+    if (catalogCode == null || catalogCode <= 0) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No hay imagen completa disponible.')),
+      );
+      return;
+    }
+
+    final cached = _fullImageCacheByCatalogCode[catalogCode];
+    if (cached != null && cached.isNotEmpty) {
+      showImageViewerDialog(
+        context: context,
+        base64Image: cached,
+        title: ejercicio.nombre,
+      );
+      return;
+    }
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final apiService = context.read<ApiService>();
+      final catalogExercise =
+          await apiService.getPlanFitEjercicioCatalogWithFoto(catalogCode);
+
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+
+      final fullBase64 = catalogExercise?.fotoBase64;
+      if (fullBase64 != null && fullBase64.isNotEmpty) {
+        _fullImageCacheByCatalogCode[catalogCode] = fullBase64;
+        if (!mounted) return;
+        showImageViewerDialog(
+          context: context,
+          base64Image: fullBase64,
+          title: ejercicio.nombre,
+        );
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No hay imagen completa disponible.')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('No se pudo cargar la imagen completa.')),
+        );
+      }
+    }
+  }
+
   Widget _buildEjercicioCard(EntrenamientoEjercicio e) {
     final tiempo = e.tiempoRealizado ?? e.tiempoPlan ?? 0;
     final reps = e.repeticionesRealizadas ?? e.repeticionesPlan ?? 0;
@@ -467,7 +538,7 @@ class _EntrenamientoPacientePlanFitDetailScreenState
     final hasComentario = (e.comentarioNutricionista ?? '').trim().isNotEmpty;
     final esfuerzo = e.esfuerzoPercibido ?? 0;
     final hasMiniatura = (e.fotoMiniatura ?? '').isNotEmpty;
-    final hasImagenCompleta = (e.fotoBase64 ?? '').isNotEmpty;
+    final canOpenImage = hasMiniatura;
 
     // Función para obtener color del esfuerzo
     Color getEsfuerzoColor(int valor) {
@@ -482,13 +553,7 @@ class _EntrenamientoPacientePlanFitDetailScreenState
         return ClipRRect(
           borderRadius: BorderRadius.circular(8),
           child: GestureDetector(
-            onTap: hasImagenCompleta
-                ? () => showImageViewerDialog(
-                      context: context,
-                      base64Image: e.fotoBase64!,
-                      title: e.nombre,
-                    )
-                : null,
+            onTap: canOpenImage ? () => _showExerciseImage(e) : null,
             child: Image.memory(
               base64Decode(e.fotoMiniatura!),
               width: 80,
@@ -733,7 +798,7 @@ class _EntrenamientoPacientePlanFitDetailScreenState
           : _ejercicios.isEmpty
               ? const Center(child: Text('No hay ejercicios registrados.'))
               : ListView.builder(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
                   itemCount: _ejercicios.length,
                   itemBuilder: (context, index) {
                     return _buildEjercicioCard(_ejercicios[index]);

@@ -5,6 +5,7 @@
  */
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/token_expiration_config.php';
 
 /**
  * Obtener token del header Authorization
@@ -24,39 +25,21 @@ function get_auth_token() {
  * Obtener parámetro de expiración según tipo de usuario
  */
 function get_token_expiration_hours($db, $tipo) {
-    try {
-        $param_name = 'horas_caducidad_token_' . strtolower($tipo);
-        $stmt = $db->prepare("
-            SELECT valor 
-            FROM parametros_usuario 
-            WHERE nombre = :param_name 
-            LIMIT 1
-        ");
-        $stmt->bindParam(':param_name', $param_name);
-        $stmt->execute();
-        
-        if ($stmt->rowCount() > 0) {
-            $row = $stmt->fetch(PDO::FETCH_ASSOC);
-            return (int) $row['valor'];
-        }
-        
-        // Valores por defecto si no existe el parámetro
-        switch ($tipo) {
-            case 'Nutricionista':
-                return 8;
-            case 'Paciente':
-                return 4;
-            case 'Usuario':
-                return 2;
-            case 'Invitado':
-                return 0; // Sin expiración
-            default:
-                return 2;
-        }
-    } catch (PDOException $e) {
-        // En caso de error, retornar valor por defecto
-        return 2;
+    $tipo_normalizado = strtolower(trim((string) $tipo));
+
+    if ($tipo_normalizado === 'invitado' || $tipo_normalizado === 'guest') {
+        return get_guest_token_expiration_hours($db);
     }
+
+    if ($tipo_normalizado === 'paciente') {
+        return get_token_hours_from_param($db, 'horas_caducidad_token_paciente', 720);
+    }
+
+    if ($tipo_normalizado === 'nutricionista') {
+        return get_token_hours_from_param($db, 'horas_caducidad_token_nutricionista', 504);
+    }
+
+    return get_token_hours_from_param($db, 'horas_caducidad_token_usuario', 1440);
 }
 
 /**

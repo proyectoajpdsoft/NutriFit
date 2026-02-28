@@ -1392,27 +1392,119 @@ class _PacientesListScreenState extends State<PacientesListScreen> {
   }
 
   Future<void> _onDeletePacienteTapped(Paciente paciente) async {
-    final hasRelated = await _hasRelatedData(paciente.codigo);
-    if (hasRelated) {
-      if (!mounted) return;
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('No se puede eliminar'),
-          content: const Text(
-              'Este paciente tiene citas, revisiones, entrevistas, mediciones o cobros asociados. Por seguridad, no se permite eliminarlo.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Aceptar'),
-            )
-          ],
-        ),
-      );
-      return;
-    }
+    try {
+      // Primero verificar dependencias en las nuevas tablas
+      final dependencies =
+          await ApiService().checkPacienteDependencies(paciente.codigo);
 
-    _showDeleteConfirmation(paciente);
+      if (dependencies.isNotEmpty) {
+        // Tiene dependencias, mostrar diálogo con opciones
+        if (!mounted) return;
+        _showDependenciesDialog(paciente.codigo, dependencies);
+        return;
+      }
+
+      // Luego verificar las tablas antiguas (citas, revisiones, etc.) para compatibilidad
+      final hasRelated = await _hasRelatedData(paciente.codigo);
+      if (hasRelated) {
+        if (!mounted) return;
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('No se puede eliminar'),
+            content: const Text(
+                'Este paciente tiene citas, revisiones, entrevistas, mediciones o cobros asociados. Por seguridad, no se permite eliminarlo.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Aceptar'),
+              )
+            ],
+          ),
+        );
+        return;
+      }
+
+      // Si no tiene dependencias, mostrar confirmación simple
+      _showDeleteConfirmation(paciente);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  void _showDependenciesDialog(int codigo, Map<String, dynamic> dependencies) {
+    showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('El paciente tiene registros asociados'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Este paciente tiene los siguientes registros en otras tablas:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              ...dependencies.entries.map((entry) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4.0),
+                    child: Text(
+                      '• ${entry.key}: ${entry.value} registros',
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                  )),
+              const SizedBox(height: 16),
+              const Text(
+                'Si desea continuar, se eliminarán también todos estos registros.',
+                style:
+                    TextStyle(fontWeight: FontWeight.bold, color: Colors.red),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('Cancelar'),
+            onPressed: () => Navigator.pop(context, 'cancel'),
+          ),
+          TextButton(
+            child: const Text('Eliminar completo'),
+            onPressed: () => Navigator.pop(context, 'delete'),
+          ),
+        ],
+      ),
+    ).then((action) async {
+      if (action == 'delete') {
+        await _deletePacienteCascade(codigo);
+      }
+    });
+  }
+
+  Future<void> _deletePacienteCascade(int codigo) async {
+    try {
+      final success = await ApiService().deletePacienteCascade(codigo);
+      if (success) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Paciente y todos sus registros eliminados'),
+                backgroundColor: Colors.green),
+          );
+          _refreshPacientes();
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   Future<bool> _hasRelatedData(int codigoPaciente) async {

@@ -18,7 +18,8 @@ class _DebugTokenScreenState extends State<DebugTokenScreen> {
 
   void _log(String message) {
     setState(() {
-      _diagnosticLog += '${DateTime.now().toString().split('.')[0]} - $message\n';
+      _diagnosticLog +=
+          '${DateTime.now().toString().split('.')[0]} - $message\n';
     });
     debugPrint('[TOKEN DEBUG] $message');
   }
@@ -36,7 +37,8 @@ class _DebugTokenScreenState extends State<DebugTokenScreen> {
       final authService = context.read<AuthService>();
       final apiService = context.read<ApiService>();
 
-      _log('Token actual en AuthService: ${authService.token != null ? "SÍ" : "NO"}');
+      _log(
+          'Token actual en AuthService: ${authService.token != null ? "SÍ" : "NO"}');
       _log('User Type: ${authService.userType}');
       _log('Is Logged In: ${authService.isLoggedIn}');
 

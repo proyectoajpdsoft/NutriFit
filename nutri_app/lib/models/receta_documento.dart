@@ -1,7 +1,7 @@
 class RecetaDocumento {
   int? codigo;
   int codigoReceta;
-  String tipo; // 'documento' o 'url'
+  String tipo; // 'documento', 'url' o 'imagen'
   String? nombre;
   String? documento; // Base64
   String? url;

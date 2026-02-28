@@ -122,9 +122,7 @@ class ApiService {
     Map<String, String>? headers,
   }) async {
     try {
-      return await http
-          .get(uri, headers: headers)
-          .timeout(
+      return await http.get(uri, headers: headers).timeout(
             const Duration(seconds: 15),
             onTimeout: () =>
                 http.Response('Conexión lenta o servidor inaccesible', 408),
@@ -146,9 +144,7 @@ class ApiService {
     dynamic body,
   }) async {
     try {
-      return await http
-          .post(uri, headers: headers, body: body)
-          .timeout(
+      return await http.post(uri, headers: headers, body: body).timeout(
             const Duration(seconds: 15),
             onTimeout: () =>
                 http.Response('Conexión lenta o servidor inaccesible', 408),
@@ -170,9 +166,7 @@ class ApiService {
     dynamic body,
   }) async {
     try {
-      return await http
-          .put(uri, headers: headers, body: body)
-          .timeout(
+      return await http.put(uri, headers: headers, body: body).timeout(
             const Duration(seconds: 15),
             onTimeout: () =>
                 http.Response('Conexión lenta o servidor inaccesible', 408),
@@ -193,9 +187,7 @@ class ApiService {
     Map<String, String>? headers,
   }) async {
     try {
-      return await http
-          .delete(uri, headers: headers)
-          .timeout(
+      return await http.delete(uri, headers: headers).timeout(
             const Duration(seconds: 15),
             onTimeout: () =>
                 http.Response('Conexión lenta o servidor inaccesible', 408),
@@ -253,15 +245,13 @@ class ApiService {
   // Login como invitado (sin credenciales)
   Future<Map<String, dynamic>> loginAsGuest() async {
     try {
-      final response = await http
-          .post(
-            Uri.parse('${_baseUrl}api/guest_login.php'),
-            headers: {
-              'Content-Type': 'application/json; charset=UTF-8',
-              'Accept': 'application/json',
-            },
-          )
-          .timeout(const Duration(seconds: 10));
+      final response = await http.post(
+        Uri.parse('${_baseUrl}api/guest_login.php'),
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         return json.decode(response.body);
@@ -397,10 +387,50 @@ ${response.body}
     return response.statusCode == 201;
   }
 
+  Future<bool> createPacienteWithUser(Paciente paciente,
+      {int? codigoUsuario}) async {
+    final userCode = await _getUserCode();
+    final data = paciente.toJson();
+    data['codusuarioa'] = userCode;
+    if (codigoUsuario != null) {
+      data['codigo_usuario'] = codigoUsuario;
+    }
+
+    final response = await http.post(
+      Uri.parse('${_baseUrl}api/pacientes.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode(data),
+    );
+    if (response.statusCode != 201) {
+      throw Exception('Respuesta del servidor: ${response.body}');
+    }
+    return response.statusCode == 201;
+  }
+
   Future<bool> updatePaciente(Paciente paciente) async {
     final userCode = await _getUserCode();
     final data = paciente.toJson();
     data['codusuariom'] = userCode;
+
+    final response = await http.put(
+      Uri.parse('${_baseUrl}api/pacientes.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode(data),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Respuesta del servidor: ${response.body}');
+    }
+    return response.statusCode == 200;
+  }
+
+  Future<bool> updatePacienteWithUser(Paciente paciente,
+      {int? codigoUsuario}) async {
+    final userCode = await _getUserCode();
+    final data = paciente.toJson();
+    data['codusuariom'] = userCode;
+    if (codigoUsuario != null) {
+      data['codigo_usuario'] = codigoUsuario;
+    }
 
     final response = await http.put(
       Uri.parse('${_baseUrl}api/pacientes.php'),
@@ -419,6 +449,39 @@ ${response.body}
       headers: await _getHeaders(),
       body: jsonEncode({'codigo': codigo}),
     );
+    return response.statusCode == 200;
+  }
+
+  // Verificar dependencias de un paciente antes de eliminarlo
+  Future<Map<String, dynamic>> checkPacienteDependencies(int codigo) async {
+    final response = await http.post(
+      Uri.parse('${_baseUrl}api/pacientes.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode({
+        'action': 'check_dependencies',
+        'codigo': codigo,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Respuesta del servidor: ${response.body}');
+    }
+    final data = jsonDecode(response.body);
+    return data['dependencies'] ?? {};
+  }
+
+  // Eliminar paciente en cascada (elimina todos sus registros relacionados)
+  Future<bool> deletePacienteCascade(int codigo) async {
+    final response = await http.post(
+      Uri.parse('${_baseUrl}api/pacientes.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode({
+        'action': 'delete_cascade',
+        'codigo': codigo,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Respuesta del servidor: ${response.body}');
+    }
     return response.statusCode == 200;
   }
 
@@ -727,12 +790,12 @@ ${response.body}
       headers: await _getHeaders(),
       body: jsonEncode(data),
     );
-    if (response.statusCode != 201) {
+    if (response.statusCode != 201 && response.statusCode != 200) {
       throw Exception(
         'Respuesta del servidor al crear medición: ${response.body}',
       );
     }
-    return response.statusCode == 201;
+    return response.statusCode == 201 || response.statusCode == 200;
   }
 
   Future<bool> updateMedicion(Medicion medicion) async {
@@ -765,6 +828,93 @@ ${response.body}
       );
     }
     return response.statusCode == 200;
+  }
+
+  Future<List<Medicion>> getPesosUsuario() async {
+    final uri = Uri.parse('${_baseUrl}api/mediciones.php').replace(
+      queryParameters: {
+        'pesos_usuario': '1',
+      },
+    );
+
+    final response = await _safeGet(uri, headers: await _getHeaders());
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      throw Exception(
+        'Fallo al cargar pesos (Código: ${response.statusCode})',
+      );
+    }
+
+    final List<dynamic> jsonResponse = json.decode(response.body);
+    return jsonResponse.map((data) => Medicion.fromJson(data)).toList();
+  }
+
+  Future<bool> createPesoUsuario({
+    required DateTime fecha,
+    required double peso,
+    String? observacionUsuario,
+  }) async {
+    final patientCode = await _storage.read(key: 'patientCode');
+    final userCode = await _storage.read(key: 'userCode');
+
+    final medicion = Medicion(
+      codigo: 0,
+      codigoPaciente: int.tryParse(patientCode ?? '') ?? 0,
+      fecha: fecha,
+      peso: peso,
+      tipo: 'Usuario',
+      observacionUsuario: observacionUsuario,
+      codigoUsuario: int.tryParse(userCode ?? ''),
+    );
+    return createMedicion(medicion);
+  }
+
+  Future<Map<String, dynamic>> getPesoObjetivoUsuario() async {
+    final uri = Uri.parse('${_baseUrl}api/mediciones.php').replace(
+      queryParameters: {
+        'objetivo_peso': '1',
+      },
+    );
+
+    final response = await _safeGet(uri, headers: await _getHeaders());
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      throw Exception(
+        'Fallo al cargar objetivo de peso (Código: ${response.statusCode})',
+      );
+    }
+
+    final data = json.decode(response.body);
+    return {
+      'peso_objetivo': data['peso_objetivo'] == null
+          ? null
+          : double.tryParse(data['peso_objetivo'].toString()),
+      'peso_objetivo_sugerido': data['peso_objetivo_sugerido'] == null
+          ? null
+          : double.tryParse(data['peso_objetivo_sugerido'].toString()),
+      'altura_paciente': data['altura_paciente'] == null
+          ? null
+          : int.tryParse(data['altura_paciente'].toString()),
+    };
+  }
+
+  Future<bool> setPesoObjetivoUsuario(double? pesoObjetivo) async {
+    final response = await _safePut(
+      Uri.parse('${_baseUrl}api/mediciones.php?objetivo_peso=1'),
+      headers: await _getHeaders(),
+      body: jsonEncode({
+        'peso_objetivo': pesoObjetivo,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      throw Exception(
+        'Fallo al guardar objetivo de peso (Código: ${response.statusCode}). ${response.body}',
+      );
+    }
+
+    return true;
   }
 
   // --- REVISIONES ---
@@ -1337,9 +1487,8 @@ ${response.body}
           return null;
         }
         // Si es lista, tomar el primer elemento
-        final ejercicioData = jsonResponse is List
-            ? jsonResponse[0]
-            : jsonResponse;
+        final ejercicioData =
+            jsonResponse is List ? jsonResponse[0] : jsonResponse;
         return PlanFitEjercicio.fromJson(ejercicioData);
       } catch (e) {
         throw Exception('Error al verificar ejercicio catalogo: $e');
@@ -1951,9 +2100,8 @@ ${response.body}
       _validateResponse(response.statusCode, response.body);
       try {
         final data = json.decode(response.body);
-        final message = data is Map<String, dynamic>
-            ? data['message']?.toString()
-            : null;
+        final message =
+            data is Map<String, dynamic> ? data['message']?.toString() : null;
         if (message != null && message.trim().isNotEmpty) {
           throw Exception(message);
         }
@@ -2435,9 +2583,8 @@ ${response.body}
     request.fields['codigo_plan_fit'] = ejercicio.codigoPlanFit.toString();
     request.fields['codigo_dia'] = ejercicio.codigoDia?.toString() ?? '';
     if (ejercicio.codigoEjercicioCatalogo != null) {
-      request.fields['codigo_ejercicio_catalogo'] = ejercicio
-          .codigoEjercicioCatalogo
-          .toString();
+      request.fields['codigo_ejercicio_catalogo'] =
+          ejercicio.codigoEjercicioCatalogo.toString();
     }
     request.fields['nombre'] = ejercicio.nombre;
     final instruccionesText = (ejercicio.instrucciones ?? '').trim();
@@ -2500,9 +2647,8 @@ ${response.body}
     request.fields['codigo_plan_fit'] = ejercicio.codigoPlanFit.toString();
     request.fields['codigo_dia'] = ejercicio.codigoDia?.toString() ?? '';
     if (ejercicio.codigoEjercicioCatalogo != null) {
-      request.fields['codigo_ejercicio_catalogo'] = ejercicio
-          .codigoEjercicioCatalogo
-          .toString();
+      request.fields['codigo_ejercicio_catalogo'] =
+          ejercicio.codigoEjercicioCatalogo.toString();
     }
     request.fields['nombre'] = ejercicio.nombre;
     final instruccionesText = (ejercicio.instrucciones ?? '').trim();
@@ -2795,6 +2941,23 @@ ${response.body}
     return response.statusCode == 201;
   }
 
+  // Versión extendida que retorna la respuesta completa con información de sincronización
+  Future<Map<String, dynamic>> createUsuarioWithSync(
+      Map<String, dynamic> usuarioData) async {
+    final userCode = await _getUserCode();
+    usuarioData['codusuarioa'] = userCode;
+
+    final response = await http.post(
+      Uri.parse('${_baseUrl}api/usuarios.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode(usuarioData),
+    );
+    if (response.statusCode != 201) {
+      throw Exception('Respuesta del servidor: ${response.body}');
+    }
+    return jsonDecode(response.body) ?? {};
+  }
+
   Future<bool> updateUsuario(Map<String, dynamic> usuarioData) async {
     final userCode = await _getUserCode();
     usuarioData['codusuariom'] = userCode;
@@ -2810,6 +2973,23 @@ ${response.body}
     return response.statusCode == 200;
   }
 
+  // Versión extendida que retorna la respuesta completa con información de sincronización
+  Future<Map<String, dynamic>> updateUsuarioWithSync(
+      Map<String, dynamic> usuarioData) async {
+    final userCode = await _getUserCode();
+    usuarioData['codusuariom'] = userCode;
+
+    final response = await http.put(
+      Uri.parse('${_baseUrl}api/usuarios.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode(usuarioData),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Respuesta del servidor: ${response.body}');
+    }
+    return jsonDecode(response.body) ?? {};
+  }
+
   Future<bool> deleteUsuario(int codigo) async {
     final response = await http.delete(
       Uri.parse('${_baseUrl}api/usuarios.php'),
@@ -2817,7 +2997,73 @@ ${response.body}
       body: jsonEncode({'codigo': codigo}),
     );
     if (response.statusCode != 200) {
-      throw Exception('Respuesta del servidor: ${response.body}');
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception(
+        'Respuesta del servidor (${response.statusCode}): $body',
+      );
+    }
+    return response.statusCode == 200;
+  }
+
+  // Verificar dependencias de un usuario antes de eliminarlo
+  Future<Map<String, dynamic>> checkUsuarioDependencies(int codigo) async {
+    final response = await http.post(
+      Uri.parse('${_baseUrl}api/usuarios.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode({
+        'action': 'check_dependencies',
+        'codigo': codigo,
+      }),
+    );
+    if (response.statusCode != 200) {
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception(
+        'Respuesta del servidor (${response.statusCode}): $body',
+      );
+    }
+    final data = jsonDecode(response.body);
+    return data['dependencies'] ?? {};
+  }
+
+  // Eliminar usuario en cascada (elimina todos sus registros relacionados)
+  Future<bool> deleteUsuarioCascade(int codigo) async {
+    final response = await http.post(
+      Uri.parse('${_baseUrl}api/usuarios.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode({
+        'action': 'delete_cascade',
+        'codigo': codigo,
+      }),
+    );
+    if (response.statusCode != 200) {
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception(
+        'Respuesta del servidor (${response.statusCode}): $body',
+      );
+    }
+    return response.statusCode == 200;
+  }
+
+  // Mover todos los registros de un usuario a otro
+  Future<bool> moveUsuarioData(int codigoOrigen, int codigoDestino) async {
+    final response = await http.post(
+      Uri.parse('${_baseUrl}api/usuarios.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode({
+        'action': 'move_usuario_data',
+        'codigo_usuario': codigoOrigen,
+        'codigo_usuario_destino': codigoDestino,
+      }),
+    );
+    if (response.statusCode != 200) {
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception(
+        'Respuesta del servidor (${response.statusCode}): $body',
+      );
     }
     return response.statusCode == 200;
   }
@@ -3281,8 +3527,7 @@ ${response.body}
 
       return {
         'success': false,
-        'message':
-            responseBody['message'] ??
+        'message': responseBody['message'] ??
             'Error al crear usuario: ${response.statusCode}',
         'statusCode': response.statusCode,
       };

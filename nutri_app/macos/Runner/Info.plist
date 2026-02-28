@@ -20,15 +20,7 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOS_DEPLOYMENT_TARGET)</string>
-	<!-- Permisos de red -->
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Esta aplicación necesita acceso a la red local para conectarse con el servidor</string>
-	<key>NSBonjourServiceTypes</key>
-	<array>
-		<string>_http._tcp</string>
-		<string>_https._tcp</string>
-	</array>
-	<!-- Permitir conexión a servidores HTTPS y HTTP -->
+	<!-- Permitir conexión a API HTTPS -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
@@ -42,23 +34,16 @@
 				<key>NSExceptionAllowsInsecureHTTPLoads</key>
 				<false/>
 				<key>NSExceptionMinimumTLSVersion</key>
-				<string>TLSv1.2</string/>
-			</dict>
-			<key>ipcasa.ajpdsoft.com</key>
-			<dict>
-				<key>NSIncludesSubdomains</key>
-				<true/>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-				<key>NSExceptionMinimumTLSVersion</key>
-				<string>TLSv1.0</string/>
+				<string>TLSv1.2</string>
 			</dict>
 		</dict>
 	</dict>
-	<!-- Permisos para cámara y archivos -->
+	<!-- Permisos para cámara y fotos -->
 	<key>NSCameraUsageDescription</key>
 	<string>Esta aplicación necesita acceso a la cámara para tomar fotos</string>
-	<key>NSPhotosUsageDescription</key>
+	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Esta aplicación necesita acceso a la galería de fotos</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Esta aplicación necesita guardar imágenes en tu galería</string>
 </dict>
 </plist>

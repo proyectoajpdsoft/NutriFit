@@ -102,8 +102,7 @@ class _ListaCompraEditScreenState extends State<ListaCompraEditScreen> {
           _notasController.text.isEmpty ? null : _notasController.text;
 
       if (_isNew) {
-        // Usar codigo_paciente si existe, o codigo_usuario como respaldo
-        final ownerCode = authService.patientCode ?? authService.userCode;
+        final ownerCode = authService.userCode;
         if (ownerCode != null && ownerCode.isNotEmpty) {
           _item.codigoUsuario = int.parse(ownerCode);
           if (authService.userCode != null &&

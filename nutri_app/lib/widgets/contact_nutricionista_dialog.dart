@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:nutri_app/services/api_service.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 
 class ContactNutricionistaDialog extends StatefulWidget {
   const ContactNutricionistaDialog({super.key});
@@ -11,6 +13,9 @@ class ContactNutricionistaDialog extends StatefulWidget {
 
 class _ContactNutricionistaDialogState
     extends State<ContactNutricionistaDialog> {
+  static const MethodChannel _externalUrlChannel =
+      MethodChannel('nutri_app/external_url');
+
   final ApiService _apiService = ApiService();
   Map<String, String> _contactInfo = {};
   bool _isLoading = true;
@@ -93,34 +98,26 @@ class _ContactNutricionistaDialogState
     }
   }
 
-  // URL Launcher disabled - feature temporarily disabled
-  // Future<void> _launchUrl(String url) async {
-  //   if (url.isEmpty) return;
-  //   try {
-  //     final uri = Uri.parse(url);
-  //     if (await canLaunchUrl(uri)) {
-  //       await launchUrl(uri, mode: LaunchMode.externalApplication);
-  //     } else {
-  //       if (mounted) {
-  //         ScaffoldMessenger.of(context).showSnackBar(
-  //           const SnackBar(
-  //             content: Text('No se puede abrir el enlace'),
-  //             backgroundColor: Colors.red,
-  //           ),
-  //         );
-  //       }
-  //     }
-  //   } catch (e) {
-  //     if (mounted) {
-  //       ScaffoldMessenger.of(context).showSnackBar(
-  //         SnackBar(
-  //           content: Text('Error al abrir el enlace: $e'),
-  //           backgroundColor: Colors.red,
-  //         ),
-  //       );
-  //     }
-  //   }
-  // }
+  Future<void> _launchUrl(String url) async {
+    try {
+      await launchUrlString(url, mode: LaunchMode.externalApplication);
+    } on PlatformException catch (e) {
+      if (e.code == 'channel-error') {
+        await _externalUrlChannel.invokeMethod('openUrl', {'url': url});
+        return;
+      }
+      rethrow;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al abrir el enlace: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
 
   Widget _buildContactItem(
       IconData icon, String label, String value, String url) {
@@ -131,9 +128,7 @@ class _ContactNutricionistaDialogState
         leading: Icon(icon, color: Theme.of(context).colorScheme.primary),
         title: Text('Contactar por $label'),
         trailing: const Icon(Icons.open_in_new),
-        // URL Launcher disabled - feature temporarily disabled
-        // onTap: () => _launchUrl(url),
-        onTap: () {},
+        onTap: () => _launchUrl(url),
       ),
     );
   }

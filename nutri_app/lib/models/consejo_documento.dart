@@ -1,7 +1,7 @@
 class ConsejoDocumento {
   int? codigo;
   int codigoConsejo;
-  String tipo; // 'documento' o 'url'
+  String tipo; // 'documento', 'url' o 'imagen'
   String? nombre;
   String? documento; // Base64
   String? url;

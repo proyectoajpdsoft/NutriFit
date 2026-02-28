@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import '../models/entrenamiento.dart';
 import '../screens/entrenamientos_pacientes_plan_fit_screen.dart';
 import '../services/api_service.dart';
-import '../widgets/image_viewer_dialog.dart' show showImageViewerDialog;
 import 'dart:convert';
 
 class EntrenamientoSensacionesPendientesScreen extends StatefulWidget {
@@ -118,30 +117,19 @@ class _EntrenamientoSensacionesPendientesScreenState
                   0;
               final nombreEjercicio =
                   item['nombre_ejercicio']?.toString() ?? '';
-              final fotoMiniatura = item['foto_miniatura']?.toString() ?? '';
-              final fotoCompleta = item['foto']?.toString() ?? '';
-              final hasMiniatura = fotoMiniatura.isNotEmpty;
-              final hasImagenCompleta = fotoCompleta.isNotEmpty;
+              final usuarioImgPerfil =
+                  item['usuario_img_perfil']?.toString() ?? '';
 
-              // Widget para mostrar la miniatura
+              // Widget para mostrar solo la imagen de perfil del usuario
               Widget buildThumbnail() {
-                if (hasMiniatura) {
+                if (usuarioImgPerfil.isNotEmpty) {
                   return ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: GestureDetector(
-                      onTap: hasImagenCompleta
-                          ? () => showImageViewerDialog(
-                                context: context,
-                                base64Image: fotoCompleta,
-                                title: nombreEjercicio,
-                              )
-                          : null,
-                      child: Image.memory(
-                        base64Decode(fotoMiniatura),
-                        width: 70,
-                        height: 70,
-                        fit: BoxFit.cover,
-                      ),
+                    child: Image.memory(
+                      base64Decode(usuarioImgPerfil),
+                      width: 70,
+                      height: 70,
+                      fit: BoxFit.cover,
                     ),
                   );
                 } else {
@@ -152,8 +140,8 @@ class _EntrenamientoSensacionesPendientesScreenState
                       color: Colors.grey[300],
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Icon(Icons.fitness_center,
-                        size: 36, color: Colors.grey),
+                    child:
+                        const Icon(Icons.person, size: 36, color: Colors.grey),
                   );
                 }
               }

@@ -6,6 +6,8 @@ class Consejo {
   DateTime? fechaInicio;
   DateTime? fechaFin;
   String mostrarPortada;
+  DateTime? fechaInicioPortada;
+  DateTime? fechaFinPortada;
   String visibleParaTodos;
   String? imagenPortada; // Base64
   String? imagenPortadaNombre;
@@ -18,8 +20,10 @@ class Consejo {
   int? totalPacientes;
   String? meGusta; // Para pacientes: 'S' o 'N'
   String? favorito; // Para pacientes: 'S' o 'N'
+  String? leido; // Para pacientes: 'S' o 'N'
   List<int> categoriaIds;
   List<String> categoriaNombres;
+  List<String> pacientesNombres;
 
   Consejo({
     this.codigo,
@@ -29,6 +33,8 @@ class Consejo {
     this.fechaInicio,
     this.fechaFin,
     this.mostrarPortada = 'N',
+    this.fechaInicioPortada,
+    this.fechaFinPortada,
     this.visibleParaTodos = 'N',
     this.imagenPortada,
     this.imagenPortadaNombre,
@@ -41,10 +47,13 @@ class Consejo {
     this.totalPacientes,
     this.meGusta,
     this.favorito,
+    this.leido,
     List<int>? categoriaIds,
     List<String>? categoriaNombres,
+    List<String>? pacientesNombres,
   })  : categoriaIds = categoriaIds ?? <int>[],
-        categoriaNombres = categoriaNombres ?? <String>[];
+        categoriaNombres = categoriaNombres ?? <String>[],
+        pacientesNombres = pacientesNombres ?? <String>[];
 
   factory Consejo.fromJson(Map<String, dynamic> json) {
     return Consejo(
@@ -59,6 +68,12 @@ class Consejo {
       fechaFin:
           json['fecha_fin'] != null ? DateTime.parse(json['fecha_fin']) : null,
       mostrarPortada: json['mostrar_portada'] ?? 'N',
+      fechaInicioPortada: json['fecha_inicio_portada'] != null
+          ? DateTime.parse(json['fecha_inicio_portada'])
+          : null,
+      fechaFinPortada: json['fecha_fin_portada'] != null
+          ? DateTime.parse(json['fecha_fin_portada'])
+          : null,
       visibleParaTodos: json['visible_para_todos'] ?? 'N',
       imagenPortada: json['imagen_portada'],
       imagenPortadaNombre: json['imagen_portada_nombre'],
@@ -79,8 +94,10 @@ class Consejo {
           : 0,
       meGusta: json['me_gusta'],
       favorito: json['favorito'],
+      leido: json['leido'],
       categoriaIds: _parseIds(json['categorias_ids']),
       categoriaNombres: _parseNames(json['categorias_nombres']),
+      pacientesNombres: _parsePacientesNames(json['pacientes_nombres']),
     );
   }
 
@@ -111,6 +128,21 @@ class Consejo {
     return raw.split(',').map((item) => item.trim()).toList();
   }
 
+  static List<String> _parsePacientesNames(dynamic value) {
+    if (value == null) return [];
+    if (value is List) {
+      return value.map((item) => item.toString()).toList();
+    }
+    final raw = value.toString().trim();
+    if (raw.isEmpty) return [];
+    // Los nombres de pacientes están separados por ', ' (coma y espacio)
+    return raw
+        .split(', ')
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+  }
+
   Map<String, dynamic> toJson() {
     return {
       'codigo': codigo,
@@ -120,6 +152,9 @@ class Consejo {
       'fecha_inicio': fechaInicio?.toIso8601String().split('T')[0],
       'fecha_fin': fechaFin?.toIso8601String().split('T')[0],
       'mostrar_portada': mostrarPortada,
+      'fecha_inicio_portada':
+          fechaInicioPortada?.toIso8601String().split('T')[0],
+      'fecha_fin_portada': fechaFinPortada?.toIso8601String().split('T')[0],
       'visible_para_todos': visibleParaTodos,
       'imagen_portada': imagenPortada,
       'imagen_portada_nombre': imagenPortadaNombre,

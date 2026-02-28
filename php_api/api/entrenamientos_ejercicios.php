@@ -62,13 +62,15 @@ switch ($method) {
 function get_ejercicios_entrenamiento($codigo_entrenamiento) {
     global $db;
     $query = "SELECT e.codigo, e.codigo_entrenamiento, e.codigo_plan_fit_ejercicio, e.nombre, e.instrucciones, e.url_video,
-                     pfe.foto,
-                     pfe.foto_miniatura,
+               pfe.codigo_ejercicio_catalogo,
+               NULL AS foto,
+               COALESCE(c.foto_miniatura, pfe.foto_miniatura) AS foto_miniatura,
                      e.tiempo_plan, e.descanso_plan, e.repeticiones_plan, e.kilos_plan, e.esfuerzo_percibido, e.tiempo_realizado, e.repeticiones_realizadas,
                      e.sensaciones, e.comentario_nutricionista, e.comentario_leido, e.comentario_leido_fecha,
                      e.sensaciones_leido_nutri, e.sensaciones_leido_nutri_fecha, e.realizado, e.orden
               FROM nu_entrenamientos_ejercicios e
               LEFT JOIN nu_plan_fit_ejercicio pfe ON e.codigo_plan_fit_ejercicio = pfe.codigo
+          LEFT JOIN nu_plan_fit_ejercicios_catalogo c ON c.codigo = pfe.codigo_ejercicio_catalogo
               WHERE e.codigo_entrenamiento = :codigo_entrenamiento
               ORDER BY e.orden DESC, e.codigo DESC";
     $stmt = $db->prepare($query);
@@ -77,9 +79,6 @@ function get_ejercicios_entrenamiento($codigo_entrenamiento) {
     $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     foreach ($items as &$item) {
-        if (!empty($item['foto'])) {
-            $item['foto'] = base64_encode($item['foto']);
-        }
         if (!empty($item['foto_miniatura'])) {
             $item['foto_miniatura'] = base64_encode($item['foto_miniatura']);
         }
@@ -171,7 +170,14 @@ function get_unread_sensaciones_nutri() {
                          en.duracion_minutos,
                          en.nivel_esfuerzo,
                          p.codigo AS codigo_paciente,
-                         p.nombre AS nombre_paciente
+                         p.nombre AS nombre_paciente,
+                                                 (
+                                                     SELECT u.img_perfil
+                                                     FROM usuario u
+                                                     WHERE u.codigo_paciente = p.codigo
+                                                         AND u.img_perfil IS NOT NULL
+                                                     LIMIT 1
+                                                 ) AS usuario_img_perfil
                             FROM nu_entrenamientos_ejercicios e
                             INNER JOIN nu_entrenamientos en ON en.codigo = e.codigo_entrenamiento
                             LEFT JOIN nu_paciente p ON p.codigo = en.codigo_paciente
@@ -192,6 +198,9 @@ function get_unread_sensaciones_nutri() {
             }
             if (!empty($item['foto'])) {
                 $item['foto'] = base64_encode($item['foto']);
+            }
+            if (!empty($item['usuario_img_perfil'])) {
+                $item['usuario_img_perfil'] = base64_encode($item['usuario_img_perfil']);
             }
         }
 

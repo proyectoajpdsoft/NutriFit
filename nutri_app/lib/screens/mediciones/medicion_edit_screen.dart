@@ -157,6 +157,7 @@ class _MedicionEditScreenState extends State<MedicionEditScreen> {
         pligueTricipital: double.tryParse(_pliegueTricipitalController.text),
         pliegueSuprailiaco: double.tryParse(_pliegueSuprailiacoController.text),
         observacion: _observacionController.text,
+        tipo: 'Dietista',
       );
 
       try {

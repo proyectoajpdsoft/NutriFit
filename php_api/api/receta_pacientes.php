@@ -62,7 +62,7 @@ function get_pacientes_by_receta($receta_codigo) {
     global $db;
 
     $query = "SELECT rp.*, p.nombre
-              FROM nu_receta_paciente rp
+              FROM nu_receta_usuario rp
               INNER JOIN nu_paciente p ON rp.codigo_paciente = p.codigo
               WHERE rp.codigo_receta = :receta
               ORDER BY p.nombre";
@@ -79,8 +79,9 @@ function get_pacientes_by_receta($receta_codigo) {
 function get_receta_paciente($paciente_codigo, $receta_codigo) {
     global $db;
 
-    $query = "SELECT * FROM nu_receta_paciente 
-              WHERE codigo_paciente = :paciente AND codigo_receta = :receta";
+    $query = "SELECT * FROM nu_receta_usuario 
+              WHERE codigo_receta = :receta
+              AND (codigo_usuario = :paciente OR codigo_paciente = :paciente)";
 
     $stmt = $db->prepare($query);
     $stmt->bindParam(':paciente', $paciente_codigo);
@@ -94,6 +95,26 @@ function get_receta_paciente($paciente_codigo, $receta_codigo) {
     } else {
         echo json_encode(array("me_gusta" => "N"));
     }
+}
+
+function resolve_usuario_codigo_by_paciente($paciente_codigo) {
+    global $db;
+
+    if (empty($paciente_codigo)) {
+        return null;
+    }
+
+    $query = "SELECT codigo FROM usuario WHERE codigo_paciente = :paciente LIMIT 1";
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(':paciente', $paciente_codigo);
+    $stmt->execute();
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$row || !isset($row['codigo'])) {
+        return null;
+    }
+
+    return intval($row['codigo']);
 }
 
 function assign_pacientes() {
@@ -118,14 +139,15 @@ function assign_pacientes() {
     $success_count = 0;
     $error_count = 0;
 
-    $delete_query = "DELETE FROM nu_receta_paciente WHERE codigo_receta = :receta";
+    $delete_query = "DELETE FROM nu_receta_usuario WHERE codigo_receta = :receta";
     $delete_stmt = $db->prepare($delete_query);
     $delete_stmt->bindParam(':receta', $data->codigo_receta);
     $delete_stmt->execute();
 
-    $query = "INSERT INTO nu_receta_paciente SET
+    $query = "INSERT INTO nu_receta_usuario SET
                 codigo_receta = :codigo_receta,
                 codigo_paciente = :codigo_paciente,
+                codigo_usuario = :codigo_usuario,
                 me_gusta = 'N',
                 favorito = 'N',
                 leido = 'N',
@@ -135,8 +157,14 @@ function assign_pacientes() {
     $stmt = $db->prepare($query);
 
     foreach($data->codigos_pacientes as $codigo_paciente) {
+        $codigo_usuario = resolve_usuario_codigo_by_paciente($codigo_paciente);
         $stmt->bindParam(":codigo_receta", $data->codigo_receta);
         $stmt->bindParam(":codigo_paciente", $codigo_paciente);
+        if ($codigo_usuario === null) {
+            $stmt->bindValue(":codigo_usuario", null, PDO::PARAM_NULL);
+        } else {
+            $stmt->bindValue(":codigo_usuario", $codigo_usuario, PDO::PARAM_INT);
+        }
         $stmt->bindParam(":codusuarioa", $codusuarioa);
 
         if($stmt->execute()) {
@@ -166,7 +194,7 @@ function toggle_like() {
         return;
     }
 
-    $check_query = "SELECT codigo, me_gusta FROM nu_receta_paciente 
+    $check_query = "SELECT codigo, me_gusta FROM nu_receta_usuario 
                     WHERE codigo_receta = :receta AND codigo_paciente = :paciente";
     $check_stmt = $db->prepare($check_query);
     $check_stmt->bindParam(':receta', $data->codigo_receta);
@@ -175,15 +203,15 @@ function toggle_like() {
     $existing = $check_stmt->fetch(PDO::FETCH_ASSOC);
 
     if(!$existing) {
-        $insert_query = "INSERT INTO nu_receta_paciente SET
-                        codigo_receta = :codigo_receta,
-                        codigo_paciente = :codigo_paciente,
-                        me_gusta = 'S',
-                        favorito = 'N',
-                        leido = 'N',
-                        fecha_me_gusta = NOW(),
-                        fechaa = NOW(),
-                        codusuarioa = 1";
+        $insert_query = "INSERT INTO nu_receta_usuario SET
+                codigo_receta = :codigo_receta,
+                codigo_paciente = :codigo_paciente,
+                me_gusta = 'S',
+                favorito = 'N',
+                leido = 'N',
+                fecha_me_gusta = NOW(),
+                fechaa = NOW(),
+                codusuarioa = 1";
 
         $insert_stmt = $db->prepare($insert_query);
         $insert_stmt->bindParam(':codigo_receta', $data->codigo_receta);
@@ -207,7 +235,7 @@ function toggle_like() {
     $new_value = $existing['me_gusta'] == 'S' ? 'N' : 'S';
     $fecha_me_gusta = $new_value == 'S' ? date('Y-m-d H:i:s') : null;
 
-    $update_query = "UPDATE nu_receta_paciente SET 
+    $update_query = "UPDATE nu_receta_usuario SET 
                     me_gusta = :me_gusta,
                     fecha_me_gusta = :fecha_me_gusta,
                     fecham = NOW()
@@ -235,7 +263,7 @@ function toggle_like() {
 function remove_paciente($receta_codigo, $paciente_codigo) {
     global $db;
 
-    $query = "DELETE FROM nu_receta_paciente WHERE codigo_receta = :receta AND codigo_paciente = :paciente";
+    $query = "DELETE FROM nu_receta_usuario WHERE codigo_receta = :receta AND codigo_paciente = :paciente";
     $stmt = $db->prepare($query);
     $stmt->bindParam(':receta', $receta_codigo);
     $stmt->bindParam(':paciente', $paciente_codigo);
@@ -255,34 +283,50 @@ function marcar_leido() {
     global $db;
     $data = json_decode(file_get_contents("php://input"));
 
-    if(empty($data->codigo_receta) || empty($data->codigo_paciente)) {
+    if(empty($data->codigo_receta) || (empty($data->codigo_paciente) && empty($data->codigo_usuario))) {
         http_response_code(400);
         ob_clean();
         echo json_encode(array("message" => "Faltan datos requeridos."));
         return;
     }
 
-    $check_query = "SELECT codigo, leido FROM nu_receta_paciente 
-                    WHERE codigo_receta = :receta AND codigo_paciente = :paciente";
+    $codigo_usuario = $data->codigo_usuario ?? null;
+    $codigo_paciente = $data->codigo_paciente ?? null;
+
+    $check_query = "SELECT codigo, leido FROM nu_receta_usuario 
+                    WHERE codigo_receta = :receta
+                    AND ((:usuario IS NOT NULL AND codigo_usuario = :usuario)
+                         OR (:usuario IS NULL AND codigo_paciente = :paciente))";
     $check_stmt = $db->prepare($check_query);
     $check_stmt->bindParam(':receta', $data->codigo_receta);
-    $check_stmt->bindParam(':paciente', $data->codigo_paciente);
+    if ($codigo_usuario === null) {
+        $check_stmt->bindValue(':usuario', null, PDO::PARAM_NULL);
+    } else {
+        $check_stmt->bindValue(':usuario', $codigo_usuario, PDO::PARAM_INT);
+    }
+    $check_stmt->bindParam(':paciente', $codigo_paciente);
     $check_stmt->execute();
     $existing = $check_stmt->fetch(PDO::FETCH_ASSOC);
 
     if(!$existing) {
-        $insert_query = "INSERT INTO nu_receta_paciente SET
-                        codigo_receta = :codigo_receta,
-                        codigo_paciente = :codigo_paciente,
-                        me_gusta = 'N',
-                        favorito = 'N',
-                        leido = 'S',
-                        fechaa = NOW(),
-                        codusuarioa = 1";
+        $insert_query = "INSERT INTO nu_receta_usuario SET
+                codigo_receta = :codigo_receta,
+                codigo_paciente = :codigo_paciente,
+                codigo_usuario = :codigo_usuario,
+                me_gusta = 'N',
+                favorito = 'N',
+                leido = 'S',
+                fechaa = NOW(),
+                codusuarioa = 1";
 
         $insert_stmt = $db->prepare($insert_query);
         $insert_stmt->bindParam(':codigo_receta', $data->codigo_receta);
-        $insert_stmt->bindParam(':codigo_paciente', $data->codigo_paciente);
+        $insert_stmt->bindParam(':codigo_paciente', $codigo_paciente);
+        if ($codigo_usuario === null) {
+            $insert_stmt->bindValue(':codigo_usuario', null, PDO::PARAM_NULL);
+        } else {
+            $insert_stmt->bindValue(':codigo_usuario', $codigo_usuario, PDO::PARAM_INT);
+        }
 
         if($insert_stmt->execute()) {
             http_response_code(200);
@@ -299,7 +343,7 @@ function marcar_leido() {
         return;
     }
 
-    $update_query = "UPDATE nu_receta_paciente SET 
+    $update_query = "UPDATE nu_receta_usuario SET 
                     leido = 'S',
                     fecham = NOW()
                     WHERE codigo = :codigo";
@@ -325,16 +369,16 @@ function get_destacados_no_leidos($paciente_codigo) {
     global $db;
 
     $query = "SELECT r.*, rp.me_gusta, rp.leido,
-              (SELECT COUNT(*) FROM nu_receta_paciente rp2 WHERE rp2.codigo_receta = r.codigo AND rp2.me_gusta = 'S') as total_likes
+              (SELECT COUNT(*) FROM nu_receta_usuario rp2 WHERE rp2.codigo_receta = r.codigo AND rp2.me_gusta = 'S') as total_likes
               FROM nu_receta r
-              INNER JOIN nu_receta_paciente rp ON r.codigo = rp.codigo_receta
-              WHERE rp.codigo_paciente = :paciente
+              INNER JOIN nu_receta_usuario rp ON r.codigo = rp.codigo_receta
+              WHERE rp.codigo_usuario = :usuario
               AND r.mostrar_portada = 'S'
               AND rp.leido = 'N'
               ORDER BY r.fechaa DESC";
 
     $stmt = $db->prepare($query);
-    $stmt->bindParam(':paciente', $paciente_codigo);
+    $stmt->bindParam(':usuario', $paciente_codigo);
     $stmt->execute();
     $recetas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -352,17 +396,17 @@ function get_favoritos($paciente_codigo) {
     global $db;
 
     $query = "SELECT r.*, rp.me_gusta, rp.leido, rp.favorito,
-              (SELECT COUNT(*) FROM nu_receta_paciente rp2 WHERE rp2.codigo_receta = r.codigo AND rp2.me_gusta = 'S') as total_likes
+              (SELECT COUNT(*) FROM nu_receta_usuario rp2 WHERE rp2.codigo_receta = r.codigo AND rp2.me_gusta = 'S') as total_likes
               FROM nu_receta r
-              INNER JOIN nu_receta_paciente rp ON r.codigo = rp.codigo_receta
-              WHERE rp.codigo_paciente <=> :paciente
+              INNER JOIN nu_receta_usuario rp ON r.codigo = rp.codigo_receta
+              WHERE rp.codigo_usuario <=> :usuario
               AND rp.favorito = 'S'
               ORDER BY r.fechaa DESC";
 
     $stmt = $db->prepare($query);
     // Convertir 'null' string a null real
-    $paciente_real = ($paciente_codigo === 'null' || $paciente_codigo === null) ? null : $paciente_codigo;
-    $stmt->bindParam(':paciente', $paciente_real);
+    $usuario_real = ($paciente_codigo === 'null' || $paciente_codigo === null) ? null : $paciente_codigo;
+    $stmt->bindParam(':usuario', $usuario_real);
     $stmt->execute();
     $recetas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -391,7 +435,7 @@ function toggle_favorito() {
     $codigo_paciente = isset($data->codigo_paciente) ? $data->codigo_paciente : null;
 
     // Usar operador NULL-safe para comparar
-    $check_query = "SELECT codigo, favorito FROM nu_receta_paciente 
+    $check_query = "SELECT codigo, favorito FROM nu_receta_usuario 
                     WHERE codigo_receta = :receta AND codigo_paciente <=> :paciente";
     $check_stmt = $db->prepare($check_query);
     $check_stmt->bindParam(':receta', $data->codigo_receta);
@@ -400,15 +444,15 @@ function toggle_favorito() {
     $existing = $check_stmt->fetch(PDO::FETCH_ASSOC);
 
     if(!$existing) {
-        $insert_query = "INSERT INTO nu_receta_paciente SET
-                        codigo_receta = :codigo_receta,
-                        codigo_paciente = :codigo_paciente,
-                        me_gusta = 'N',
-                        favorito = 'S',
-                        fecha_favorito = NOW(),
-                        leido = 'N',
-                        fechaa = NOW(),
-                        codusuarioa = 1";
+        $insert_query = "INSERT INTO nu_receta_usuario SET
+                codigo_receta = :codigo_receta,
+                codigo_paciente = :codigo_paciente,
+                me_gusta = 'N',
+                favorito = 'S',
+                fecha_favorito = NOW(),
+                leido = 'N',
+                fechaa = NOW(),
+                codusuarioa = 1";
 
         $insert_stmt = $db->prepare($insert_query);
         $insert_stmt->bindParam(':codigo_receta', $data->codigo_receta);
@@ -433,7 +477,7 @@ function toggle_favorito() {
     $fecha_favorito = $new_value == 'S' ? date('Y-m-d H:i:s') : null;
 
     // Construir query con NULL directo si es necesario
-    $update_query = "UPDATE nu_receta_paciente SET 
+    $update_query = "UPDATE nu_receta_usuario SET 
                     favorito = :favorito,
                     fecha_favorito = " . ($fecha_favorito ? ":fecha_favorito" : "NULL") . ",
                     fecham = NOW()

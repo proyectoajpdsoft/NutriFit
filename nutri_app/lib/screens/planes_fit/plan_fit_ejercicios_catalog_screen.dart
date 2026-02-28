@@ -1,10 +1,10 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'dart:io';
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:nutri_app/models/plan_fit_categoria.dart';
 import 'package:nutri_app/models/plan_fit_ejercicio.dart';
 import 'package:nutri_app/services/api_service.dart';
@@ -12,8 +12,8 @@ import 'package:nutri_app/services/ejercicios_catalog_pdf_service.dart';
 import 'package:nutri_app/services/thumbnail_generator.dart';
 import 'package:nutri_app/widgets/app_drawer.dart';
 import 'package:nutri_app/widgets/image_viewer_dialog.dart';
-// import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 
 class PlanFitEjerciciosCatalogScreen extends StatefulWidget {
   final bool openCreateDialog;
@@ -30,6 +30,9 @@ class PlanFitEjerciciosCatalogScreen extends StatefulWidget {
 
 class _PlanFitEjerciciosCatalogScreenState
     extends State<PlanFitEjerciciosCatalogScreen> {
+  static const MethodChannel _externalUrlChannel =
+      MethodChannel('nutri_app/external_url');
+
   Timer? _addTimer;
   Timer? _removeTimer;
 
@@ -404,67 +407,27 @@ class _PlanFitEjerciciosCatalogScreenState
     }
   }
 
-  // Future<void> _launchUrlExternal(String url) async {
-  //   var urlString = url.trim();
-  //   if (urlString.isEmpty) return;
-  //   if (!urlString.startsWith('http://') && !urlString.startsWith('https://')) {
-  //     urlString = 'https://$urlString';
-  //   }
-  //   final uri = Uri.tryParse(urlString);
-  //   if (uri == null) {
-  //     if (mounted) {
-  //       ScaffoldMessenger.of(context).showSnackBar(
-  //         const SnackBar(
-  //           content: Text('URL no válida'),
-  //           backgroundColor: Colors.red,
-  //         ),
-  //       );
-  //     }
-  //     return;
-  //   }
-  //
-  //   try {
-  //     // Intenta primero con modo externo
-  //     if (await canLaunchUrl(uri)) {
-  //       await launchUrl(uri, mode: LaunchMode.externalApplication);
-  //     } else {
-  //       if (mounted) {
-  //         ScaffoldMessenger.of(context).showSnackBar(
-  //           const SnackBar(
-  //             content: Text('No hay navegador disponible'),
-  //             backgroundColor: Colors.orange,
-  //           ),
-  //         );
-  //       }
-  //     }
-  //   } catch (e) {
-  //     // Si falla, intenta sin especificar el modo
-  //     try {
-  //       if (await canLaunchUrl(uri)) {
-  //         await launchUrl(uri);
-  //       } else {
-  //         if (mounted) {
-  //           ScaffoldMessenger.of(context).showSnackBar(
-  //             const SnackBar(
-  //               content: Text('No hay navegador disponible'),
-  //               backgroundColor: Colors.orange,
-  //             ),
-  //           );
-  //         }
-  //       }
-  //     } catch (e2) {
-  //       if (mounted) {
-  //         ScaffoldMessenger.of(context).showSnackBar(
-  //           SnackBar(
-  //             content: Text(
-  //                 'No se pudo abrir la URL: ${e2.toString().split('\n').first}'),
-  //             backgroundColor: Colors.red,
-  //           ),
-  //         );
-  //       }
-  //     }
-  //   }
-  // }
+  Future<void> _launchUrlExternal(String url) async {
+    try {
+      await launchUrlString(url, mode: LaunchMode.externalApplication);
+    } on PlatformException catch (e) {
+      if (e.code == 'channel-error') {
+        await _externalUrlChannel.invokeMethod('openUrl', {'url': url});
+        return;
+      }
+      rethrow;
+    } catch (e) {
+      if (mounted) {
+        final message = e.toString().split('\n').first;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('No se pudo abrir la URL: $message'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
 
   Future<bool> _openCategoriaForm({PlanFitCategoria? categoria}) async {
     final isEditing = categoria != null;
@@ -610,8 +573,8 @@ class _PlanFitEjerciciosCatalogScreenState
                               title: Text(categoria.nombre),
                               subtitle:
                                   (categoria.descripcion ?? '').trim().isEmpty
-                                  ? null
-                                  : Text(categoria.descripcion!),
+                                      ? null
+                                      : Text(categoria.descripcion!),
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
@@ -818,21 +781,19 @@ class _PlanFitEjerciciosCatalogScreenState
                     children: [
                       TextField(
                         controller: nombreController,
-                        decoration:
-                            const InputDecoration(
-                              labelText: 'Nombre',
-                              border: OutlineInputBorder(),
-                            ).copyWith(
-                              errorText: showNombreError
-                                  ? 'Por favor, introduzca el nombre'
-                                  : null,
-                            ),
+                        decoration: const InputDecoration(
+                          labelText: 'Nombre',
+                          border: OutlineInputBorder(),
+                        ).copyWith(
+                          errorText: showNombreError
+                              ? 'Por favor, introduzca el nombre'
+                              : null,
+                        ),
                         onChanged: (_) => setStateDialog(() {
                           hasChanges = true;
                           if (showNombreError) {
-                            showNombreError = nombreController.text
-                                .trim()
-                                .isEmpty;
+                            showNombreError =
+                                nombreController.text.trim().isEmpty;
                           }
                         }),
                       ),
@@ -860,7 +821,8 @@ class _PlanFitEjerciciosCatalogScreenState
                       const SizedBox(height: 12),
                       Row(
                         children: [
-                          Expanded(
+                          Flexible(
+                            flex: 6,
                             child: _buildLongPressNumberField(
                               label: '',
                               controller: tiempoController,
@@ -872,7 +834,8 @@ class _PlanFitEjerciciosCatalogScreenState
                             ),
                           ),
                           const SizedBox(width: 12),
-                          Expanded(
+                          Flexible(
+                            flex: 5,
                             child: _buildLongPressNumberField(
                               label: '',
                               controller: descansoController,
@@ -941,8 +904,7 @@ class _PlanFitEjerciciosCatalogScreenState
                       ),
                       const SizedBox(height: 12),
                       _buildPhotoThumbnailCatalog(
-                        hasFoto:
-                            (ejercicio?.fotoMiniatura ??
+                        hasFoto: (ejercicio?.fotoMiniatura ??
                                     ejercicio?.fotoBase64 ??
                                     '')
                                 .isNotEmpty ||
@@ -951,8 +913,7 @@ class _PlanFitEjerciciosCatalogScreenState
                         fotoPath: pickedFoto?.path,
                         fotoMiniatura: ejercicio?.fotoMiniatura ?? '',
                         fotoBase64: ejercicio?.fotoBase64 ?? '',
-                        isFotoCatalog:
-                            pickedFoto == null &&
+                        isFotoCatalog: pickedFoto == null &&
                             ((ejercicio?.fotoMiniatura ??
                                     ejercicio?.fotoBase64 ??
                                     '')
@@ -1030,8 +991,8 @@ class _PlanFitEjerciciosCatalogScreenState
                         });
                         return;
                       }
-                      final instruccionesText = instruccionesController.text
-                          .trim();
+                      final instruccionesText =
+                          instruccionesController.text.trim();
 
                       final nuevo = PlanFitEjercicio(
                         codigo: ejercicio?.codigo ?? 0,
@@ -1076,8 +1037,8 @@ class _PlanFitEjerciciosCatalogScreenState
                             );
                             miniaturaBytes =
                                 ThumbnailGenerator.generateThumbnail(
-                                  fotoExistente,
-                                );
+                              fotoExistente,
+                            );
                           } catch (e) {
                             // //debugPrint('Error al generar miniatura desde foto existente: $e');
                           }
@@ -1093,13 +1054,13 @@ class _PlanFitEjerciciosCatalogScreenState
                             miniaturaBytes: miniaturaBytes,
                           );
                         } else {
-                          final codigoCreado = await _apiService
-                              .createCatalogEjercicio(
-                                nuevo,
-                                fotoBytes: fotoBytes,
-                                fotoName: fotoName,
-                                categorias: selectedCategorias.toList(),
-                              );
+                          final codigoCreado =
+                              await _apiService.createCatalogEjercicio(
+                            nuevo,
+                            fotoBytes: fotoBytes,
+                            fotoName: fotoName,
+                            categorias: selectedCategorias.toList(),
+                          );
                           if (codigoCreado == 0) {
                             throw Exception(
                               'No se pudo crear el ejercicio en el catálogo',
@@ -1331,12 +1292,10 @@ class _PlanFitEjerciciosCatalogScreenState
                     separatorBuilder: (_, __) => const Divider(),
                     itemBuilder: (context, index) {
                       final ejercicio = _items[index];
-                      final hasFoto = (ejercicio.fotoMiniatura ?? '')
-                          .trim()
-                          .isNotEmpty;
-                      final hasUrl = (ejercicio.urlVideo ?? '')
-                          .trim()
-                          .isNotEmpty;
+                      final hasFoto =
+                          (ejercicio.fotoMiniatura ?? '').trim().isNotEmpty;
+                      final hasUrl =
+                          (ejercicio.urlVideo ?? '').trim().isNotEmpty;
 
                       return Card(
                         elevation: 2,
@@ -1457,9 +1416,11 @@ class _PlanFitEjerciciosCatalogScreenState
                                 runSpacing: 6,
                                 children: [
                                   if (hasUrl)
-                                    const IconButton(
-                                      onPressed: null,
-                                      icon: Icon(Icons.open_in_browser),
+                                    IconButton(
+                                      onPressed: () => _launchUrlExternal(
+                                        ejercicio.urlVideo ?? '',
+                                      ),
+                                      icon: const Icon(Icons.open_in_browser),
                                       color: Colors.blue,
                                       iconSize: 28,
                                       tooltip: 'Abrir URL',

@@ -6,6 +6,7 @@ String medicionToJson(Medicion data) => json.encode(data.toJson());
 class Medicion {
   int codigo;
   int codigoPaciente;
+  int? codigoUsuario;
   String? nombrePaciente;
   String? pacienteActivo;
   DateTime fecha;
@@ -22,10 +23,14 @@ class Medicion {
   double? pligueTricipital;
   double? pliegueSuprailiaco;
   String? observacion;
+  String? observacionUsuario;
+  String? tipo;
+  int? alturaPaciente;
 
   Medicion({
     required this.codigo,
     required this.codigoPaciente,
+    this.codigoUsuario,
     this.nombrePaciente,
     this.pacienteActivo,
     required this.fecha,
@@ -42,6 +47,9 @@ class Medicion {
     this.pligueTricipital,
     this.pliegueSuprailiaco,
     this.observacion,
+    this.observacionUsuario,
+    this.tipo,
+    this.alturaPaciente,
   });
 
   factory Medicion.fromJson(Map<String, dynamic> json) {
@@ -61,6 +69,9 @@ class Medicion {
       codigoPaciente: json["codigo_paciente"] is int
           ? json["codigo_paciente"]
           : int.tryParse(json["codigo_paciente"]?.toString() ?? '') ?? 0,
+      codigoUsuario: json["codigo_usuario"] is int
+          ? json["codigo_usuario"]
+          : int.tryParse(json["codigo_usuario"]?.toString() ?? ''),
       nombrePaciente: json["nombre_paciente"],
       pacienteActivo: json["paciente_activo"],
       fecha: safeParseDate(json["fecha"]) ?? DateTime.now(),
@@ -99,12 +110,18 @@ class Medicion {
           ? null
           : double.parse(json["pliegue_suprailiaco"]),
       observacion: json["observacion"],
+      observacionUsuario: json["observacion_usuario"],
+      tipo: json["tipo"],
+      alturaPaciente: json["altura_paciente"] is int
+          ? json["altura_paciente"]
+          : int.tryParse(json["altura_paciente"]?.toString() ?? ''),
     );
   }
 
   Map<String, dynamic> toJson() => {
         "codigo": codigo,
         "codigo_paciente": codigoPaciente,
+        "codigo_usuario": codigoUsuario,
         "fecha": fecha.toIso8601String().split('T').first,
         "peso": peso,
         "cadera": cadera,
@@ -119,5 +136,8 @@ class Medicion {
         "pligue_tricipital": pligueTricipital,
         "pliegue_suprailiaco": pliegueSuprailiaco,
         "observacion": observacion,
+        "observacion_usuario": observacionUsuario,
+        "tipo": tipo,
+        "altura_paciente": alturaPaciente,
       };
 }

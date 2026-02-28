@@ -69,7 +69,7 @@ class AutoValidator {
         $query = "SELECT codigo, nick, tipo, administrador, codigo_paciente, token_expiracion, activo, accesoweb 
                   FROM usuario 
                   WHERE token = :token 
-                  AND token_expiracion > NOW() 
+                  AND (token_expiracion IS NULL OR token_expiracion > NOW()) 
                   AND activo = 'S' 
                   AND accesoweb = 'S'
                   LIMIT 1";
@@ -109,7 +109,7 @@ class AutoValidator {
         $query = "SELECT token, fecha_expiracion, ip_publica, activo 
                   FROM guest_tokens 
                   WHERE token = :token 
-                  AND fecha_expiracion > NOW() 
+                  AND (fecha_expiracion IS NULL OR fecha_expiracion > NOW()) 
                   AND activo = 'S'
                   LIMIT 1";
         
