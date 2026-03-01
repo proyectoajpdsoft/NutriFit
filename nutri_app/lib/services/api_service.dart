@@ -18,6 +18,7 @@ import 'package:nutri_app/models/chat_conversation.dart';
 import 'package:nutri_app/models/chat_message.dart';
 import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
 import 'package:nutri_app/models/cliente.dart';
 import 'package:nutri_app/models/cobro.dart';
@@ -31,12 +32,100 @@ import 'package:nutri_app/services/thumbnail_generator.dart';
 
 class ApiService {
   // Se elimina la dependencia de AuthService. ApiService vuelve a ser autocontenido.
-  // URL dinámica: debug usa localhost, release usa producción
-  final String _baseUrl = kDebugMode
-      //? "http://ipcasa.ajpdsoft.com:8080/apirestnu/"
-      ? "https://aprendeconpatricia.com/php_api/"
-      : "https://aprendeconpatricia.com/php_api/";
+  // URL dinámica de arranque. Luego se autoconfigura desde parámetro url_api.
+  static const String _defaultBaseUrl =
+      "https://aprendeconpatricia.com/php_api/";
+  static const String _prefsApiBaseUrlKey = 'api_base_url';
+  static const String _apiUrlParamName = 'url_api';
+
+  static Future<void>? _baseUrlBootstrapFuture;
+  static String _resolvedBaseUrl = _defaultBaseUrl;
+
+  String _baseUrl = _resolvedBaseUrl;
   final _storage = const FlutterSecureStorage();
+
+  Future<void> _ensureBaseUrlReady() {
+    _baseUrlBootstrapFuture ??= _bootstrapAndRefreshBaseUrl();
+    return _baseUrlBootstrapFuture!;
+  }
+
+  String _normalizeBaseUrl(String? url) {
+    final trimmed = (url ?? '').trim();
+    if (trimmed.isEmpty) return '';
+
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null || !uri.hasScheme) return '';
+    if (uri.scheme != 'http' && uri.scheme != 'https') return '';
+
+    return trimmed.endsWith('/') ? trimmed : '$trimmed/';
+  }
+
+  Future<String?> _fetchRemoteApiBaseUrl(String fromBaseUrl) async {
+    final uri = Uri.parse('${fromBaseUrl}api/parametros.php')
+        .replace(queryParameters: {'nombre': _apiUrlParamName});
+
+    final response = await http.get(
+      uri,
+      headers: const {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Accept': 'application/json',
+      },
+    ).timeout(const Duration(seconds: 8));
+
+    if (response.statusCode != 200) {
+      return null;
+    }
+
+    final dynamic decoded = json.decode(response.body);
+
+    if (decoded is Map<String, dynamic>) {
+      final candidates = [
+        decoded['valor1'],
+        decoded['valor'],
+        decoded['valor2']
+      ];
+      for (final candidate in candidates) {
+        final normalized = _normalizeBaseUrl(candidate?.toString());
+        if (normalized.isNotEmpty) return normalized;
+      }
+    }
+
+    if (decoded is String) {
+      final normalized = _normalizeBaseUrl(decoded);
+      if (normalized.isNotEmpty) return normalized;
+    }
+
+    return null;
+  }
+
+  Future<void> _bootstrapAndRefreshBaseUrl() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      // 1) Arranca con URL guardada o por defecto.
+      final stored = _normalizeBaseUrl(prefs.getString(_prefsApiBaseUrlKey));
+      var baseToCheck = stored.isNotEmpty ? stored : _defaultBaseUrl;
+      _resolvedBaseUrl = baseToCheck;
+      _baseUrl = _resolvedBaseUrl;
+
+      // 2) Lee url_api desde la URL activa y actualiza si cambia.
+      final remote = await _fetchRemoteApiBaseUrl(baseToCheck);
+      if (remote != null && remote != _resolvedBaseUrl) {
+        _resolvedBaseUrl = remote;
+        _baseUrl = remote;
+        await prefs.setString(_prefsApiBaseUrlKey, remote);
+      } else if (stored.isEmpty) {
+        // Persistir la base inicial en primera ejecución.
+        await prefs.setString(_prefsApiBaseUrlKey, _resolvedBaseUrl);
+      }
+    } catch (_) {
+      // Fallback silencioso: mantener URL actual sin interrumpir la app.
+      _resolvedBaseUrl = _normalizeBaseUrl(_resolvedBaseUrl).isNotEmpty
+          ? _resolvedBaseUrl
+          : _defaultBaseUrl;
+      _baseUrl = _resolvedBaseUrl;
+    }
+  }
 
   /// Valida la respuesta y lanza excepciones apropiadas
   /// Detecta tokens expirados y errores de autenticación
@@ -105,6 +194,7 @@ class ApiService {
 
   // Este método es ahora la única forma de obtener el token. Directo desde el almacenamiento.
   Future<Map<String, String>> _getHeaders() async {
+    await _ensureBaseUrlReady();
     final token = await _storage.read(key: 'authToken');
     final headers = {
       'Content-Type': 'application/json; charset=UTF-8',
@@ -121,6 +211,7 @@ class ApiService {
     Uri uri, {
     Map<String, String>? headers,
   }) async {
+    await _ensureBaseUrlReady();
     try {
       return await http.get(uri, headers: headers).timeout(
             const Duration(seconds: 15),
@@ -143,6 +234,7 @@ class ApiService {
     Map<String, String>? headers,
     dynamic body,
   }) async {
+    await _ensureBaseUrlReady();
     try {
       return await http.post(uri, headers: headers, body: body).timeout(
             const Duration(seconds: 15),
@@ -165,6 +257,7 @@ class ApiService {
     Map<String, String>? headers,
     dynamic body,
   }) async {
+    await _ensureBaseUrlReady();
     try {
       return await http.put(uri, headers: headers, body: body).timeout(
             const Duration(seconds: 15),
@@ -186,6 +279,7 @@ class ApiService {
     Uri uri, {
     Map<String, String>? headers,
   }) async {
+    await _ensureBaseUrlReady();
     try {
       return await http.delete(uri, headers: headers).timeout(
             const Duration(seconds: 15),
@@ -236,6 +330,7 @@ class ApiService {
         'nick': nick,
         'contrasena': password,
         'dispositivo_tipo': deviceType,
+        'url_api': _baseUrl,
       }),
     );
     Map<String, dynamic> decoded;

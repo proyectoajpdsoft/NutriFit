@@ -66,7 +66,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 $database = new Database();
 $db = $database->getConnection();
 
+$current_api_base_url = get_current_api_base_url();
+
 $data = json_decode(file_get_contents("php://input"));
+
+$client_api_url = normalize_api_base_url($data->url_api ?? null);
+$api_url_to_store = !empty($client_api_url) ? $client_api_url : $current_api_base_url;
 
 if (empty($data->nick) || empty($data->contrasena)) {
     http_response_code(400);
@@ -112,14 +117,36 @@ if ($num > 0) {
         );
         $token_expiracion = build_token_expiration_datetime_or_null($hours_to_expire);
 
-        // Guardar el token en la base de datos
-        $update_query = "UPDATE usuario SET token = :token, token_expiracion = :token_expiracion WHERE codigo = :codigo";
+        // Guardar token y URL API efectiva para el usuario autenticado
+        $update_ok = false;
+        $update_query = "UPDATE usuario
+                         SET token = :token,
+                             token_expiracion = :token_expiracion,
+                             url_api = :url_api
+                         WHERE codigo = :codigo";
         $update_stmt = $db->prepare($update_query);
-        $update_stmt->bindParam(':token', $token);
-        $update_stmt->bindParam(':token_expiracion', $token_expiracion);
-        $update_stmt->bindParam(':codigo', $codigo);
 
-        if ($update_stmt->execute()) {
+        if ($update_stmt) {
+            $update_stmt->bindParam(':token', $token);
+            $update_stmt->bindParam(':token_expiracion', $token_expiracion);
+            $update_stmt->bindParam(':url_api', $api_url_to_store);
+            $update_stmt->bindParam(':codigo', $codigo);
+            $update_ok = $update_stmt->execute();
+        }
+
+        // Fallback por compatibilidad si el campo url_api aún no existe en algún entorno
+        if (!$update_ok) {
+            $fallback_query = "UPDATE usuario SET token = :token, token_expiracion = :token_expiracion WHERE codigo = :codigo";
+            $fallback_stmt = $db->prepare($fallback_query);
+            if ($fallback_stmt) {
+                $fallback_stmt->bindParam(':token', $token);
+                $fallback_stmt->bindParam(':token_expiracion', $token_expiracion);
+                $fallback_stmt->bindParam(':codigo', $codigo);
+                $update_ok = $fallback_stmt->execute();
+            }
+        }
+
+        if ($update_ok) {
             log_session($db, $codigo, 'OK', $data->dispositivo_tipo ?? null);
             http_response_code(200);
             echo json_encode(array(
@@ -135,8 +162,8 @@ if ($num > 0) {
                 )
             ));
         } else {
-            $sql_error = $update_stmt->errorInfo();
-            error_log("[login.php] Fallo update token usuario {$codigo}: " . json_encode($sql_error));
+            $sql_error = $update_stmt ? $update_stmt->errorInfo() : array('prepare_failed');
+            error_log("[login.php] Fallo update token/url_api usuario {$codigo}: " . json_encode($sql_error));
             http_response_code(503);
             echo json_encode(array("message" => "No se pudo actualizar el token."));
         }
@@ -184,5 +211,49 @@ function log_session($db, $codigo_usuario, $estado, $tipo_dispositivo = null) {
         // Manejo de errores silencioso para no interrumpir el login
         error_log("Error al registrar sesión: " . $e->getMessage());
     }
+}
+
+function get_current_api_base_url() {
+    $scheme = 'https';
+
+    if (!empty($_SERVER['HTTP_X_FORWARDED_PROTO'])) {
+        $scheme = strtolower(trim(explode(',', $_SERVER['HTTP_X_FORWARDED_PROTO'])[0]));
+    } elseif (!empty($_SERVER['REQUEST_SCHEME'])) {
+        $scheme = strtolower($_SERVER['REQUEST_SCHEME']);
+    } elseif (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
+        $scheme = 'https';
+    } else {
+        $scheme = 'http';
+    }
+
+    $host = $_SERVER['HTTP_X_FORWARDED_HOST']
+        ?? $_SERVER['HTTP_HOST']
+        ?? $_SERVER['SERVER_NAME']
+        ?? 'localhost';
+
+    $script_name = $_SERVER['SCRIPT_NAME'] ?? '';
+    $dir = str_replace('\\', '/', dirname($script_name));
+    $dir = rtrim($dir, '/');
+
+    // login.php vive normalmente en /php_api/api/login.php -> base /php_api/
+    $base_path = (substr($dir, -4) === '/api') ? substr($dir, 0, -4) : $dir;
+    if ($base_path === '.' || $base_path === '/') {
+        $base_path = '';
+    }
+
+    return $scheme . '://' . $host . $base_path . '/';
+}
+
+function normalize_api_base_url($url) {
+    $value = trim((string) $url);
+    if ($value === '') {
+        return '';
+    }
+
+    if (!preg_match('#^https?://#i', $value)) {
+        return '';
+    }
+
+    return rtrim($value, '/') . '/';
 }
 ?>

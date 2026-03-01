@@ -34,7 +34,7 @@ class _LoginScreenState extends State<LoginScreen> {
   String _buildLoginErrorMessage(dynamic error) {
     final errorMessage = error.toString().replaceFirst('Exception: ', '');
     if (_isNetworkError(errorMessage)) {
-      return 'Hay algun problema con la conexion a Internet o la app no tiene permisos para conectarse.';
+      return 'Hay algun problema con la conexión a Internet o la app no tiene permisos para conectarse.';
     }
     return 'No se pudo completar el inicio de sesión. Inténtalo de nuevo.';
   }
@@ -42,7 +42,7 @@ class _LoginScreenState extends State<LoginScreen> {
   String _buildGuestErrorMessage(dynamic error) {
     final errorMessage = error.toString().replaceFirst('Exception: ', '');
     if (_isNetworkError(errorMessage)) {
-      return 'Hay algun problema con la conexion a Internet o la app no tiene permisos para conectarse.';
+      return 'Hay algun problema con la conexión a Internet o la app no tiene permisos para conectarse.';
     }
     return 'No se pudo acceder como invitado. Inténtalo de nuevo.';
   }
@@ -237,7 +237,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
-                                    'Acceda a NutriFit gratis para consultar consejos de salud, de nutrición, vídeos de ejercicios físicos, recetas de cocina, lista de la compra, registro de actividades, etc.',
+                                    'Acceda a NutriFit gratis para consultar consejos de salud, de nutrición, vídeos de ejercicios físicos, recetas de cocina, lista de la compra, registro de actividades y control de peso.',
                                     style:
                                         Theme.of(context).textTheme.bodySmall,
                                   ),
