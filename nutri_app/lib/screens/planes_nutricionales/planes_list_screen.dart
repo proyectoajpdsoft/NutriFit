@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:nutri_app/models/paciente.dart';
 import 'package:nutri_app/models/plan_nutricional.dart';
 import 'package:nutri_app/screens/planes_nutricionales/plan_edit_screen.dart';
+import 'package:nutri_app/services/adherencia_service.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/config_service.dart';
 import 'package:provider/provider.dart';
@@ -24,8 +25,11 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
       MethodChannel('nutri_app/external_url');
 
   final ApiService _apiService = ApiService();
+  final AdherenciaService _adherenciaService = AdherenciaService();
   late Future<List<PlanNutricional>> _planesFuture;
   final TextEditingController _searchController = TextEditingController();
+  final Map<int, Future<AdherenciaMetricaSemanal?>> _adherenciaNutriByPaciente =
+      {};
   String _searchText = '';
   bool _showSearchField = false;
   bool _showFilterPlanes = false;
@@ -51,6 +55,7 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
 
   void _refreshPlanes() {
     setState(() {
+      _adherenciaNutriByPaciente.clear();
       if (widget.paciente != null) {
         _planesFuture = _apiService.getPlanes(widget.paciente!.codigo);
       } else {
@@ -58,6 +63,26 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
         _planesFuture = _apiService.getPlanes(null);
       }
     });
+  }
+
+  Future<AdherenciaMetricaSemanal?> _getAdherenciaNutriPaciente(
+    int codigoPaciente,
+  ) {
+    return _adherenciaNutriByPaciente.putIfAbsent(codigoPaciente, () async {
+      final resumen = await _adherenciaService.getResumenSemanal(
+        userCode: codigoPaciente.toString(),
+        incluirNutri: true,
+        incluirFit: false,
+        codigoUsuarioConsulta: codigoPaciente,
+      );
+      return resumen.nutri;
+    });
+  }
+
+  Color _adherenciaColorByPercent(int percent) {
+    if (percent >= 75) return Colors.green;
+    if (percent >= 50) return Colors.orange;
+    return Colors.red;
   }
 
   Future<void> _loadUiState() async {
@@ -373,6 +398,59 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
                                         ?.copyWith(fontWeight: FontWeight.bold),
                                   ),
                                 ],
+                              ),
+                              const SizedBox(height: 8),
+                              Builder(
+                                builder: (context) {
+                                  final codigoPaciente = plan.codigoPaciente ??
+                                      widget.paciente?.codigo;
+                                  if (codigoPaciente == null ||
+                                      codigoPaciente <= 0) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  return FutureBuilder<
+                                      AdherenciaMetricaSemanal?>(
+                                    future: _getAdherenciaNutriPaciente(
+                                      codigoPaciente,
+                                    ),
+                                    builder: (context, adhSnapshot) {
+                                      if (adhSnapshot.connectionState ==
+                                          ConnectionState.waiting) {
+                                        return const SizedBox(
+                                          height: 18,
+                                          width: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        );
+                                      }
+                                      final pct =
+                                          adhSnapshot.data?.porcentaje ?? 0;
+                                      return Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 6,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.grey.shade100,
+                                          borderRadius:
+                                              BorderRadius.circular(999),
+                                          border: Border.all(
+                                            color: Colors.grey.shade300,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          'Cumplimiento paciente: $pct%',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            color:
+                                                _adherenciaColorByPercent(pct),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  );
+                                },
                               ),
                               const SizedBox(height: 12),
 

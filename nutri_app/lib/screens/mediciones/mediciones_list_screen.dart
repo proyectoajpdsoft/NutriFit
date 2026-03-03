@@ -148,6 +148,202 @@ class _MedicionesListScreenState extends State<MedicionesListScreen> {
     BmiDialogHelper.showBmiInfoDialog(context, bmi);
   }
 
+  Color _getMeasureDeltaColor(double delta) {
+    if (delta > 0) return Colors.red;
+    if (delta < 0) return Colors.green;
+    return Colors.grey;
+  }
+
+  IconData _getMeasureDeltaIcon(double delta) {
+    if (delta > 0) return Icons.trending_up;
+    if (delta < 0) return Icons.trending_down;
+    return Icons.remove;
+  }
+
+  String _getMeasureChangeText(double? delta) {
+    if (delta == null) return 'Sin referencia';
+    if (delta.abs() < 0.01) return 'Sin cambios';
+    if (delta > 0) return 'Sube +${delta.toStringAsFixed(0)} cm';
+    return 'Baja ${delta.toStringAsFixed(0)} cm';
+  }
+
+  Widget _buildMeasureHistoryLine({
+    required IconData icon,
+    required String label,
+    required double currentValue,
+    double? previousValue,
+  }) {
+    final delta = previousValue == null ? null : currentValue - previousValue;
+    final trendColor =
+        delta == null ? Colors.grey : _getMeasureDeltaColor(delta);
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: Colors.blueGrey[700]),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '$label: ${currentValue.toStringAsFixed(0)} cm',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          Text(
+            _getMeasureChangeText(delta),
+            style: TextStyle(
+              color: trendColor,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showBodyMeasuresHistoryDialog({
+    required String patientName,
+    required List<Medicion> mediciones,
+  }) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Evolución perímetros · $patientName'),
+        content: SizedBox(
+          width: 560,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: mediciones.length,
+            itemBuilder: (context, index) {
+              final actual = mediciones[index];
+              final anterior =
+                  index + 1 < mediciones.length ? mediciones[index + 1] : null;
+
+              final hasMainMeasures = actual.cintura != null ||
+                  actual.cadera != null ||
+                  actual.muslo != null ||
+                  actual.brazo != null;
+              if (!hasMainMeasures) {
+                return const SizedBox.shrink();
+              }
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey[300]!),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      DateFormat('dd/MM/yyyy').format(actual.fecha),
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    if (actual.cintura != null)
+                      _buildMeasureHistoryLine(
+                        icon: Icons.straighten,
+                        label: 'Cintura',
+                        currentValue: actual.cintura!,
+                        previousValue: anterior?.cintura,
+                      ),
+                    if (actual.cadera != null)
+                      _buildMeasureHistoryLine(
+                        icon: Icons.shape_line,
+                        label: 'Cadera',
+                        currentValue: actual.cadera!,
+                        previousValue: anterior?.cadera,
+                      ),
+                    if (actual.muslo != null)
+                      _buildMeasureHistoryLine(
+                        icon: Icons.directions_walk,
+                        label: 'Muslo',
+                        currentValue: actual.muslo!,
+                        previousValue: anterior?.muslo,
+                      ),
+                    if (actual.brazo != null)
+                      _buildMeasureHistoryLine(
+                        icon: Icons.fitness_center,
+                        label: 'Brazo',
+                        currentValue: actual.brazo!,
+                        previousValue: anterior?.brazo,
+                      ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBodyMeasureChip({
+    required IconData icon,
+    required String tooltip,
+    required double value,
+    double? previousValue,
+    VoidCallback? onTap,
+  }) {
+    final delta = previousValue == null ? null : value - previousValue;
+    final hasDelta = delta != null;
+    final deltaColor = hasDelta ? _getMeasureDeltaColor(delta) : Colors.grey;
+
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.grey[100],
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey[300]!),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: Colors.blueGrey[700]),
+              const SizedBox(width: 4),
+              Text(
+                value.toStringAsFixed(0),
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              if (hasDelta) ...[
+                const SizedBox(width: 6),
+                Icon(
+                  _getMeasureDeltaIcon(delta),
+                  size: 14,
+                  color: deltaColor,
+                ),
+                const SizedBox(width: 2),
+                Text(
+                  delta > 0
+                      ? '+${delta.toStringAsFixed(0)}'
+                      : delta.toStringAsFixed(0),
+                  style: TextStyle(
+                    color: deltaColor,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   void _navigateToEditScreen([Medicion? medicion]) async {
     Paciente? pacienteToUse = widget.paciente;
 
@@ -781,147 +977,135 @@ class _MedicionesListScreenState extends State<MedicionesListScreen> {
                                             ],
                                           ),
                                         ],
+                                        if (medicion.cintura != null ||
+                                            medicion.cadera != null ||
+                                            medicion.muslo != null ||
+                                            medicion.brazo != null) ...[
+                                          const SizedBox(height: 8),
+                                          Wrap(
+                                            spacing: 8,
+                                            runSpacing: 6,
+                                            children: [
+                                              if (medicion.cintura != null)
+                                                _buildBodyMeasureChip(
+                                                  icon: Icons.straighten,
+                                                  tooltip: 'Cintura (cm)',
+                                                  value: medicion.cintura!,
+                                                  previousValue: todasMediciones
+                                                          .where((m) =>
+                                                              m.fecha.isBefore(
+                                                                  medicion
+                                                                      .fecha) &&
+                                                              m.cintura != null)
+                                                          .isNotEmpty
+                                                      ? todasMediciones
+                                                          .firstWhere((m) =>
+                                                              m.fecha.isBefore(
+                                                                  medicion
+                                                                      .fecha) &&
+                                                              m.cintura != null)
+                                                          .cintura
+                                                      : null,
+                                                  onTap: () =>
+                                                      _showBodyMeasuresHistoryDialog(
+                                                    patientName:
+                                                        nombrePaciente ??
+                                                            'Paciente',
+                                                    mediciones: todasMediciones,
+                                                  ),
+                                                ),
+                                              if (medicion.cadera != null)
+                                                _buildBodyMeasureChip(
+                                                  icon: Icons.shape_line,
+                                                  tooltip: 'Cadera (cm)',
+                                                  value: medicion.cadera!,
+                                                  previousValue: todasMediciones
+                                                          .where((m) =>
+                                                              m.fecha.isBefore(
+                                                                  medicion
+                                                                      .fecha) &&
+                                                              m.cadera != null)
+                                                          .isNotEmpty
+                                                      ? todasMediciones
+                                                          .firstWhere((m) =>
+                                                              m.fecha.isBefore(
+                                                                  medicion
+                                                                      .fecha) &&
+                                                              m.cadera != null)
+                                                          .cadera
+                                                      : null,
+                                                  onTap: () =>
+                                                      _showBodyMeasuresHistoryDialog(
+                                                    patientName:
+                                                        nombrePaciente ??
+                                                            'Paciente',
+                                                    mediciones: todasMediciones,
+                                                  ),
+                                                ),
+                                              if (medicion.muslo != null)
+                                                _buildBodyMeasureChip(
+                                                  icon: Icons.directions_walk,
+                                                  tooltip: 'Muslo (cm)',
+                                                  value: medicion.muslo!,
+                                                  previousValue: todasMediciones
+                                                          .where((m) =>
+                                                              m.fecha.isBefore(
+                                                                  medicion
+                                                                      .fecha) &&
+                                                              m.muslo != null)
+                                                          .isNotEmpty
+                                                      ? todasMediciones
+                                                          .firstWhere((m) =>
+                                                              m.fecha.isBefore(
+                                                                  medicion
+                                                                      .fecha) &&
+                                                              m.muslo != null)
+                                                          .muslo
+                                                      : null,
+                                                  onTap: () =>
+                                                      _showBodyMeasuresHistoryDialog(
+                                                    patientName:
+                                                        nombrePaciente ??
+                                                            'Paciente',
+                                                    mediciones: todasMediciones,
+                                                  ),
+                                                ),
+                                              if (medicion.brazo != null)
+                                                _buildBodyMeasureChip(
+                                                  icon: Icons.fitness_center,
+                                                  tooltip: 'Brazo (cm)',
+                                                  value: medicion.brazo!,
+                                                  previousValue: todasMediciones
+                                                          .where((m) =>
+                                                              m.fecha.isBefore(
+                                                                  medicion
+                                                                      .fecha) &&
+                                                              m.brazo != null)
+                                                          .isNotEmpty
+                                                      ? todasMediciones
+                                                          .firstWhere((m) =>
+                                                              m.fecha.isBefore(
+                                                                  medicion
+                                                                      .fecha) &&
+                                                              m.brazo != null)
+                                                          .brazo
+                                                      : null,
+                                                  onTap: () =>
+                                                      _showBodyMeasuresHistoryDialog(
+                                                    patientName:
+                                                        nombrePaciente ??
+                                                            'Paciente',
+                                                    mediciones: todasMediciones,
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        ],
                                       ],
                                     );
                                   },
                                 ),
                               ],
-                              // Tercera fila: Medidas corporales
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 6,
-                                children: [
-                                  if (medicion.cadera != null)
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 4,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.green[50],
-                                        borderRadius: BorderRadius.circular(4),
-                                        border: Border.all(
-                                          color: Colors.green[200]!,
-                                        ),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(
-                                            Icons.straighten,
-                                            size: 14,
-                                            color: Colors.green[700],
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            'Cadera: ${medicion.cadera!.toStringAsFixed(1)} cm',
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              color: Colors.green[700],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  if (medicion.cintura != null)
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 4,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.green[50],
-                                        borderRadius: BorderRadius.circular(4),
-                                        border: Border.all(
-                                          color: Colors.green[200]!,
-                                        ),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(
-                                            Icons.straighten,
-                                            size: 14,
-                                            color: Colors.green[700],
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            'Cintura: ${medicion.cintura!.toStringAsFixed(1)} cm',
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              color: Colors.green[700],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  if (medicion.muslo != null)
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 4,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.green[50],
-                                        borderRadius: BorderRadius.circular(4),
-                                        border: Border.all(
-                                          color: Colors.green[200]!,
-                                        ),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(
-                                            Icons.straighten,
-                                            size: 14,
-                                            color: Colors.green[700],
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            'Muslo: ${medicion.muslo!.toStringAsFixed(1)} cm',
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              color: Colors.green[700],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  if (medicion.brazo != null)
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 4,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.green[50],
-                                        borderRadius: BorderRadius.circular(4),
-                                        border: Border.all(
-                                          color: Colors.green[200]!,
-                                        ),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(
-                                            Icons.straighten,
-                                            size: 14,
-                                            color: Colors.green[700],
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            'Brazo: ${medicion.brazo!.toStringAsFixed(1)} cm',
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              color: Colors.green[700],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                ],
-                              ),
                               const SizedBox(height: 12),
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.start,

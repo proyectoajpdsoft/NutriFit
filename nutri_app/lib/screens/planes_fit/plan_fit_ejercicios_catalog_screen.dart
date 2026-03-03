@@ -699,7 +699,7 @@ class _PlanFitEjerciciosCatalogScreenState
           ejercicio = ejercicioConFoto;
         }
       } catch (e) {
-        // //debugPrint('Error al cargar foto completa: $e');
+        // debugPrint('Error al cargar foto completa: $e');
         // Continuar con el ejercicio sin foto
       }
     }
@@ -1040,7 +1040,7 @@ class _PlanFitEjerciciosCatalogScreenState
                               fotoExistente,
                             );
                           } catch (e) {
-                            // //debugPrint('Error al generar miniatura desde foto existente: $e');
+                            // debugPrint('Error al generar miniatura desde foto existente: $e');
                           }
                         }
 

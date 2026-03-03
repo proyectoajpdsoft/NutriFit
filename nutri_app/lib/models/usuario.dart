@@ -13,6 +13,8 @@ class Usuario {
   String accesoweb; // 'S' o 'N'
   String administrador; // 'S' o 'N'
   int? codigoPaciente;
+  int? edad;
+  int? altura;
   String? imgPerfil; // Base64 de la imagen de perfil
 
   Usuario({
@@ -25,6 +27,8 @@ class Usuario {
     this.accesoweb = 'S',
     this.administrador = 'N',
     this.codigoPaciente,
+    this.edad,
+    this.altura,
     this.imgPerfil,
   });
 
@@ -43,6 +47,12 @@ class Usuario {
       codigoPaciente: json["codigo_paciente"] is int
           ? json["codigo_paciente"]
           : int.tryParse(json["codigo_paciente"]?.toString() ?? ''),
+      edad: json["edad"] is int
+          ? json["edad"]
+          : int.tryParse(json["edad"]?.toString() ?? ''),
+      altura: json["altura"] is int
+          ? json["altura"]
+          : int.tryParse(json["altura"]?.toString() ?? ''),
       imgPerfil: json["img_perfil"],
     );
   }
@@ -57,6 +67,8 @@ class Usuario {
         "accesoweb": accesoweb,
         "administrador": administrador,
         "codigo_paciente": codigoPaciente?.toString(),
+        "edad": edad,
+        "altura": altura,
         "img_perfil": imgPerfil,
       };
 }

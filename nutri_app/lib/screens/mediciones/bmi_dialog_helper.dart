@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nutri_app/screens/contacto_nutricionista_screen.dart';
 
 class BmiDialogHelper {
   static String getBmiCategory(double bmi) {
@@ -27,7 +28,7 @@ class BmiDialogHelper {
     final bmiColor = getBmiColor(bmi);
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('IMC (OMS)'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -87,11 +88,68 @@ class BmiDialogHelper {
               ),
               child: const Text('IMC = peso (kg) / altura (m)²'),
             ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.orange.shade200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.warning_amber_rounded,
+                        size: 18,
+                        color: Colors.orange.shade800,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Aviso importante',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: Colors.orange.shade900,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Estos cálculos y clasificaciones son orientativos. Para una valoración personalizada, consulta siempre con un profesional médico, dietista-nutricionista o entrenador personal.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () {
+                        Navigator.of(dialogContext).pop();
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                const ContactoNutricionistaScreen(),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.support_agent, size: 18),
+                      label: const Text('Contactar con dietista'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Cerrar'),
           ),
         ],

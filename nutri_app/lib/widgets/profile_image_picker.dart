@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'package:image/image.dart' as img;
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
+import 'package:nutri_app/services/config_service.dart';
 import 'package:provider/provider.dart';
 
 class ProfileImagePicker extends StatefulWidget {
@@ -173,6 +174,7 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
   void _showUserFriendlyError(String userMessage,
       {String? technicalDetails, bool showDetail = false}) {
     final authService = Provider.of<AuthService>(context, listen: false);
+    final configService = Provider.of<ConfigService>(context, listen: false);
     final isAdmin = authService.userType == 'Nutricionista' ||
         authService.userType == 'Administrador';
 
@@ -181,7 +183,9 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
     // Solo mostrar detalles técnicos si:
     // - Estamos en modo debug Y el usuario es administrador
     // - O si showDetail es true (para mensajes específicos como tamaño de imagen)
-    if (kDebugMode && isAdmin && technicalDetails != null) {
+    if (configService.appMode == AppMode.debug &&
+        isAdmin &&
+        technicalDetails != null) {
       displayMessage += '\n\nDetalles técnicos: $technicalDetails';
     } else if (!showDetail && technicalDetails != null) {
       // Para usuarios no admin o en producción, mensaje genérico

@@ -1,6 +1,6 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:nutri_app/services/auth_service.dart';
+import 'package:nutri_app/services/config_service.dart';
 import 'package:nutri_app/constants/app_constants.dart';
 import 'package:provider/provider.dart';
 
@@ -56,6 +56,7 @@ class _LoginScreenState extends State<LoginScreen> {
       final authService = Provider.of<AuthService>(context, listen: false);
       final userType = await authService.login(
           _nickController.text, _passwordController.text);
+      await context.read<ConfigService>().refreshDebugModeFromPreferences();
 
       // Si el login es exitoso, userType no será null
       if (userType != null && mounted) {
@@ -108,6 +109,7 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       final authService = Provider.of<AuthService>(context, listen: false);
       await authService.loginAsGuest();
+      await context.read<ConfigService>().refreshDebugModeFromPreferences();
 
       if (mounted) {
         Navigator.of(context).pushReplacementNamed('paciente_home');

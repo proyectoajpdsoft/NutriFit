@@ -109,7 +109,7 @@ class _PacienteEditScreenState extends State<PacienteEditScreen> {
         }
       }
     } catch (e) {
-      debugPrint('Error cargando usuarios: $e');
+      //debugPrint('Error cargando usuarios: $e');
       if (mounted) {
         setState(() {
           _loadingUsuarios = false;
@@ -199,8 +199,8 @@ class _PacienteEditScreenState extends State<PacienteEditScreen> {
 
       // --- INICIO DEPURACIÓN ---
       // Imprimimos el JSON que se va a enviar a la API en la consola de depuración.
-      debugPrint(
-          "DEBUG: Paciente seleccionado codigo_usuario: $_codigoUsuarioSeleccionado");
+      //debugPrint(
+      //    "DEBUG: Paciente seleccionado codigo_usuario: $_codigoUsuarioSeleccionado");
       // --- FIN DEPURACIÓN ---
 
       try {

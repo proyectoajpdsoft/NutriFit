@@ -1278,8 +1278,8 @@ class _ConsejoEditScreenState extends State<ConsejoEditScreen> {
       // Si es visible para todos, NO asignar pacientes específicos
       // (el consejo aparecerá automáticamente para todos sin registros en nu_consejo_usuario)
       if (_visibleParaTodos) {
-        debugPrint(
-            'Consejo visible para todos - No se asignan pacientes específicos');
+        //debugPrint(
+        //    'Consejo visible para todos - No se asignan pacientes específicos');
         // Eliminar asignaciones previas si existían
         final data = {
           'codigo_consejo': consejoId,
@@ -1301,13 +1301,13 @@ class _ConsejoEditScreenState extends State<ConsejoEditScreen> {
       List<int> pacientesToAssign = _selectedPacientes;
 
       // Debug: Ver cuántos pacientes se van a asignar
-      debugPrint(
-          'Asignando ${pacientesToAssign.length} pacientes al consejo $consejoId');
-      debugPrint('Pacientes seleccionados: $_selectedPacientes');
+      //debugPrint(
+      //    'Asignando ${pacientesToAssign.length} pacientes al consejo $consejoId');
+      //debugPrint('Pacientes seleccionados: $_selectedPacientes');
 
       // Si no hay pacientes para asignar, no hacer nada
       if (pacientesToAssign.isEmpty) {
-        debugPrint('No hay pacientes para asignar');
+        //debugPrint('No hay pacientes para asignar');
         return;
       }
 
@@ -1318,21 +1318,21 @@ class _ConsejoEditScreenState extends State<ConsejoEditScreen> {
             authService.userCode != null ? int.parse(authService.userCode!) : 1,
       };
 
-      debugPrint('Enviando datos: ${json.encode(data)}');
+      //debugPrint('Enviando datos: ${json.encode(data)}');
 
       final response = await apiService.post(
         'api/consejo_pacientes.php',
         body: json.encode(data),
       );
 
-      debugPrint('Respuesta del servidor: ${response.statusCode}');
-      debugPrint('Body: ${response.body}');
+      //debugPrint('Respuesta del servidor: ${response.statusCode}');
+      //debugPrint('Body: ${response.body}');
 
       if (response.statusCode != 200) {
         throw Exception('Error al asignar pacientes: ${response.body}');
       }
     } catch (e) {
-      debugPrint('Error en _assignPacientes: $e');
+      //debugPrint('Error en _assignPacientes: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

@@ -4,9 +4,12 @@ import 'dart:convert';
 import 'package:intl/intl.dart';
 import 'package:nutri_app/models/plan_fit.dart';
 import 'package:nutri_app/models/plan_fit_ejercicio.dart';
+import 'package:nutri_app/services/adherencia_service.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
+import 'package:nutri_app/widgets/adherencia_calendar_view.dart';
 import 'package:nutri_app/widgets/app_drawer.dart';
+import 'package:nutri_app/widgets/adherencia_registro_bottom_sheet.dart';
 import 'package:nutri_app/widgets/contact_nutricionista_dialog.dart';
 import 'package:nutri_app/widgets/image_viewer_dialog.dart';
 import 'package:nutri_app/screens/entrenamiento_edit_screen.dart';
@@ -28,8 +31,16 @@ class _PlanesFitPacienteListScreenState
       MethodChannel('nutri_app/external_url');
 
   final ApiService _apiService = ApiService();
+  final AdherenciaService _adherenciaService = AdherenciaService();
   late Future<List<PlanFit>> _planesFuture;
   String? _patientCode;
+  String? _userCode;
+  AdherenciaMetricaSemanal? _adherenciaFit;
+  bool _loadingAdherenciaFit = false;
+  DateTime _calendarMonth = DateTime(DateTime.now().year, DateTime.now().month);
+  bool _loadingAdherenciaCalendario = false;
+  bool _hasPlanNutri = false;
+  Map<String, Map<AdherenciaTipo, AdherenciaEstado>> _adherenciaDias = {};
   final Map<int, bool> _mostrarEjercicios = {};
   final Map<int, Future<List<PlanFitEjercicio>>> _ejerciciosFutures = {};
 
@@ -38,6 +49,7 @@ class _PlanesFitPacienteListScreenState
     super.initState();
     final authService = Provider.of<AuthService>(context, listen: false);
     _patientCode = authService.patientCode;
+    _userCode = authService.userCode ?? authService.patientCode;
 
     // Si es modo guest, mostrar diálogo después de que se construya el widget
     if (authService.isGuestMode) {
@@ -50,6 +62,226 @@ class _PlanesFitPacienteListScreenState
     }
 
     _refreshPlanes();
+    _loadAdherenciaFit();
+    _loadPlanTypes();
+    _loadAdherenciaCalendario();
+  }
+
+  String _dayKey(DateTime value) {
+    final day = DateTime(value.year, value.month, value.day);
+    return '${day.year.toString().padLeft(4, '0')}-'
+        '${day.month.toString().padLeft(2, '0')}-'
+        '${day.day.toString().padLeft(2, '0')}';
+  }
+
+  AdherenciaEstado? _parseEstado(dynamic raw) {
+    final normalized = (raw ?? '').toString().trim().toLowerCase();
+    if (normalized == 'cumplido') return AdherenciaEstado.cumplido;
+    if (normalized == 'parcial') return AdherenciaEstado.parcial;
+    if (normalized == 'no') return AdherenciaEstado.noRealizado;
+    return null;
+  }
+
+  Future<void> _loadPlanTypes() async {
+    final patientCode = _patientCode;
+    if (patientCode == null || patientCode.isEmpty) return;
+    final patientId = int.tryParse(patientCode);
+    if (patientId == null) return;
+
+    try {
+      final planesNutri = await _apiService.getPlanes(patientId);
+      if (!mounted) return;
+      setState(() {
+        _hasPlanNutri = planesNutri.isNotEmpty;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _loadAdherenciaCalendario() async {
+    final userCode = _userCode;
+    if (userCode == null || userCode.isEmpty) return;
+
+    final monthStart = DateTime(_calendarMonth.year, _calendarMonth.month, 1);
+    final gridStart =
+        monthStart.subtract(Duration(days: monthStart.weekday - 1));
+    final gridEnd = gridStart.add(const Duration(days: 41));
+
+    if (!mounted) return;
+    setState(() {
+      _loadingAdherenciaCalendario = true;
+    });
+
+    try {
+      final records = await _apiService.getAdherenciaRegistros(
+        fechaDesde: gridStart,
+        fechaHasta: gridEnd,
+      );
+      final byDay = <String, Map<AdherenciaTipo, AdherenciaEstado>>{};
+
+      for (final row in records) {
+        final fechaRaw = (row['fecha'] ?? '').toString();
+        if (fechaRaw.length < 10) continue;
+        final key = fechaRaw.substring(0, 10);
+        final tipoRaw = (row['tipo'] ?? '').toString().trim().toLowerCase();
+        final estado = _parseEstado(row['estado']);
+        if (estado == null) continue;
+
+        final tipo = tipoRaw == 'fit'
+            ? AdherenciaTipo.fit
+            : tipoRaw == 'nutri'
+                ? AdherenciaTipo.nutri
+                : null;
+        if (tipo == null) continue;
+
+        final current = byDay[key] ?? <AdherenciaTipo, AdherenciaEstado>{};
+        current[tipo] = estado;
+        byDay[key] = current;
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _adherenciaDias = byDay;
+        _loadingAdherenciaCalendario = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _adherenciaDias = {};
+        _loadingAdherenciaCalendario = false;
+      });
+    }
+  }
+
+  Future<void> _onCalendarDayTap(DateTime day) async {
+    final userCode = _userCode;
+    if (userCode == null || userCode.isEmpty) return;
+
+    final estadosDia = _adherenciaDias[_dayKey(day)] ?? const {};
+    final tipos = <AdherenciaTipo>[
+      if (_hasPlanNutri) AdherenciaTipo.nutri,
+      AdherenciaTipo.fit,
+    ];
+
+    await showAdherenciaRegistroBottomSheet(
+      context: context,
+      userCode: userCode,
+      tiposDisponibles: tipos,
+      fechaObjetivo: day,
+      estadoHoyInicial: {
+        if (_hasPlanNutri)
+          AdherenciaTipo.nutri: estadosDia[AdherenciaTipo.nutri],
+        AdherenciaTipo.fit: estadosDia[AdherenciaTipo.fit],
+      },
+      onSaved: () async {
+        await _loadAdherenciaFit();
+        await _loadAdherenciaCalendario();
+      },
+    );
+  }
+
+  Widget _buildCalendarTab() {
+    if (_loadingAdherenciaCalendario) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return AdherenciaCalendarView(
+      month: _calendarMonth,
+      onMonthChanged: (newMonth) {
+        setState(() {
+          _calendarMonth = DateTime(newMonth.year, newMonth.month, 1);
+        });
+        _loadAdherenciaCalendario();
+      },
+      estadosPorDia: _adherenciaDias,
+      showNutri: _hasPlanNutri,
+      showFit: true,
+      onDayTap: _onCalendarDayTap,
+    );
+  }
+
+  Future<void> _loadAdherenciaFit() async {
+    final userCode = _userCode;
+    if (userCode == null || userCode.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _adherenciaFit = null;
+        _loadingAdherenciaFit = false;
+      });
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _loadingAdherenciaFit = true;
+    });
+
+    final resumen = await _adherenciaService.getResumenSemanal(
+      userCode: userCode,
+      incluirNutri: false,
+      incluirFit: true,
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _adherenciaFit = resumen.fit;
+      _loadingAdherenciaFit = false;
+    });
+  }
+
+  Color _adherenciaColorByPercent(int percent) {
+    if (percent >= 75) return Colors.green;
+    if (percent >= 50) return Colors.orange;
+    return Colors.red;
+  }
+
+  Widget _buildCumplimientoCircle({
+    required int percent,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: onTap,
+      child: SizedBox(
+        width: 38,
+        height: 38,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            CircularProgressIndicator(
+              value: (percent.clamp(0, 100)) / 100,
+              strokeWidth: 4,
+              backgroundColor: Colors.grey.shade300,
+              valueColor: AlwaysStoppedAnimation<Color>(
+                _adherenciaColorByPercent(percent),
+              ),
+            ),
+            Text(
+              '$percent%',
+              style: const TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showAdherenciaRegistroRapidoFit() async {
+    final userCode = _userCode;
+    if (userCode == null || userCode.isEmpty) return;
+
+    await showAdherenciaRegistroBottomSheet(
+      context: context,
+      userCode: userCode,
+      tiposDisponibles: const [AdherenciaTipo.fit],
+      tipoInicial: AdherenciaTipo.fit,
+      estadoHoyInicial: {
+        AdherenciaTipo.fit: _adherenciaFit?.estadoHoy,
+      },
+      onSaved: _loadAdherenciaFit,
+    );
   }
 
   void _refreshPlanes() {
@@ -289,236 +521,327 @@ class _PlanesFitPacienteListScreenState
         ],
       ),
       drawer: const AppDrawer(),
-      body: FutureBuilder<List<PlanFit>>(
-        future: _planesFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(
-                child: Text('Error al cargar los planes: ${snapshot.error}'));
-          }
-          if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            return const Center(child: Text('Aún no tienes planes asignados.'));
-          }
+      body: DefaultTabController(
+        length: 2,
+        child: Column(
+          children: [
+            const TabBar(
+              tabs: [
+                Tab(text: 'Planes'),
+                Tab(text: 'Calendario'),
+              ],
+            ),
+            Expanded(
+              child: TabBarView(
+                children: [
+                  FutureBuilder<List<PlanFit>>(
+                    future: _planesFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      if (snapshot.hasError) {
+                        return Center(
+                            child: Text(
+                                'Error al cargar los planes: ${snapshot.error}'));
+                      }
+                      if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                        return const Center(
+                            child: Text('Aún no tienes planes asignados.'));
+                      }
 
-          final planes = snapshot.data!;
-          return ListView.builder(
-            padding: const EdgeInsets.all(12.0),
-            itemCount: planes.length,
-            itemBuilder: (context, index) {
-              final plan = planes[index];
+                      final planes = snapshot.data!;
+                      return ListView.builder(
+                        padding: const EdgeInsets.all(12.0),
+                        itemCount: planes.length,
+                        itemBuilder: (context, index) {
+                          final plan = planes[index];
 
-              return Card(
-                margin: const EdgeInsets.only(bottom: 12.0),
-                elevation: 4,
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Título del plan
-                      Text(
-                        _buildPlanTitle(plan.desde, plan.hasta),
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleMedium
-                            ?.copyWith(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 12),
-
-                      // Semanas (recuadro ancho)
-                      if (plan.semanas != null && plan.semanas!.isNotEmpty)
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12.0,
-                            vertical: 8.0,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.blue[50],
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: Colors.blue[200]!,
-                              width: 1,
-                            ),
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.calendar_today, size: 16),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text('${plan.semanas} semanas'),
-                              ),
-                            ],
-                          ),
-                        ),
-                      if (plan.semanas != null && plan.semanas!.isNotEmpty)
-                        const SizedBox(height: 12),
-
-                      // Indicaciones (recuadro amarillo, sin label)
-                      if (plan.planIndicacionesVisibleUsuario != null &&
-                          plan.planIndicacionesVisibleUsuario!.isNotEmpty) ...[
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(12.0),
-                          decoration: BoxDecoration(
-                            color: Colors.amber[100],
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: Colors.amber[300]!,
-                              width: 1,
-                            ),
-                          ),
-                          child: Text(
-                            plan.planIndicacionesVisibleUsuario!,
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-
-                      // Botones URL + descarga (misma linea)
-                      if ((plan.url != null && plan.url!.isNotEmpty) ||
-                          (plan.planDocumentoNombre != null &&
-                              plan.planDocumentoNombre!.isNotEmpty))
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 12.0),
-                          child: Row(
-                            children: [
-                              if (plan.url != null && plan.url!.isNotEmpty)
-                                Expanded(
-                                  child: ElevatedButton.icon(
-                                    onPressed: () =>
-                                        _launchUrlExternal(plan.url ?? ''),
-                                    icon: const Icon(Icons.open_in_browser),
-                                    label: const Text('Web'),
+                          return Card(
+                            margin: const EdgeInsets.only(bottom: 12.0),
+                            elevation: 4,
+                            child: Padding(
+                              padding: const EdgeInsets.all(16.0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // Título del plan
+                                  Text(
+                                    _buildPlanTitle(plan.desde, plan.hasta),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(fontWeight: FontWeight.bold),
                                   ),
-                                ),
-                              if (plan.url != null && plan.url!.isNotEmpty)
-                                const SizedBox(width: 12),
-                              if (plan.planDocumentoNombre != null &&
-                                  plan.planDocumentoNombre!.isNotEmpty)
-                                Expanded(
-                                  child: ElevatedButton.icon(
-                                    icon: const Icon(
-                                      Icons.download_for_offline_outlined,
-                                    ),
-                                    label: const Text('Descargar'),
-                                    onPressed: () => _downloadAndOpenFile(
-                                      plan.codigo,
-                                      plan.planDocumentoNombre!,
-                                    ),
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      const Text(
+                                        'Cumplimiento',
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.w700),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      _loadingAdherenciaFit
+                                          ? const SizedBox(
+                                              width: 20,
+                                              height: 20,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            )
+                                          : _buildCumplimientoCircle(
+                                              percent:
+                                                  _adherenciaFit?.porcentaje ??
+                                                      0,
+                                              onTap:
+                                                  _showAdherenciaRegistroRapidoFit,
+                                            ),
+                                      const Spacer(),
+                                      TextButton.icon(
+                                        onPressed:
+                                            _showAdherenciaRegistroRapidoFit,
+                                        icon: const Icon(
+                                            Icons.edit_calendar_outlined,
+                                            size: 18),
+                                        label: const Text('Registrar hoy'),
+                                      ),
+                                    ],
                                   ),
-                                ),
-                            ],
-                          ),
-                        ),
+                                  const SizedBox(height: 12),
 
-                      // Botones de accion
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              icon: const Icon(Icons.add_circle_outline),
-                              label: const Text('Actividad'),
-                              onPressed: () {
-                                Navigator.of(context)
-                                    .push(
-                                      MaterialPageRoute(
-                                        builder: (context) =>
-                                            EntrenamientoEditScreen(
-                                          planFitId: plan.codigo,
+                                  // Semanas (recuadro ancho)
+                                  if (plan.semanas != null &&
+                                      plan.semanas!.isNotEmpty)
+                                    Container(
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12.0,
+                                        vertical: 8.0,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.blue[50],
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                          color: Colors.blue[200]!,
+                                          width: 1,
                                         ),
                                       ),
-                                    )
-                                    .then((_) => _refreshPlanes());
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              icon: const Icon(Icons.fitness_center),
-                              label: const Text('Ejercicios'),
-                              onPressed: () {
-                                setState(() {
-                                  final current =
-                                      _mostrarEjercicios[plan.codigo] ?? false;
-                                  _mostrarEjercicios[plan.codigo] = !current;
-                                });
-                                if ((_mostrarEjercicios[plan.codigo] ??
-                                        false) &&
-                                    !_ejerciciosFutures
-                                        .containsKey(plan.codigo)) {
-                                  _getEjerciciosPlan(plan.codigo);
-                                }
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (_mostrarEjercicios[plan.codigo] ?? false) ...[
-                        const SizedBox(height: 16),
-                        FutureBuilder<List<PlanFitEjercicio>>(
-                          future: _getEjerciciosPlan(plan.codigo),
-                          builder: (context, ejerciciosSnapshot) {
-                            if (ejerciciosSnapshot.connectionState ==
-                                ConnectionState.waiting) {
-                              return const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 16),
-                                child:
-                                    Center(child: CircularProgressIndicator()),
-                              );
-                            }
-                            if (ejerciciosSnapshot.hasError) {
-                              return Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 12),
-                                child: Text(
-                                  'Error al cargar ejercicios: ${ejerciciosSnapshot.error}',
-                                  style: const TextStyle(color: Colors.red),
-                                ),
-                              );
-                            }
-                            final ejercicios =
-                                ejerciciosSnapshot.data ?? <PlanFitEjercicio>[];
-                            if (ejercicios.isEmpty) {
-                              return const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 12),
-                                child: Text('Este plan no tiene ejercicios.'),
-                              );
-                            }
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8.0, vertical: 4.0),
-                              child: GridView.builder(
-                                shrinkWrap: true,
-                                physics: const NeverScrollableScrollPhysics(),
-                                gridDelegate:
-                                    const SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 2,
-                                  childAspectRatio: 0.65,
-                                  crossAxisSpacing: 8,
-                                  mainAxisSpacing: 8,
-                                ),
-                                itemCount: ejercicios.length,
-                                itemBuilder: (context, index) {
-                                  return _buildEjercicioCard(ejercicios[index]);
-                                },
+                                      child: Row(
+                                        children: [
+                                          const Icon(Icons.calendar_today,
+                                              size: 16),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child:
+                                                Text('${plan.semanas} semanas'),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  if (plan.semanas != null &&
+                                      plan.semanas!.isNotEmpty)
+                                    const SizedBox(height: 12),
+
+                                  // Indicaciones (recuadro amarillo, sin label)
+                                  if (plan.planIndicacionesVisibleUsuario !=
+                                          null &&
+                                      plan.planIndicacionesVisibleUsuario!
+                                          .isNotEmpty) ...[
+                                    Container(
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.all(12.0),
+                                      decoration: BoxDecoration(
+                                        color: Colors.amber[100],
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                          color: Colors.amber[300]!,
+                                          width: 1,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        plan.planIndicacionesVisibleUsuario!,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 12),
+                                  ],
+
+                                  // Botones URL + descarga (misma linea)
+                                  if ((plan.url != null &&
+                                          plan.url!.isNotEmpty) ||
+                                      (plan.planDocumentoNombre != null &&
+                                          plan.planDocumentoNombre!.isNotEmpty))
+                                    Padding(
+                                      padding:
+                                          const EdgeInsets.only(bottom: 12.0),
+                                      child: Row(
+                                        children: [
+                                          if (plan.url != null &&
+                                              plan.url!.isNotEmpty)
+                                            Expanded(
+                                              child: ElevatedButton.icon(
+                                                onPressed: () =>
+                                                    _launchUrlExternal(
+                                                        plan.url ?? ''),
+                                                icon: const Icon(
+                                                    Icons.open_in_browser),
+                                                label: const Text('Web'),
+                                              ),
+                                            ),
+                                          if (plan.url != null &&
+                                              plan.url!.isNotEmpty)
+                                            const SizedBox(width: 12),
+                                          if (plan.planDocumentoNombre !=
+                                                  null &&
+                                              plan.planDocumentoNombre!
+                                                  .isNotEmpty)
+                                            Expanded(
+                                              child: ElevatedButton.icon(
+                                                icon: const Icon(
+                                                  Icons
+                                                      .download_for_offline_outlined,
+                                                ),
+                                                label: const Text('Descargar'),
+                                                onPressed: () =>
+                                                    _downloadAndOpenFile(
+                                                  plan.codigo,
+                                                  plan.planDocumentoNombre!,
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+
+                                  // Botones de accion
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: OutlinedButton.icon(
+                                          icon: const Icon(
+                                              Icons.add_circle_outline),
+                                          label: const Text('Actividad'),
+                                          onPressed: () {
+                                            Navigator.of(context)
+                                                .push(
+                                                  MaterialPageRoute(
+                                                    builder: (context) =>
+                                                        EntrenamientoEditScreen(
+                                                      planFitId: plan.codigo,
+                                                    ),
+                                                  ),
+                                                )
+                                                .then((_) => _refreshPlanes());
+                                          },
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: OutlinedButton.icon(
+                                          icon:
+                                              const Icon(Icons.fitness_center),
+                                          label: const Text('Ejercicios'),
+                                          onPressed: () {
+                                            setState(() {
+                                              final current =
+                                                  _mostrarEjercicios[
+                                                          plan.codigo] ??
+                                                      false;
+                                              _mostrarEjercicios[plan.codigo] =
+                                                  !current;
+                                            });
+                                            if ((_mostrarEjercicios[
+                                                        plan.codigo] ??
+                                                    false) &&
+                                                !_ejerciciosFutures
+                                                    .containsKey(plan.codigo)) {
+                                              _getEjerciciosPlan(plan.codigo);
+                                            }
+                                          },
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  if (_mostrarEjercicios[plan.codigo] ??
+                                      false) ...[
+                                    const SizedBox(height: 16),
+                                    FutureBuilder<List<PlanFitEjercicio>>(
+                                      future: _getEjerciciosPlan(plan.codigo),
+                                      builder: (context, ejerciciosSnapshot) {
+                                        if (ejerciciosSnapshot
+                                                .connectionState ==
+                                            ConnectionState.waiting) {
+                                          return const Padding(
+                                            padding: EdgeInsets.symmetric(
+                                                vertical: 16),
+                                            child: Center(
+                                                child:
+                                                    CircularProgressIndicator()),
+                                          );
+                                        }
+                                        if (ejerciciosSnapshot.hasError) {
+                                          return Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                                vertical: 12),
+                                            child: Text(
+                                              'Error al cargar ejercicios: ${ejerciciosSnapshot.error}',
+                                              style: const TextStyle(
+                                                  color: Colors.red),
+                                            ),
+                                          );
+                                        }
+                                        final ejercicios =
+                                            ejerciciosSnapshot.data ??
+                                                <PlanFitEjercicio>[];
+                                        if (ejercicios.isEmpty) {
+                                          return const Padding(
+                                            padding: EdgeInsets.symmetric(
+                                                vertical: 12),
+                                            child: Text(
+                                                'Este plan no tiene ejercicios.'),
+                                          );
+                                        }
+                                        return Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 8.0, vertical: 4.0),
+                                          child: GridView.builder(
+                                            shrinkWrap: true,
+                                            physics:
+                                                const NeverScrollableScrollPhysics(),
+                                            gridDelegate:
+                                                const SliverGridDelegateWithFixedCrossAxisCount(
+                                              crossAxisCount: 2,
+                                              childAspectRatio: 0.65,
+                                              crossAxisSpacing: 8,
+                                              mainAxisSpacing: 8,
+                                            ),
+                                            itemCount: ejercicios.length,
+                                            itemBuilder: (context, index) {
+                                              return _buildEjercicioCard(
+                                                  ejercicios[index]);
+                                            },
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ],
+                                ],
                               ),
-                            );
-                          },
-                        ),
-                      ],
-                    ],
+                            ),
+                          );
+                        },
+                      );
+                    },
                   ),
-                ),
-              );
-            },
-          );
-        },
+                  _buildCalendarTab(),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

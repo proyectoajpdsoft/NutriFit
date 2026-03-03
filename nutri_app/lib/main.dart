@@ -24,6 +24,8 @@ import 'package:nutri_app/screens/recetas_list_screen.dart';
 import 'package:nutri_app/screens/receta_edit_screen.dart';
 import 'package:nutri_app/screens/lista_compra_screen.dart';
 import 'package:nutri_app/screens/entrenamientos_screen.dart';
+import 'package:nutri_app/screens/todo_list_screen.dart';
+import 'package:nutri_app/screens/etiqueta_nutricional_scanner_screen.dart';
 import 'package:nutri_app/services/auth_error_handler.dart';
 import 'package:nutri_app/constants/app_constants.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -133,6 +135,8 @@ class MyApp extends StatelessWidget {
         '/receta_edit': (_) => const RecetaEditScreen(),
         '/lista_compra': (_) => const ListaCompraScreen(),
         '/entrenamientos': (_) => const EntrenamientosScreen(),
+        '/todo_list': (_) => const TodoListScreen(),
+        '/scanner_etiquetas': (_) => const EtiquetaNutricionalScannerScreen(),
       },
     );
   }

@@ -29,6 +29,9 @@ class AuthService with ChangeNotifier {
     _userCode = await _storage.read(key: 'userCode');
     final guestMode = await _storage.read(key: 'guestMode');
     _isGuestMode = guestMode == 'true';
+    await _apiService.refreshRuntimeDebugAndBaseUrl(
+      userType: _isGuestMode ? null : _userType,
+    );
     notifyListeners();
   }
 
@@ -57,12 +60,20 @@ class AuthService with ChangeNotifier {
     }
   }
 
-  Future<void> register(String nick, String password, String nombre) async {
+  Future<void> register(
+    String nick,
+    String password,
+    String nombre, {
+    int? edad,
+    int? altura,
+  }) async {
     final response = await _apiService.registerUsuario(
       nick: nick,
       contrasena: password,
       tipo: 'Usuario', // Los registros sin credenciales son tipo Usuario
       nombre: nombre,
+      edad: edad,
+      altura: altura,
     );
 
     if (response.containsKey('success') && response['success'] == true) {
@@ -87,6 +98,7 @@ class AuthService with ChangeNotifier {
         await _storage.write(key: 'authToken', value: _token);
         await _storage.write(key: 'userType', value: _userType);
         await _storage.write(key: 'guestMode', value: 'true');
+        await _apiService.refreshRuntimeDebugAndBaseUrl(userType: null);
 
         notifyListeners();
         return _userType!;
@@ -105,6 +117,7 @@ class AuthService with ChangeNotifier {
     _userCode = null;
     _isGuestMode = false;
     await _storage.deleteAll();
+    await _apiService.refreshRuntimeDebugAndBaseUrl(userType: null);
     notifyListeners();
   }
 }

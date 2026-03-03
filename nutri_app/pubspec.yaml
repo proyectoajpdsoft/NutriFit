@@ -45,6 +45,7 @@ dependencies:
 
   # Selector de imágenes (cámara y galería)
   image_picker: ^1.0.7
+  google_mlkit_text_recognition: ^0.13.0
 
   # Procesamiento de imágenes (redimensionamiento)
   image: ^4.1.0
@@ -98,6 +99,7 @@ flutter:
   assets:
     - assets/
     - assets/sounds/
+    - assets/mediciones/
 
   # Para añadir fuentes personalizadas, descomenta esta sección:
   # fonts:

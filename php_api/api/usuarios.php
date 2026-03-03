@@ -107,7 +107,7 @@ function handle_post_request() {
 function get_usuarios() {
     global $db;
     // Incluir img_perfil para que se muestre en el listado
-    $query = "SELECT codigo, nick, nombre, email, tipo, activo, accesoweb, administrador, codigo_paciente, img_perfil
+    $query = "SELECT codigo, nick, nombre, email, tipo, activo, accesoweb, administrador, codigo_paciente, edad, altura, img_perfil
               FROM usuario ORDER BY nombre";
     $stmt = $db->prepare($query);
     $stmt->execute();
@@ -135,7 +135,7 @@ function get_total_usuarios() {
 
 function get_usuario($codigo) {
     global $db;
-    $query = "SELECT codigo, nick, nombre, email, tipo, activo, administrador, codigo_paciente, accesoweb, img_perfil
+    $query = "SELECT codigo, nick, nombre, email, tipo, activo, administrador, codigo_paciente, accesoweb, edad, altura, img_perfil
               FROM usuario WHERE codigo = :codigo LIMIT 0,1";
     $stmt = $db->prepare($query);
     $stmt->bindParam(':codigo', $codigo);
@@ -181,6 +181,25 @@ function bind_usuario_params($stmt, $data) {
 
     $data->codigo_paciente = !empty($data->codigo_paciente) ? $data->codigo_paciente : null;
     $stmt->bindParam(":codigo_paciente", $data->codigo_paciente);
+
+    $edad = null;
+    if (isset($data->edad) && $data->edad !== '' && $data->edad !== null) {
+        $edad_tmp = intval($data->edad);
+        if ($edad_tmp > 0) {
+            $edad = $edad_tmp;
+        }
+    }
+
+    $altura = null;
+    if (isset($data->altura) && $data->altura !== '' && $data->altura !== null) {
+        $altura_tmp = intval($data->altura);
+        if ($altura_tmp > 0) {
+            $altura = $altura_tmp;
+        }
+    }
+
+    $stmt->bindValue(":edad", $edad, $edad === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+    $stmt->bindValue(":altura", $altura, $altura === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
     
     // Manejar imagen de perfil (base64)
     $img_perfil = null;
@@ -254,6 +273,22 @@ function register_usuario($data) {
     $tipo = htmlspecialchars(strip_tags($data->tipo));
     $nombre = htmlspecialchars(strip_tags($data->nombre ?? ''));
     $codigo_paciente = null;
+    $edad = null;
+    $altura = null;
+
+    if (isset($data->edad) && $data->edad !== '' && $data->edad !== null) {
+        $edad_tmp = intval($data->edad);
+        if ($edad_tmp > 0) {
+            $edad = $edad_tmp;
+        }
+    }
+
+    if (isset($data->altura) && $data->altura !== '' && $data->altura !== null) {
+        $altura_tmp = intval($data->altura);
+        if ($altura_tmp > 0) {
+            $altura = $altura_tmp;
+        }
+    }
     
     // Insertar usuario
     $insert_query = "INSERT INTO usuario SET
@@ -266,6 +301,8 @@ function register_usuario($data) {
                 accesoweb = 'S',
                 administrador = 'N',
                 codigo_paciente = :codigo_paciente,
+                edad = :edad,
+                altura = :altura,
                 img_perfil = NULL,
                 fechaa = NOW(),
                 codusuarioa = 1";
@@ -276,6 +313,8 @@ function register_usuario($data) {
     $insert_stmt->bindParam(':tipo', $tipo);
     $insert_stmt->bindParam(':nombre', $nombre);
     $insert_stmt->bindParam(':codigo_paciente', $codigo_paciente);
+    $insert_stmt->bindValue(':edad', $edad, $edad === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+    $insert_stmt->bindValue(':altura', $altura, $altura === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
     
     if($insert_stmt->execute()) {
         http_response_code(201);
@@ -312,7 +351,8 @@ function create_usuario($data = null) {
     $query = "INSERT INTO usuario SET
                 nick = :nick, nombre = :nombre, email = :email, contrasena = :contrasena,
                 tipo = :tipo, activo = :activo, accesoweb = :accesoweb, administrador = :administrador,
-                codigo_paciente = :codigo_paciente, img_perfil = :img_perfil, fechaa = NOW(), codusuarioa = :codusuarioa";
+                codigo_paciente = :codigo_paciente, edad = :edad, altura = :altura,
+                img_perfil = :img_perfil, fechaa = NOW(), codusuarioa = :codusuarioa";
     
     $stmt = $db->prepare($query);
     bind_usuario_params($stmt, $data);
@@ -409,7 +449,8 @@ function update_usuario() {
     $query = "UPDATE usuario SET
                 nick = :nick, nombre = :nombre, email = :email,
                 tipo = :tipo, activo = :activo, accesoweb = :accesoweb, administrador = :administrador,
-                codigo_paciente = :codigo_paciente, img_perfil = :img_perfil, fecham = NOW(), codusuariom = :codusuariom
+                                codigo_paciente = :codigo_paciente, edad = :edad, altura = :altura,
+                                img_perfil = :img_perfil, fecham = NOW(), codusuariom = :codusuariom
                 $sql_pass
               WHERE codigo = :codigo";
 
@@ -499,35 +540,68 @@ function table_exists_usuarios($db, $table_name) {
 
 function delete_usuario() {
     global $db;
-    $data = json_decode(file_get_contents("php://input"));
-    
-    if(empty($data->codigo)) {
-        http_response_code(400);
-        echo json_encode(array("message" => "Falta el código del usuario."));
-        return;
-    }
+    try {
+        $data = json_decode(file_get_contents("php://input"));
 
-    // Opcional: No permitir borrar el usuario 'admin' (código 1, por ejemplo)
-    if (intval($data->codigo) == 1) {
-        http_response_code(403);
-        echo json_encode(array("message" => "No se puede eliminar al usuario administrador principal."));
-        return;
-    }
+        if(!is_object($data) || empty($data->codigo)) {
+            http_response_code(400);
+            echo json_encode(array("message" => "Falta el código del usuario."));
+            return;
+        }
 
-    $query = "DELETE FROM usuario WHERE codigo = :codigo";
-    $stmt = $db->prepare($query);
-    
-    $codigo = intval($data->codigo);
-    $stmt->bindParam(":codigo", $codigo);
+        $codigo = intval($data->codigo);
 
-    if($stmt->execute()){
-        http_response_code(200);
-        echo json_encode(array("message" => "Usuario eliminado."));
-    } else {
-        http_response_code(503);
+        // Opcional: No permitir borrar el usuario 'admin' (código 1, por ejemplo)
+        if ($codigo == 1) {
+            http_response_code(403);
+            echo json_encode(array("message" => "No se puede eliminar al usuario administrador principal."));
+            return;
+        }
+
+        $query = "DELETE FROM usuario WHERE codigo = :codigo";
+        $stmt = $db->prepare($query);
+        if (!$stmt) {
+            http_response_code(500);
+            echo json_encode(array("message" => "Error interno preparando la eliminación del usuario."));
+            return;
+        }
+
+        $stmt->bindParam(":codigo", $codigo);
+
+        if($stmt->execute()){
+            if ($stmt->rowCount() === 0) {
+                http_response_code(404);
+                echo json_encode(array("message" => "Usuario no encontrado."));
+                return;
+            }
+
+            http_response_code(200);
+            echo json_encode(array("message" => "Usuario eliminado."));
+        } else {
+            $errorInfo = $stmt->errorInfo();
+            $sqlState = isset($errorInfo[0]) ? $errorInfo[0] : null;
+            $driverCode = isset($errorInfo[1]) ? intval($errorInfo[1]) : 0;
+
+            // 23000/1451 = conflicto por integridad referencial (FK)
+            if ($sqlState === '23000' || $driverCode === 1451) {
+                http_response_code(409);
+                echo json_encode(array(
+                    "message" => "No se puede eliminar el usuario porque tiene registros relacionados."
+                ));
+                return;
+            }
+
+            http_response_code(503);
+            echo json_encode(array(
+                "message" => "No se pudo eliminar el usuario.",
+                "errorInfo" => $errorInfo
+            ));
+        }
+    } catch (Throwable $e) {
+        error_log('usuarios.php delete_usuario error: ' . $e->getMessage());
+        http_response_code(500);
         echo json_encode(array(
-            "message" => "No se pudo eliminar el usuario.",
-            "errorInfo" => $stmt->errorInfo()
+            "message" => "Error interno al eliminar usuario."
         ));
     }
 }
@@ -539,7 +613,7 @@ function check_usuario_dependencies($data = null) {
         $data = json_decode(file_get_contents("php://input"));
     }
     
-    if(empty($data->codigo)) {
+    if(!is_object($data) || empty($data->codigo)) {
         http_response_code(400);
         echo json_encode(array("message" => "Falta el código del usuario."));
         return;
@@ -555,71 +629,72 @@ function check_usuario_dependencies($data = null) {
     }
     
     $dependencies = array();
-    
+
+    $safeCount = function($query) use ($db, $codigo) {
+        $stmt = $db->prepare($query);
+        if (!$stmt) {
+            return 0;
+        }
+        $stmt->bindParam(":codigo", $codigo);
+        if (!$stmt->execute()) {
+            return 0;
+        }
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        return intval($result['count'] ?? 0);
+    };
+
     // Contar registros en nu_consejo_usuario
-    $query = "SELECT COUNT(*) as count FROM nu_consejo_usuario WHERE codigo_usuario = :codigo";
-    $stmt = $db->prepare($query);
-    $stmt->bindParam(":codigo", $codigo);
-    $stmt->execute();
-    $result = $stmt->fetch(PDO::FETCH_ASSOC);
-    if ($result['count'] > 0) {
-        $dependencies['nu_consejo_usuario'] = intval($result['count']);
+    if (table_exists_usuarios($db, 'nu_consejo_usuario')) {
+        $count = $safeCount("SELECT COUNT(*) as count FROM nu_consejo_usuario WHERE codigo_usuario = :codigo");
+        if ($count > 0) {
+            $dependencies['nu_consejo_usuario'] = $count;
+        }
     }
-    
+
     // Contar registros en nu_receta_usuario
-    $query = "SELECT COUNT(*) as count FROM nu_receta_usuario WHERE codigo_usuario = :codigo";
-    $stmt = $db->prepare($query);
-    $stmt->bindParam(":codigo", $codigo);
-    $stmt->execute();
-    $result = $stmt->fetch(PDO::FETCH_ASSOC);
-    if ($result['count'] > 0) {
-        $dependencies['nu_receta_usuario'] = intval($result['count']);
+    if (table_exists_usuarios($db, 'nu_receta_usuario')) {
+        $count = $safeCount("SELECT COUNT(*) as count FROM nu_receta_usuario WHERE codigo_usuario = :codigo");
+        if ($count > 0) {
+            $dependencies['nu_receta_usuario'] = $count;
+        }
     }
-    
+
     // Contar registros en nu_entrenamientos_actividad_custom
-    $query = "SELECT COUNT(*) as count FROM nu_entrenamientos_actividad_custom WHERE codigo_usuario = :codigo";
-    $stmt = $db->prepare($query);
-    $stmt->bindParam(":codigo", $codigo);
-    $stmt->execute();
-    $result = $stmt->fetch(PDO::FETCH_ASSOC);
-    if ($result['count'] > 0) {
-        $dependencies['nu_entrenamientos_actividad_custom'] = intval($result['count']);
+    if (table_exists_usuarios($db, 'nu_entrenamientos_actividad_custom')) {
+        $count = $safeCount("SELECT COUNT(*) as count FROM nu_entrenamientos_actividad_custom WHERE codigo_usuario = :codigo");
+        if ($count > 0) {
+            $dependencies['nu_entrenamientos_actividad_custom'] = $count;
+        }
     }
-    
+
     // Contar registros en nu_entrenamientos_ejercicios para entrenamientos de este usuario
-    $query = "SELECT COUNT(DISTINCT eej.codigo) as count 
+    if (table_exists_usuarios($db, 'nu_entrenamientos_ejercicios') && table_exists_usuarios($db, 'nu_entrenamientos')) {
+        $count = $safeCount("SELECT COUNT(DISTINCT eej.codigo) as count 
               FROM nu_entrenamientos_ejercicios eej
               JOIN nu_entrenamientos e ON eej.codigo_entrenamiento = e.codigo
-              WHERE e.codigo_paciente = :codigo";
-    $stmt = $db->prepare($query);
-    $stmt->bindParam(":codigo", $codigo);
-    $stmt->execute();
-    $result = $stmt->fetch(PDO::FETCH_ASSOC);
-    if ($result['count'] > 0) {
-        $dependencies['nu_entrenamientos_ejercicios'] = intval($result['count']);
+              WHERE e.codigo_paciente = :codigo");
+        if ($count > 0) {
+            $dependencies['nu_entrenamientos_ejercicios'] = $count;
+        }
     }
-    
+
     // Contar registros en nu_entrenamientos_imagenes para entrenamientos de este usuario
-    $query = "SELECT COUNT(DISTINCT eei.codigo) as count 
+    if (table_exists_usuarios($db, 'nu_entrenamientos_imagenes') && table_exists_usuarios($db, 'nu_entrenamientos')) {
+        $count = $safeCount("SELECT COUNT(DISTINCT eei.codigo) as count 
               FROM nu_entrenamientos_imagenes eei
               JOIN nu_entrenamientos e ON eei.codigo_entrenamiento = e.codigo
-              WHERE e.codigo_paciente = :codigo";
-    $stmt = $db->prepare($query);
-    $stmt->bindParam(":codigo", $codigo);
-    $stmt->execute();
-    $result = $stmt->fetch(PDO::FETCH_ASSOC);
-    if ($result['count'] > 0) {
-        $dependencies['nu_entrenamientos_imagenes'] = intval($result['count']);
+              WHERE e.codigo_paciente = :codigo");
+        if ($count > 0) {
+            $dependencies['nu_entrenamientos_imagenes'] = $count;
+        }
     }
-    
+
     // Contar registros en nu_entrenamientos
-    $query = "SELECT COUNT(*) as count FROM nu_entrenamientos WHERE codigo_paciente = :codigo";
-    $stmt = $db->prepare($query);
-    $stmt->bindParam(":codigo", $codigo);
-    $stmt->execute();
-    $result = $stmt->fetch(PDO::FETCH_ASSOC);
-    if ($result['count'] > 0) {
-        $dependencies['nu_entrenamientos'] = intval($result['count']);
+    if (table_exists_usuarios($db, 'nu_entrenamientos')) {
+        $count = $safeCount("SELECT COUNT(*) as count FROM nu_entrenamientos WHERE codigo_paciente = :codigo");
+        if ($count > 0) {
+            $dependencies['nu_entrenamientos'] = $count;
+        }
     }
     
     http_response_code(200);

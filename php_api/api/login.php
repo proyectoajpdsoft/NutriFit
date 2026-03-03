@@ -79,7 +79,7 @@ if (empty($data->nick) || empty($data->contrasena)) {
     exit();
 }
 
-$query = "SELECT codigo, nick, contrasena, administrador, tipo, activo, accesoweb, codigo_paciente FROM usuario WHERE nick = :nick LIMIT 0,1";
+$query = "SELECT codigo, nick, contrasena, administrador, tipo, activo, accesoweb, codigo_paciente, edad, altura FROM usuario WHERE nick = :nick LIMIT 0,1";
 $stmt = $db->prepare($query);
 $stmt->bindParam(':nick', $data->nick);
 $stmt->execute();
@@ -96,6 +96,8 @@ if ($num > 0) {
     $activo = $row['activo'];
     $accesoweb = $row['accesoweb'];
     $codigo_paciente = $row['codigo_paciente'];
+    $edad = $row['edad'];
+    $altura = $row['altura'];
 
     // Verificar contraseña (¡IMPORTANTE! Deberías usar password_hash() y password_verify())
     // Por simplicidad en este ejemplo, se compara texto plano. ¡CAMBIAR EN PRODUCCIÓN!
@@ -158,7 +160,9 @@ if ($num > 0) {
                     "nick" => $nick,
                     "administrador" => $administrador,
                     "tipo" => $tipo,
-                    "codigo_paciente" => $codigo_paciente
+                    "codigo_paciente" => $codigo_paciente,
+                    "edad" => $edad,
+                    "altura" => $altura
                 )
             ));
         } else {

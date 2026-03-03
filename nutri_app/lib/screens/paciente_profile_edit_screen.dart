@@ -25,6 +25,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   final _formKey = GlobalKey<FormState>();
   final ApiService _apiService = ApiService();
   final TextEditingController _nickController = TextEditingController();
+  final TextEditingController _edadController = TextEditingController();
+  final TextEditingController _alturaController = TextEditingController();
   int _maxImageWidth = 400;
   int _maxImageHeight = 400;
 
@@ -91,6 +93,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   @override
   void dispose() {
     _nickController.dispose();
+    _edadController.dispose();
+    _alturaController.dispose();
     super.dispose();
   }
 
@@ -111,6 +115,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
               _fullUsuario = usuario;
               _nick = usuario.nick;
               _nickController.text = usuario.nick;
+              _edadController.text = usuario.edad?.toString() ?? '';
+              _alturaController.text = usuario.altura?.toString() ?? '';
               _imageBase64 = usuario.imgPerfil;
               _isLoading = false;
             });
@@ -120,6 +126,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
               _fullUsuario = widget.usuario;
               _nick = widget.usuario!.nick;
               _nickController.text = widget.usuario!.nick;
+              _edadController.text = widget.usuario!.edad?.toString() ?? '';
+              _alturaController.text = widget.usuario!.altura?.toString() ?? '';
               _imageBase64 = widget.usuario!.imgPerfil;
               _isLoading = false;
             });
@@ -130,6 +138,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
             _fullUsuario = widget.usuario;
             _nick = widget.usuario!.nick;
             _nickController.text = widget.usuario!.nick;
+            _edadController.text = widget.usuario!.edad?.toString() ?? '';
+            _alturaController.text = widget.usuario!.altura?.toString() ?? '';
             _imageBase64 = widget.usuario!.imgPerfil;
             _isLoading = false;
           });
@@ -380,11 +390,21 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
         'email': _fullUsuario?.email,
         'tipo': _fullUsuario?.tipo,
         'codigo_paciente': _fullUsuario?.codigoPaciente,
+        'edad': int.tryParse(_edadController.text.trim()),
+        'altura': int.tryParse(_alturaController.text.trim()),
         'activo': _fullUsuario?.activo,
         'accesoweb': _fullUsuario?.accesoweb,
         'administrador': _fullUsuario?.administrador,
         'img_perfil': _imageBase64,
       };
+
+      if (usuarioData['edad'] == null || (usuarioData['edad'] as int) <= 0) {
+        usuarioData['edad'] = null;
+      }
+      if (usuarioData['altura'] == null ||
+          (usuarioData['altura'] as int) <= 0) {
+        usuarioData['altura'] = null;
+      }
 
       // Solo incluir contraseña si se proporciona una nueva
       if (_newPassword.isNotEmpty) {
@@ -458,6 +478,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
 
   /// Construye la pantalla de edición para usuarios registrados
   Widget _buildEditScreen() {
+    final bottomSafeInset = MediaQuery.of(context).padding.bottom;
+
     return WillPopScope(
       onWillPop: _confirmDiscardChanges,
       child: Scaffold(
@@ -472,7 +494,12 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
           ],
         ),
         body: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 32.0),
+          padding: EdgeInsets.fromLTRB(
+            16.0,
+            16.0,
+            16.0,
+            32.0 + bottomSafeInset,
+          ),
           child: Form(
             key: _formKey,
             onChanged: _markDirty,
@@ -499,6 +526,70 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                       ? 'El nick es obligatorio'
                       : null,
                   onSaved: (value) => _nick = value!,
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.orange.shade200),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.info_outline,
+                        color: Colors.orange.shade800,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Para obtener el IMC, MVP y recomendaciones, completa Edad y Altura.',
+                          style: TextStyle(
+                            color: Colors.orange.shade900,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _edadController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Edad',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (value) {
+                    if ((value ?? '').trim().isEmpty) return null;
+                    final parsed = int.tryParse(value!.trim());
+                    if (parsed == null || parsed <= 0 || parsed > 120) {
+                      return 'Edad no válida';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _alturaController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Altura (cm)',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (value) {
+                    if ((value ?? '').trim().isEmpty) return null;
+                    final parsed = int.tryParse(value!.trim());
+                    if (parsed == null || parsed < 80 || parsed > 250) {
+                      return 'Altura no válida';
+                    }
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 16),
 

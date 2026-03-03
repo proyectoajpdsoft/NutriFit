@@ -6,6 +6,7 @@ enum AppMode { normal, debug }
 
 class ConfigService with ChangeNotifier {
   static const _kDebugModeKey = 'isDebugMode';
+  static const _kEffectiveDebugModeKey = 'effectiveDebugMode';
   static const _kDefaultTipoCitaKey = 'defaultTipoCita';
   static const _kDefaultEstadoCitaKey = 'defaultEstadoCita';
   static const _kDefaultOnlineCitaKey = 'defaultOnlineCita';
@@ -86,7 +87,9 @@ class ConfigService with ChangeNotifier {
   Future<void> _loadConfig() async {
     final prefs = await SharedPreferences.getInstance();
     final isDebug = prefs.getBool(_kDebugModeKey) ?? false;
-    _appMode = isDebug ? AppMode.debug : AppMode.normal;
+    final effectiveDebug = prefs.getBool(_kEffectiveDebugModeKey);
+    final debugEnabled = kDebugMode || (effectiveDebug ?? isDebug);
+    _appMode = debugEnabled ? AppMode.debug : AppMode.normal;
 
     _defaultTipoCita = prefs.getString(_kDefaultTipoCitaKey);
     _defaultEstadoCita = prefs.getString(_kDefaultEstadoCitaKey);
@@ -141,6 +144,16 @@ class ConfigService with ChangeNotifier {
     _appMode = mode;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kDebugModeKey, mode == AppMode.debug);
+    await prefs.setBool(_kEffectiveDebugModeKey, mode == AppMode.debug);
+    notifyListeners();
+  }
+
+  Future<void> refreshDebugModeFromPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    final isDebug = prefs.getBool(_kDebugModeKey) ?? false;
+    final effectiveDebug = prefs.getBool(_kEffectiveDebugModeKey);
+    final debugEnabled = kDebugMode || (effectiveDebug ?? isDebug);
+    _appMode = debugEnabled ? AppMode.debug : AppMode.normal;
     notifyListeners();
   }
 
