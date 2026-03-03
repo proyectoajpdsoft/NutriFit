@@ -14,12 +14,14 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import '../services/api_service.dart';
+import '../services/adherencia_service.dart';
 import '../services/auth_service.dart';
 import '../services/auth_error_handler.dart';
 import '../exceptions/auth_exceptions.dart';
 import '../models/entrenamiento.dart';
 import '../models/plan_fit.dart';
 import '../models/plan_fit_dia.dart';
+import '../models/plan_fit_ejercicio.dart';
 import '../models/entrenamiento_ejercicio.dart';
 import '../models/entrenamiento_actividad_custom.dart';
 import '../widgets/esfuerzo_slider.dart';
@@ -119,6 +121,119 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
   final List<TextEditingController> _ejercicioTiempoControllers = [];
   final List<TextEditingController> _ejercicioRondasControllers = [];
   final List<TextEditingController> _ejercicioKilosControllers = [];
+  final AdherenciaService _adherenciaService = AdherenciaService();
+
+  AdherenciaEstado _mapFitEstadoByRatio(double ratio) {
+    if (ratio >= 0.8) return AdherenciaEstado.cumplido;
+    if (ratio >= 0.3) return AdherenciaEstado.parcial;
+    return AdherenciaEstado.noRealizado;
+  }
+
+  Future<void> _registrarAdherenciaFitAutomatica({
+    required String localUserKey,
+    required int? codigoUsuarioObjetivo,
+    required int? codigoPacienteObjetivo,
+    required int? codigoUsuarioActor,
+    required DateTime fecha,
+  }) async {
+    if (localUserKey.isEmpty || _planFitSeleccionado == null) {
+      return;
+    }
+    if (_entrenamientoEjercicios.isEmpty) {
+      return;
+    }
+
+    final apiService = Provider.of<ApiService>(context, listen: false);
+    final ejerciciosDelPlan = await apiService.getPlanFitEjercicios(
+      _planFitSeleccionado!,
+    );
+    if (ejerciciosDelPlan.isEmpty) {
+      return;
+    }
+
+    final ejerciciosPlanById = <int, PlanFitEjercicio>{
+      for (final ejercicio in ejerciciosDelPlan) ejercicio.codigo: ejercicio,
+    };
+
+    final ejerciciosActividad = _entrenamientoEjercicios
+        .where((ejercicio) => (ejercicio.codigoPlanFitEjercicio ?? 0) > 0)
+        .toList(growable: false);
+    if (ejerciciosActividad.isEmpty) {
+      return;
+    }
+
+    final diasTocados = <int>{};
+    for (final ejercicioActividad in ejerciciosActividad) {
+      final planId = ejercicioActividad.codigoPlanFitEjercicio;
+      if (planId == null) continue;
+      final ejercicioPlan = ejerciciosPlanById[planId];
+      final codigoDia = ejercicioPlan?.codigoDia;
+      if (codigoDia != null && codigoDia > 0) {
+        diasTocados.add(codigoDia);
+      }
+    }
+
+    if (diasTocados.isEmpty) {
+      final total = ejerciciosActividad.length;
+      final realizados = ejerciciosActividad
+          .where(
+            (ejercicio) => (ejercicio.realizado ?? '').toUpperCase() == 'S',
+          )
+          .length;
+      final ratioFallback = total <= 0 ? 0.0 : (realizados / total);
+      final estadoFallback = _mapFitEstadoByRatio(ratioFallback);
+      await _adherenciaService.registrarEstadoDia(
+        userCode: localUserKey,
+        tipo: AdherenciaTipo.fit,
+        estado: estadoFallback,
+        fecha: fecha,
+        codigoUsuarioObjetivo: codigoUsuarioObjetivo,
+        codigoPacienteObjetivo: codigoPacienteObjetivo,
+        codigoUsuarioActor: codigoUsuarioActor,
+      );
+      return;
+    }
+
+    final ratiosPorDia = <double>[];
+    for (final codigoDia in diasTocados) {
+      final idsEjerciciosDia = ejerciciosDelPlan
+          .where((ejercicio) => ejercicio.codigoDia == codigoDia)
+          .map((ejercicio) => ejercicio.codigo)
+          .toSet();
+
+      if (idsEjerciciosDia.isEmpty) {
+        continue;
+      }
+
+      final realizadosDia = ejerciciosActividad.where((ejercicioActividad) {
+        final planId = ejercicioActividad.codigoPlanFitEjercicio;
+        if (planId == null || !idsEjerciciosDia.contains(planId)) {
+          return false;
+        }
+        return (ejercicioActividad.realizado ?? '').toUpperCase() == 'S';
+      }).length;
+
+      final ratioDia = realizadosDia / idsEjerciciosDia.length;
+      ratiosPorDia.add(ratioDia.clamp(0.0, 1.0));
+    }
+
+    if (ratiosPorDia.isEmpty) {
+      return;
+    }
+
+    final ratio = ratiosPorDia.reduce((a, b) => a + b) / ratiosPorDia.length;
+    final estado = _mapFitEstadoByRatio(ratio);
+
+    await _adherenciaService.registrarEstadoDia(
+      userCode: localUserKey,
+      tipo: AdherenciaTipo.fit,
+      estado: estado,
+      fecha: fecha,
+      codigoUsuarioObjetivo: codigoUsuarioObjetivo,
+      codigoPacienteObjetivo: codigoPacienteObjetivo,
+      codigoUsuarioActor: codigoUsuarioActor,
+    );
+  }
 
   void _syncEjercicioControllers() {
     final total = _entrenamientoEjercicios.length;
@@ -457,11 +572,8 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
             itemBuilder: (context, index) {
               final dia = dias[index];
               final titulo = (dia.titulo ?? '').trim();
-              final total = dia.totalEjercicios ?? 0;
               return ListTile(
-                title: Text('Día ${dia.numeroDia}'),
-                subtitle: Text(
-                    '${titulo.isNotEmpty ? titulo : 'Sin título'} · $total ejercicios'),
+                title: Text(titulo.isNotEmpty ? titulo : 'Sin descripción'),
                 onTap: () => Navigator.pop(context, dia),
               );
             },
@@ -839,6 +951,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     int max = 9999,
     bool showButtons = true,
     double fieldWidth = 70,
+    double buttonGap = 6,
     double labelSpacing = 2,
     Color? labelColor,
     Color? textColor,
@@ -931,7 +1044,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
               ),
             ),
             if (showButtons) ...[
-              const SizedBox(width: 6),
+              SizedBox(width: buttonGap),
               Column(
                 children: [
                   GestureDetector(
@@ -1403,7 +1516,8 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                             controller: tiempoController,
                             min: 0,
                             max: 3600,
-                            fieldWidth: 92,
+                            fieldWidth: 84,
+                            buttonGap: 3,
                             labelSpacing: 0,
                             prefixIcon: Icons.schedule,
                             contentPadding: const EdgeInsets.symmetric(
@@ -1421,7 +1535,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                             },
                           ),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: _buildMiniIntInput(
                             label: '',
@@ -2935,6 +3049,17 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
       final apiService = Provider.of<ApiService>(context, listen: false);
       final codigoPaciente =
           authService.patientCode ?? authService.userCode ?? '';
+      final isNutriOrAdmin = authService.userType == 'Nutricionista' ||
+          authService.userType == 'Administrador';
+      final adherenciaUserCode = isNutriOrAdmin
+          ? codigoPaciente
+          : (authService.userCode ?? codigoPaciente);
+      final codigoUsuarioObjetivo = isNutriOrAdmin
+          ? null
+          : int.tryParse((authService.userCode ?? '').trim());
+      final codigoPacienteObjetivo = int.tryParse((codigoPaciente).trim());
+      final codigoUsuarioActor =
+          int.tryParse((authService.userCode ?? '').trim());
 
       // Crear fecha completa
       final fechaCompleta = DateTime(
@@ -3005,6 +3130,18 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
             await apiService.saveEntrenamientoEjercicios(
                 codigo, _entrenamientoEjercicios);
           }
+          if (_planFitSeleccionado != null &&
+              _entrenamientoEjercicios.isNotEmpty) {
+            try {
+              await _registrarAdherenciaFitAutomatica(
+                localUserKey: adherenciaUserCode,
+                codigoUsuarioObjetivo: codigoUsuarioObjetivo,
+                codigoPacienteObjetivo: codigoPacienteObjetivo,
+                codigoUsuarioActor: codigoUsuarioActor,
+                fecha: fechaCompleta,
+              );
+            } catch (_) {}
+          }
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -3050,6 +3187,18 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
             }
             await apiService.saveEntrenamientoEjercicios(
                 codigoCreado, _entrenamientoEjercicios);
+          }
+          if (_planFitSeleccionado != null &&
+              _entrenamientoEjercicios.isNotEmpty) {
+            try {
+              await _registrarAdherenciaFitAutomatica(
+                localUserKey: adherenciaUserCode,
+                codigoUsuarioObjetivo: codigoUsuarioObjetivo,
+                codigoPacienteObjetivo: codigoPacienteObjetivo,
+                codigoUsuarioActor: codigoUsuarioActor,
+                fecha: fechaCompleta,
+              );
+            } catch (_) {}
           }
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -3425,6 +3574,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     int extraSeconds = 0;
 
     Timer? ticker;
+    Timer? adjustTimer;
     DateTime? runningSince;
     Duration accumulatedDuration = Duration.zero;
 
@@ -3455,6 +3605,11 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     void stopTicker() {
       ticker?.cancel();
       ticker = null;
+    }
+
+    void stopAdjustTimer() {
+      adjustTimer?.cancel();
+      adjustTimer = null;
     }
 
     void startTicker(StateSetter setDialogState) {
@@ -3522,7 +3677,27 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                 setDialogState(() {});
               }
 
+              void startAdjustHold(int delta) {
+                if (running) return;
+                stopAdjustTimer();
+                adjustTimer = Timer.periodic(
+                  const Duration(milliseconds: 80),
+                  (_) {
+                    if (running) {
+                      stopAdjustTimer();
+                      return;
+                    }
+                    final before = baseSeconds;
+                    adjustBaseSeconds(delta);
+                    if (before == baseSeconds) {
+                      stopAdjustTimer();
+                    }
+                  },
+                );
+              }
+
               void saveAndClose() {
+                stopAdjustTimer();
                 if (running && runningSince != null) {
                   accumulatedDuration +=
                       DateTime.now().difference(runningSince!);
@@ -3544,6 +3719,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
               }
 
               void closeWithoutSave() async {
+                stopAdjustTimer();
                 // Si el contador está corriendo, mostrar diálogo de confirmación
                 if (running) {
                   final action = await showDialog<String>(
@@ -3752,23 +3928,38 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                                     SizedBox(
                                       width: 96,
                                       height: 54,
-                                      child: ElevatedButton(
-                                        onPressed: running
-                                            ? null
-                                            : () => adjustBaseSeconds(-1),
-                                        child:
-                                            const Icon(Icons.remove, size: 30),
+                                      child: GestureDetector(
+                                        onLongPressStart: (_) =>
+                                            startAdjustHold(-1),
+                                        onLongPressEnd: (_) =>
+                                            stopAdjustTimer(),
+                                        onLongPressCancel: stopAdjustTimer,
+                                        child: ElevatedButton(
+                                          onPressed: running
+                                              ? null
+                                              : () => adjustBaseSeconds(-1),
+                                          child: const Icon(Icons.remove,
+                                              size: 30),
+                                        ),
                                       ),
                                     ),
                                     const SizedBox(width: 16),
                                     SizedBox(
                                       width: 96,
                                       height: 54,
-                                      child: ElevatedButton(
-                                        onPressed: running
-                                            ? null
-                                            : () => adjustBaseSeconds(1),
-                                        child: const Icon(Icons.add, size: 30),
+                                      child: GestureDetector(
+                                        onLongPressStart: (_) =>
+                                            startAdjustHold(1),
+                                        onLongPressEnd: (_) =>
+                                            stopAdjustTimer(),
+                                        onLongPressCancel: stopAdjustTimer,
+                                        child: ElevatedButton(
+                                          onPressed: running
+                                              ? null
+                                              : () => adjustBaseSeconds(1),
+                                          child:
+                                              const Icon(Icons.add, size: 30),
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -3843,6 +4034,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
       );
     } finally {
       ticker?.cancel();
+      adjustTimer?.cancel();
       try {
         await WakelockPlus.disable();
       } catch (e) {

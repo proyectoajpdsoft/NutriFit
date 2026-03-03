@@ -1,5 +1,4 @@
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:nutri_app/models/usuario.dart';
 import 'package:nutri_app/screens/citas/citas_list_screen.dart';
 import 'package:nutri_app/screens/entrevistas/entrevistas_pacientes_list_screen.dart';
@@ -20,16 +19,13 @@ import 'package:nutri_app/screens/usuarios/usuarios_list_screen.dart';
 import 'package:nutri_app/screens/contacto_nutricionista_screen.dart';
 import 'package:nutri_app/screens/chat_conversations_screen.dart';
 import 'package:nutri_app/screens/chat_screen.dart';
+import 'package:nutri_app/screens/todo_list_screen.dart';
 import 'package:nutri_app/services/auth_service.dart';
-import 'package:nutri_app/services/api_service.dart';
+import 'package:nutri_app/widgets/restricted_access_dialog_helper.dart';
 import 'package:provider/provider.dart';
 import 'package:nutri_app/constants/app_constants.dart';
-import 'package:url_launcher/url_launcher_string.dart';
 
 class AppDrawer extends StatelessWidget {
-  static const MethodChannel _externalUrlChannel =
-      MethodChannel('nutri_app/external_url');
-
   const AppDrawer({super.key});
 
   @override
@@ -38,7 +34,7 @@ class AppDrawer extends StatelessWidget {
     final userType = authService.userType;
     final isGuestMode = authService.isGuestMode;
 
-    // Control de seguridad: si no hay userType, mostrar solo opción de logout
+    // Control de seguridad: si no hay userType, mostrar solo opci├│n de logout
     if (userType == null) {
       return Drawer(
         child: ListView(
@@ -72,7 +68,7 @@ class AppDrawer extends StatelessWidget {
             ),
             ListTile(
               leading: const Icon(Icons.logout),
-              title: const Text('Cerrar Sesión'),
+              title: const Text('Cerrar sesión'),
               onTap: () {
                 authService.logout();
                 Navigator.of(context).pushReplacementNamed('login');
@@ -335,6 +331,14 @@ class AppDrawer extends StatelessWidget {
                 Navigator.pushNamed(context, '/recetas_list');
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.document_scanner_outlined),
+              title: const Text('Escáner'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/scanner_etiquetas');
+              },
+            ),
             const Divider(),
             ListTile(
               leading: const Icon(Icons.settings),
@@ -363,7 +367,7 @@ class AppDrawer extends StatelessWidget {
               title: const Text('Chat con dietista'),
               onTap: () {
                 if (isGuestMode) {
-                  // No cerrar el drawer para guest, mostrar diálogo sobre el drawer abierto
+                  // No cerrar el drawer para guest, mostrar di├ílogo sobre el drawer abierto
                   _showChatGuestDialog(context);
                   return;
                 }
@@ -401,7 +405,7 @@ class AppDrawer extends StatelessWidget {
                       Provider.of<AuthService>(context, listen: false);
                   final usuario = Usuario(
                     codigo: int.parse(authService.userCode ?? '0'),
-                    nick: '', // Se obtendrá del servidor si es necesario
+                    nick: '', // Se obtendr├í del servidor si es necesario
                   );
                   Navigator.push(
                     context,
@@ -414,29 +418,6 @@ class AppDrawer extends StatelessWidget {
               ),
             ],
             const Divider(),
-            ListTile(
-              leading: const Icon(Icons.recommend_outlined),
-              title: const Text('Recomendaciones'),
-              onTap: () {
-                Navigator.pop(context);
-                final authService =
-                    Provider.of<AuthService>(context, listen: false);
-                final hasPatient = (authService.patientCode ?? '').isNotEmpty;
-
-                // Si no está registrado o no tiene paciente
-                if (authService.isGuestMode || !hasPatient) {
-                  _showRecomendacionesRestrictedDialog(
-                      context, authService.isGuestMode);
-                } else {
-                  // Usuario con paciente: abrir pestaña Personales
-                  Navigator.pushNamed(
-                    context,
-                    '/consejos_paciente',
-                    arguments: {'openPersonalizados': true},
-                  );
-                }
-              },
-            ),
             ListTile(
               leading: const Icon(Icons.article),
               title: const Text('Planes Nutri'),
@@ -481,6 +462,29 @@ class AppDrawer extends StatelessWidget {
               },
             ),
             const Divider(),
+            ListTile(
+              leading: const Icon(Icons.recommend_outlined),
+              title: const Text('Recomendaciones'),
+              onTap: () {
+                Navigator.pop(context);
+                final authService =
+                    Provider.of<AuthService>(context, listen: false);
+                final hasPatient = (authService.patientCode ?? '').isNotEmpty;
+
+                // Si no está registrado o no tiene paciente
+                if (authService.isGuestMode || !hasPatient) {
+                  _showRecomendacionesRestrictedDialog(
+                      context, authService.isGuestMode);
+                } else {
+                  // Usuario con paciente: abrir pestaña Personales
+                  Navigator.pushNamed(
+                    context,
+                    '/consejos_paciente',
+                    arguments: {'openPersonalizados': true},
+                  );
+                }
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.lightbulb),
               title: const Text('Consejos'),
@@ -531,11 +535,44 @@ class AppDrawer extends StatelessWidget {
                 Navigator.pushNamed(context, '/lista_compra');
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.document_scanner_outlined),
+              title: const Text('Escáner'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/scanner_etiquetas');
+              },
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.checklist_outlined),
+              title: const Text('Tareas'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const TodoListScreen(),
+                  ),
+                );
+              },
+            ),
+            if (isGuestMode) ...[
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.app_registration),
+                title: const Text('Iniciar registro'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.pushNamed(context, '/register');
+                },
+              ),
+            ],
             if (!isGuestMode) ...[
               const Divider(),
               ListTile(
                 leading: const Icon(Icons.logout),
-                title: const Text('Cerrar Sesión'),
+                title: const Text('Cerrar sesión'),
                 onTap: () {
                   Provider.of<AuthService>(context, listen: false).logout();
                   Navigator.of(context).pushReplacementNamed('login');
@@ -560,7 +597,7 @@ class AppDrawer extends StatelessWidget {
             const Divider(),
             ListTile(
               leading: const Icon(Icons.logout),
-              title: const Text('Cerrar Sesión'),
+              title: const Text('Cerrar sesión'),
               onTap: () {
                 Provider.of<AuthService>(context, listen: false).logout();
                 Navigator.of(context).pushReplacementNamed('login');
@@ -575,206 +612,16 @@ class AppDrawer extends StatelessWidget {
   }
 
   static void _showPlanesRestrictedDialog(
-      BuildContext context, String planType) async {
-    // Cargar información de contacto
-    final apiService = ApiService();
-    Map<String, String> contactInfo = {};
-
-    try {
-      final email = await apiService.getParametro('nutricionista_email');
-      final telefono = await apiService.getParametro('nutricionista_telefono');
-
-      contactInfo = {
-        'email': email?['valor'] ?? '',
-        'telefono': telefono?['valor'] ?? '',
-      };
-    } catch (e) {
-      // Si hay error, continuar con valores vacíos
-    }
-
-    if (!context.mounted) return;
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.lock_outline,
-                color: Theme.of(context).colorScheme.primary),
-            const SizedBox(width: 8),
-            Expanded(child: Text('$planType Personalizados')),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Para acceder a tus planes personalizados, primero necesitas contactar con el dietista para que te asigne un plan específico, adaptado a tus necesidades.',
-                style: TextStyle(fontSize: 14),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                'Formas de contacto:',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-              ),
-              const SizedBox(height: 12),
-              // Email
-              if ((contactInfo['email'] ?? '').isNotEmpty)
-                _buildDialogContactRow(
-                  context,
-                  icon: Icons.email,
-                  label: 'Email',
-                  value: contactInfo['email'] ?? '',
-                  onTap: () => _launchUrl('mailto:${contactInfo['email']}'),
-                ),
-
-              // Teléfono
-              if ((contactInfo['telefono'] ?? '').isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _buildDialogContactRow(
-                  context,
-                  icon: Icons.phone,
-                  label: 'Teléfono',
-                  value: contactInfo['telefono'] ?? '',
-                  onTap: () => _launchUrl('tel:${contactInfo['telefono']}'),
-                ),
-              ],
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
-          ),
-          ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const ContactoNutricionistaScreen(),
-                ),
-              );
-            },
-            icon: const Icon(Icons.arrow_forward, size: 18),
-            label: const Text('Otras opciones...'),
-          ),
-        ],
-      ),
-    );
+      BuildContext context, String planType) {
+    final dialogTitle = planType == 'Planes Nutricionales'
+        ? 'Planes nutricionales'
+        : 'Entrenamientos personalizados';
+    RestrictedAccessDialogHelper.show(context, title: dialogTitle);
   }
 
   static void _showRecomendacionesRestrictedDialog(
-      BuildContext context, bool isGuest) async {
-    // Cargar información de contacto
-    final apiService = ApiService();
-    Map<String, String> contactInfo = {};
-
-    try {
-      final email = await apiService.getParametro('nutricionista_email');
-      final telefono = await apiService.getParametro('nutricionista_telefono');
-
-      contactInfo = {
-        'email': email?['valor'] ?? '',
-        'telefono': telefono?['valor'] ?? '',
-      };
-    } catch (e) {
-      // Si hay error, continuar con valores vacíos
-    }
-
-    if (!context.mounted) return;
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.lock_outline,
-                color: Theme.of(context).colorScheme.primary),
-            const SizedBox(width: 8),
-            const Expanded(child: Text('Recomendaciones Personalizadas')),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Para acceder a tus recomendaciones personalizadas, primero necesitas contactar con el dietista para que te asigne un plan específico, ajustado a tus necesidades.',
-                style: TextStyle(fontSize: 14),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                'Formas de contacto:',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-              ),
-              const SizedBox(height: 12),
-              if (contactInfo.isNotEmpty) ...[
-                if (contactInfo['email'] != null &&
-                    contactInfo['email']!.isNotEmpty) ...[
-                  InkWell(
-                    onTap: () => _launchUrl('mailto:${contactInfo['email']}'),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: Row(
-                        children: [
-                          Icon(Icons.email,
-                              size: 16,
-                              color: Theme.of(context).colorScheme.primary),
-                          const SizedBox(width: 12),
-                          Text(contactInfo['email'] ?? ''),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-                if (contactInfo['telefono'] != null &&
-                    contactInfo['telefono']!.isNotEmpty) ...[
-                  InkWell(
-                    onTap: () => _launchUrl('tel:${contactInfo['telefono']}'),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: Row(
-                        children: [
-                          Icon(Icons.phone,
-                              size: 16,
-                              color: Theme.of(context).colorScheme.primary),
-                          const SizedBox(width: 12),
-                          Text(contactInfo['telefono'] ?? ''),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
-          ),
-          ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const ContactoNutricionistaScreen(),
-                ),
-              );
-            },
-            icon: const Icon(Icons.arrow_forward, size: 18),
-            label: const Text('Más formas de contacto'),
-          ),
-        ],
-      ),
-    );
+      BuildContext context, bool isGuest) {
+    RestrictedAccessDialogHelper.show(context, title: 'Recomendaciones');
   }
 
   static void _showChatGuestDialog(BuildContext context) {
@@ -792,71 +639,14 @@ class AppDrawer extends StatelessWidget {
           ),
           ElevatedButton(
             onPressed: () {
-              Navigator.pop(context); // Cerrar diálogo
+              Navigator.pop(context); // Cerrar di├ílogo
               Navigator.pop(context); // Cerrar drawer
               Navigator.pushNamed(context, '/register');
             },
-            child: const Text('Registrarse'),
+            child: const Text('Iniciar registro'),
           ),
         ],
       ),
     );
-  }
-
-  static Widget _buildDialogContactRow(
-    BuildContext context, {
-    required IconData icon,
-    required String label,
-    required String value,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-        child: Row(
-          children: [
-            Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                    ),
-                  ),
-                  Text(
-                    value,
-                    style: TextStyle(
-                      color: Colors.grey.shade700,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Icon(Icons.arrow_forward_ios,
-                size: 16, color: Colors.grey.shade400),
-          ],
-        ),
-      ),
-    );
-  }
-
-  static Future<void> _launchUrl(String url) async {
-    try {
-      await launchUrlString(url, mode: LaunchMode.externalApplication);
-    } on PlatformException catch (e) {
-      if (e.code == 'channel-error') {
-        await _externalUrlChannel.invokeMethod('openUrl', {'url': url});
-      }
-    } catch (_) {
-      // Error silencioso
-    }
   }
 }

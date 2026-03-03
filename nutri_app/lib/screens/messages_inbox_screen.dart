@@ -75,7 +75,7 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
             const SizedBox(height: 16),
             ElevatedButton(
               onPressed: () => Navigator.pushNamed(context, '/register'),
-              child: const Text('Registrarse'),
+              child: const Text('Iniciar registro'),
             ),
           ],
         ),

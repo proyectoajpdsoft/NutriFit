@@ -5,6 +5,7 @@ import 'package:nutri_app/models/plan_fit.dart';
 import 'package:nutri_app/models/plan_fit_dia.dart';
 import 'package:nutri_app/models/plan_fit_ejercicio.dart';
 import 'package:nutri_app/screens/planes_fit/plan_fit_edit_screen.dart';
+import 'package:nutri_app/services/adherencia_service.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/config_service.dart';
 import 'package:nutri_app/services/plan_fit_pdf_service.dart';
@@ -43,8 +44,11 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
   static const _pdfFullPrefix = 'plan_fit_pdf_full';
   static const _pdfResumenPrefix = 'plan_fit_pdf_resumen';
   final ApiService _apiService = ApiService();
+  final AdherenciaService _adherenciaService = AdherenciaService();
   late Future<List<PlanFit>> _planesFuture;
   final TextEditingController _searchController = TextEditingController();
+  final Map<int, Future<AdherenciaMetricaSemanal?>> _adherenciaFitByPaciente =
+      {};
   String _searchText = '';
   bool _showSearchField = false;
   bool _showFilterPlanes = false;
@@ -70,12 +74,33 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
 
   void _refreshPlanes() {
     setState(() {
+      _adherenciaFitByPaciente.clear();
       if (widget.paciente != null) {
         _planesFuture = _apiService.getPlanesFit(widget.paciente!.codigo);
       } else {
         _planesFuture = _apiService.getPlanesFit(null);
       }
     });
+  }
+
+  Future<AdherenciaMetricaSemanal?> _getAdherenciaFitPaciente(
+    int codigoPaciente,
+  ) {
+    return _adherenciaFitByPaciente.putIfAbsent(codigoPaciente, () async {
+      final resumen = await _adherenciaService.getResumenSemanal(
+        userCode: codigoPaciente.toString(),
+        incluirNutri: false,
+        incluirFit: true,
+        codigoUsuarioConsulta: codigoPaciente,
+      );
+      return resumen.fit;
+    });
+  }
+
+  Color _adherenciaColorByPercent(int percent) {
+    if (percent >= 75) return Colors.green;
+    if (percent >= 50) return Colors.orange;
+    return Colors.red;
   }
 
   Future<void> _loadUiState() async {
@@ -542,6 +567,59 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
                                         ?.copyWith(fontWeight: FontWeight.bold),
                                   ),
                                 ],
+                              ),
+                              const SizedBox(height: 8),
+                              Builder(
+                                builder: (context) {
+                                  final codigoPaciente = plan.codigoPaciente ??
+                                      widget.paciente?.codigo;
+                                  if (codigoPaciente == null ||
+                                      codigoPaciente <= 0) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  return FutureBuilder<
+                                      AdherenciaMetricaSemanal?>(
+                                    future: _getAdherenciaFitPaciente(
+                                      codigoPaciente,
+                                    ),
+                                    builder: (context, adhSnapshot) {
+                                      if (adhSnapshot.connectionState ==
+                                          ConnectionState.waiting) {
+                                        return const SizedBox(
+                                          height: 18,
+                                          width: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        );
+                                      }
+                                      final pct =
+                                          adhSnapshot.data?.porcentaje ?? 0;
+                                      return Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 6,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.grey.shade100,
+                                          borderRadius:
+                                              BorderRadius.circular(999),
+                                          border: Border.all(
+                                            color: Colors.grey.shade300,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          'Cumplimiento paciente: $pct%',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            color:
+                                                _adherenciaColorByPercent(pct),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  );
+                                },
                               ),
                               const SizedBox(height: 12),
 

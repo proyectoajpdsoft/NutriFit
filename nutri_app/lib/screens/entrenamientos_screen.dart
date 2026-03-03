@@ -102,22 +102,22 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
       builder: (context) => AlertDialog(
         title: const Text('Registro requerido'),
         content: const Text(
-          'Para agregar actividades necesitas registrarte. '
-          '¿Deseas crear una cuenta ahora? Es gratis y rápido.',
+          'Para poder añadir actividades, debes registrarte (es gratis).',
         ),
         actions: [
           TextButton(
             onPressed: () {
               Navigator.pop(context);
             },
-            child: const Text('Cancelar'),
+            child: const Text('Cerrar'),
           ),
-          ElevatedButton(
+          ElevatedButton.icon(
             onPressed: () {
               Navigator.pop(context);
               Navigator.pushNamed(context, '/register');
             },
-            child: const Text('Registrarse'),
+            icon: const Icon(Icons.app_registration),
+            label: const Text('Iniciar registro'),
           ),
         ],
       ),

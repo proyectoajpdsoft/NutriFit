@@ -25,6 +25,7 @@ import 'package:nutri_app/models/cobro.dart';
 import 'package:nutri_app/models/usuario.dart';
 import 'package:nutri_app/models/session.dart';
 import 'package:nutri_app/models/entrenamiento_ejercicio.dart';
+import 'package:nutri_app/models/todo_item.dart';
 import 'package:flutter/foundation.dart'; // Import necesario para debugPrint
 import 'package:nutri_app/exceptions/auth_exceptions.dart';
 import 'package:nutri_app/services/auth_error_handler.dart';
@@ -32,11 +33,14 @@ import 'package:nutri_app/services/thumbnail_generator.dart';
 
 class ApiService {
   // Se elimina la dependencia de AuthService. ApiService vuelve a ser autocontenido.
-  // URL dinámica de arranque. Luego se autoconfigura desde parámetro url_api.
+  // URL dinámica de arranque. Luego se autoconfigura desde parámetro url_base.
   static const String _defaultBaseUrl =
       "https://aprendeconpatricia.com/php_api/";
   static const String _prefsApiBaseUrlKey = 'api_base_url';
-  static const String _apiUrlParamName = 'url_api';
+  static const String _apiBaseParamName = 'url_base';
+  static const String _prefsDebugModeKey = 'isDebugMode';
+  static const String _prefsEffectiveDebugModeKey = 'effectiveDebugMode';
+  static const String _globalDebugParamName = 'modo_debug';
 
   static Future<void>? _baseUrlBootstrapFuture;
   static String _resolvedBaseUrl = _defaultBaseUrl;
@@ -60,9 +64,112 @@ class ApiService {
     return trimmed.endsWith('/') ? trimmed : '$trimmed/';
   }
 
-  Future<String?> _fetchRemoteApiBaseUrl(String fromBaseUrl) async {
+  bool _isAdminUserType(String? userType) {
+    final normalized = (userType ?? '').trim().toLowerCase();
+    return normalized == 'nutricionista' ||
+        normalized == 'administrador' ||
+        normalized == 'admin';
+  }
+
+  bool _isTruthy(dynamic value) {
+    final normalized = (value ?? '').toString().trim().toLowerCase();
+    return normalized == 's' ||
+        normalized == '1' ||
+        normalized == 'true' ||
+        normalized == 'si' ||
+        normalized == 'sí';
+  }
+
+  Future<bool> _fetchRemoteGlobalDebugFlag(String fromBaseUrl) async {
+    try {
+      final uri = Uri.parse('${fromBaseUrl}api/parametros.php')
+          .replace(queryParameters: {'nombre': _globalDebugParamName});
+
+      final response = await http.get(
+        uri,
+        headers: const {
+          'Content-Type': 'application/json; charset=UTF-8',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 8));
+
+      if (response.statusCode != 200) {
+        return false;
+      }
+
+      final dynamic decoded = json.decode(response.body);
+      if (decoded is Map<String, dynamic>) {
+        final candidate = decoded['valor1'] ?? decoded['valor'];
+        return _isTruthy(candidate);
+      }
+
+      if (decoded is String) {
+        return _isTruthy(decoded);
+      }
+    } catch (_) {
+      // Si falla, no se activa debug global.
+    }
+
+    return false;
+  }
+
+  Future<bool> _resolveEffectiveDebugMode(
+    SharedPreferences prefs, {
+    required String baseUrlForLookup,
+    String? userType,
+  }) async {
+    final localOrBuildDebug =
+        (prefs.getBool(_prefsDebugModeKey) ?? false) || kDebugMode;
+    if (!_isAdminUserType(userType)) {
+      return localOrBuildDebug;
+    }
+
+    final globalDebug = await _fetchRemoteGlobalDebugFlag(baseUrlForLookup);
+    return localOrBuildDebug || globalDebug;
+  }
+
+  Future<void> refreshRuntimeDebugAndBaseUrl({String? userType}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      final stored = _normalizeBaseUrl(prefs.getString(_prefsApiBaseUrlKey));
+      final baseToCheck = stored.isNotEmpty
+          ? stored
+          : (_normalizeBaseUrl(_resolvedBaseUrl).isNotEmpty
+              ? _resolvedBaseUrl
+              : _defaultBaseUrl);
+
+      final effectiveDebugMode = await _resolveEffectiveDebugMode(
+        prefs,
+        baseUrlForLookup: baseToCheck,
+        userType: userType,
+      );
+
+      await prefs.setBool(_prefsEffectiveDebugModeKey, effectiveDebugMode);
+
+      final remote = await _fetchRemoteApiBaseUrl(
+        baseToCheck,
+        isDebugMode: effectiveDebugMode,
+      );
+
+      final nextBase = _normalizeBaseUrl(remote ?? baseToCheck);
+      final finalBase = nextBase.isNotEmpty ? nextBase : _defaultBaseUrl;
+
+      _resolvedBaseUrl = finalBase;
+      _baseUrl = finalBase;
+      await prefs.setString(_prefsApiBaseUrlKey, finalBase);
+      _baseUrlBootstrapFuture = Future.value();
+    } catch (_) {
+      // Fallback silencioso.
+    }
+  }
+
+  Future<String?> _fetchRemoteApiBaseUrl(
+    String fromBaseUrl, {
+    required bool isDebugMode,
+  }) async {
     final uri = Uri.parse('${fromBaseUrl}api/parametros.php')
-        .replace(queryParameters: {'nombre': _apiUrlParamName});
+        .replace(queryParameters: {'nombre': _apiBaseParamName});
 
     final response = await http.get(
       uri,
@@ -79,11 +186,9 @@ class ApiService {
     final dynamic decoded = json.decode(response.body);
 
     if (decoded is Map<String, dynamic>) {
-      final candidates = [
-        decoded['valor1'],
-        decoded['valor'],
-        decoded['valor2']
-      ];
+      final candidates = isDebugMode
+          ? [decoded['valor2'], decoded['valor1'], decoded['valor']]
+          : [decoded['valor1'], decoded['valor2'], decoded['valor']];
       for (final candidate in candidates) {
         final normalized = _normalizeBaseUrl(candidate?.toString());
         if (normalized.isNotEmpty) return normalized;
@@ -101,6 +206,7 @@ class ApiService {
   Future<void> _bootstrapAndRefreshBaseUrl() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      final storedUserType = await _storage.read(key: 'userType');
 
       // 1) Arranca con URL guardada o por defecto.
       final stored = _normalizeBaseUrl(prefs.getString(_prefsApiBaseUrlKey));
@@ -108,8 +214,17 @@ class ApiService {
       _resolvedBaseUrl = baseToCheck;
       _baseUrl = _resolvedBaseUrl;
 
-      // 2) Lee url_api desde la URL activa y actualiza si cambia.
-      final remote = await _fetchRemoteApiBaseUrl(baseToCheck);
+      // 2) Lee url_base y selecciona valor1/valor2 según modo normal/debug.
+      final isDebugMode = await _resolveEffectiveDebugMode(
+        prefs,
+        baseUrlForLookup: baseToCheck,
+        userType: storedUserType,
+      );
+      await prefs.setBool(_prefsEffectiveDebugModeKey, isDebugMode);
+      final remote = await _fetchRemoteApiBaseUrl(
+        baseToCheck,
+        isDebugMode: isDebugMode,
+      );
       if (remote != null && remote != _resolvedBaseUrl) {
         _resolvedBaseUrl = remote;
         _baseUrl = remote;
@@ -278,10 +393,11 @@ class ApiService {
   Future<http.Response> _safeDelete(
     Uri uri, {
     Map<String, String>? headers,
+    dynamic body,
   }) async {
     await _ensureBaseUrlReady();
     try {
-      return await http.delete(uri, headers: headers).timeout(
+      return await http.delete(uri, headers: headers, body: body).timeout(
             const Duration(seconds: 15),
             onTimeout: () =>
                 http.Response('Conexión lenta o servidor inaccesible', 408),
@@ -350,6 +466,11 @@ class ApiService {
             'No se pudo completar el inicio de sesión. Inténtalo de nuevo.',
       );
     }
+
+    final userData = decoded['usuario'];
+    final userType =
+        userData is Map<String, dynamic> ? userData['tipo']?.toString() : null;
+    await refreshRuntimeDebugAndBaseUrl(userType: userType);
 
     return decoded;
   }
@@ -982,6 +1103,12 @@ ${response.body}
     required DateTime fecha,
     required double peso,
     String? observacionUsuario,
+    double? cintura,
+    double? cadera,
+    double? muslo,
+    double? brazo,
+    int? presionSistolica,
+    int? presionDiastolica,
   }) async {
     final patientCode = await _storage.read(key: 'patientCode');
     final userCode = await _storage.read(key: 'userCode');
@@ -991,6 +1118,12 @@ ${response.body}
       codigoPaciente: int.tryParse(patientCode ?? '') ?? 0,
       fecha: fecha,
       peso: peso,
+      cintura: cintura,
+      cadera: cadera,
+      muslo: muslo,
+      brazo: brazo,
+      presionSistolica: presionSistolica,
+      presionDiastolica: presionDiastolica,
       tipo: 'Usuario',
       observacionUsuario: observacionUsuario,
       codigoUsuario: int.tryParse(userCode ?? ''),
@@ -1024,6 +1157,15 @@ ${response.body}
       'altura_paciente': data['altura_paciente'] == null
           ? null
           : int.tryParse(data['altura_paciente'].toString()),
+      'edad_usuario': data['edad_usuario'] == null
+          ? null
+          : int.tryParse(data['edad_usuario'].toString()),
+      'altura_usuario': data['altura_usuario'] == null
+          ? null
+          : int.tryParse(data['altura_usuario'].toString()),
+      'edad_paciente': data['edad_paciente'] == null
+          ? null
+          : int.tryParse(data['edad_paciente'].toString()),
     };
   }
 
@@ -3573,6 +3715,206 @@ ${response.body}
     );
   }
 
+  // --- TODO LIST ---
+
+  Future<List<TodoItem>> getTodoItems({
+    String? estado,
+    int? year,
+    int? month,
+  }) async {
+    final queryParameters = <String, String>{};
+
+    if (estado != null && estado.isNotEmpty) {
+      queryParameters['estado'] = estado;
+    }
+
+    if (year != null && month != null) {
+      queryParameters['year'] = year.toString();
+      queryParameters['month'] = month.toString();
+    }
+
+    final uri = Uri.parse('${_baseUrl}api/todo_list.php').replace(
+      queryParameters: queryParameters.isEmpty ? null : queryParameters,
+    );
+
+    final response = await _safeGet(uri, headers: await _getHeaders());
+
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception('Respuesta del servidor (${response.statusCode}): $body');
+    }
+
+    final dynamic decoded = jsonDecode(response.body);
+    if (decoded is! List) {
+      return <TodoItem>[];
+    }
+
+    return decoded
+        .whereType<Map<String, dynamic>>()
+        .map((item) => TodoItem.fromJson(item))
+        .toList();
+  }
+
+  Future<TodoItem> createTodoItem(Map<String, dynamic> data) async {
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/todo_list.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode(data),
+    );
+
+    if (response.statusCode != 201) {
+      _validateResponse(response.statusCode, response.body);
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception('Respuesta del servidor (${response.statusCode}): $body');
+    }
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final item = decoded['item'];
+    if (item is Map<String, dynamic>) {
+      return TodoItem.fromJson(item);
+    }
+
+    throw Exception('Respuesta del servidor inválida al crear tarea.');
+  }
+
+  Future<TodoItem> updateTodoItem(Map<String, dynamic> data) async {
+    final response = await _safePut(
+      Uri.parse('${_baseUrl}api/todo_list.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode(data),
+    );
+
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception('Respuesta del servidor (${response.statusCode}): $body');
+    }
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final item = decoded['item'];
+    if (item is Map<String, dynamic>) {
+      return TodoItem.fromJson(item);
+    }
+
+    throw Exception('Respuesta del servidor inválida al actualizar tarea.');
+  }
+
+  Future<void> deleteTodoItem(int codigo) async {
+    final response = await _safeDelete(
+      Uri.parse('${_baseUrl}api/todo_list.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode({'codigo': codigo}),
+    );
+
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception('Respuesta del servidor (${response.statusCode}): $body');
+    }
+  }
+
+  // --- ADHERENCIA ---
+
+  Future<List<Map<String, dynamic>>> getAdherenciaRegistros({
+    DateTime? fechaDesde,
+    DateTime? fechaHasta,
+    int? codigoUsuario,
+  }) async {
+    String formatDate(DateTime value) {
+      final day = DateTime(value.year, value.month, value.day);
+      return '${day.year.toString().padLeft(4, '0')}-'
+          '${day.month.toString().padLeft(2, '0')}-'
+          '${day.day.toString().padLeft(2, '0')}';
+    }
+
+    final query = <String, String>{};
+    if (fechaDesde != null) {
+      query['fecha_desde'] = formatDate(fechaDesde);
+    }
+    if (fechaHasta != null) {
+      query['fecha_hasta'] = formatDate(fechaHasta);
+    }
+    if (codigoUsuario != null && codigoUsuario > 0) {
+      query['codigo_usuario'] = codigoUsuario.toString();
+    }
+
+    final uri = Uri.parse('${_baseUrl}api/adherencia.php').replace(
+      queryParameters: query.isEmpty ? null : query,
+    );
+
+    final response = await _safeGet(uri, headers: await _getHeaders());
+
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      throw Exception(
+        'Error al obtener cumplimiento (${response.statusCode}): ${response.body}',
+      );
+    }
+
+    final dynamic decoded = jsonDecode(response.body);
+    if (decoded is Map<String, dynamic>) {
+      final items = decoded['items'];
+      if (items is List) {
+        return items
+            .whereType<Map<String, dynamic>>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList();
+      }
+    }
+
+    return <Map<String, dynamic>>[];
+  }
+
+  Future<void> upsertAdherenciaRegistro({
+    required String tipo,
+    required String estado,
+    DateTime? fecha,
+    String? observacion,
+    int? codigoUsuario,
+    int? codigoPaciente,
+    int? codigoUsuarioActor,
+  }) async {
+    String? fechaString;
+    if (fecha != null) {
+      final day = DateTime(fecha.year, fecha.month, fecha.day);
+      fechaString = '${day.year.toString().padLeft(4, '0')}-'
+          '${day.month.toString().padLeft(2, '0')}-'
+          '${day.day.toString().padLeft(2, '0')}';
+    }
+
+    final payload = <String, dynamic>{
+      'tipo': tipo,
+      'estado': estado,
+      if (fechaString != null) 'fecha': fechaString,
+      if ((observacion ?? '').trim().isNotEmpty)
+        'observacion': observacion!.trim(),
+      if (codigoUsuario != null && codigoUsuario > 0)
+        'codigo_usuario': codigoUsuario,
+      if (codigoPaciente != null && codigoPaciente > 0)
+        'codigo_paciente': codigoPaciente,
+      if (codigoUsuarioActor != null && codigoUsuarioActor > 0)
+        'codusuarioa': codigoUsuarioActor,
+    };
+
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/adherencia.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode(payload),
+    );
+
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      _validateResponse(response.statusCode, response.body);
+      throw Exception(
+        'Error al guardar cumplimiento (${response.statusCode}): ${response.body}',
+      );
+    }
+  }
+
   /// Verifica si un nick ya existe en la base de datos
   Future<bool> checkNickExists(String nick) async {
     try {
@@ -3602,6 +3944,8 @@ ${response.body}
     required String contrasena,
     required String tipo,
     String? nombre,
+    int? edad,
+    int? altura,
   }) async {
     try {
       final payload = {
@@ -3610,6 +3954,8 @@ ${response.body}
         'contrasena': contrasena,
         'tipo': tipo,
         if ((nombre ?? '').trim().isNotEmpty) 'nombre': nombre,
+        if (edad != null && edad > 0) 'edad': edad,
+        if (altura != null && altura > 0) 'altura': altura,
         'codigo_paciente': null,
       };
 
@@ -3629,6 +3975,8 @@ ${response.body}
           'contrasena': contrasena,
           'tipo': tipo,
           if ((nombre ?? '').trim().isNotEmpty) 'nombre': nombre!,
+          if (edad != null && edad > 0) 'edad': edad.toString(),
+          if (altura != null && altura > 0) 'altura': altura.toString(),
           'codigo_paciente': '',
         };
         response = await http.post(

@@ -12,10 +12,15 @@ import 'package:nutri_app/screens/contacto_nutricionista_screen.dart';
 import 'package:nutri_app/screens/chat_screen.dart';
 import 'package:nutri_app/screens/messages_inbox_screen.dart';
 import 'package:nutri_app/screens/mediciones/pesos_usuario_screen.dart';
+import 'package:nutri_app/screens/etiqueta_nutricional_scanner_screen.dart';
 import 'package:nutri_app/services/api_service.dart';
+import 'package:nutri_app/services/adherencia_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
+import 'package:nutri_app/services/config_service.dart';
 import 'package:nutri_app/widgets/app_drawer.dart';
+import 'package:nutri_app/widgets/adherencia_registro_bottom_sheet.dart';
 import 'package:nutri_app/widgets/image_viewer_dialog.dart';
+import 'package:nutri_app/widgets/restricted_access_dialog_helper.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -33,10 +38,15 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
       MethodChannel('nutri_app/external_url');
 
   final ApiService _apiService = ApiService();
+  final AdherenciaService _adherenciaService = AdherenciaService();
   bool _isAuthorized = true;
   bool _isLoading = true;
   Paciente? _paciente;
   bool _hasPlanes = false;
+  bool _hasPlanNutri = false;
+  bool _hasPlanFit = false;
+  bool _loadingAdherencia = false;
+  AdherenciaResumenSemanal? _adherenciaResumen;
   Map<String, String> _contactInfo = {};
   List<Consejo> _consejosDestacados = [];
   List<Consejo> _consejosPersonalizadosNoLeidos = [];
@@ -47,6 +57,8 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   bool _showWelcomeMessage = false;
   bool _showContactCardFirstTime = true;
   bool _hasPersonalizados = false;
+  bool _isContactCardExpanded = true;
+  bool _isAdherenciaCardExpanded = true;
 
   @override
   void initState() {
@@ -60,6 +72,58 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     _checkFirstTime();
     _loadContactCardFirstTimeFlag();
     _loadHasPersonalizados();
+    _loadContactCardExpandedState();
+    _loadAdherenciaCardExpandedState();
+  }
+
+  Future<void> _loadContactCardExpandedState() async {
+    final authService = context.read<AuthService>();
+    final prefs = await SharedPreferences.getInstance();
+    final userCode = authService.userCode ?? 'guest';
+    final patientCode = authService.patientCode ?? 'none';
+    final key =
+        'contact_card_expanded_${authService.userType}_${userCode}_$patientCode';
+    final savedState = prefs.getBool(key);
+
+    if (!mounted) return;
+    setState(() {
+      _isContactCardExpanded = savedState ?? true;
+    });
+  }
+
+  Future<void> _saveContactCardExpandedState(bool isExpanded) async {
+    final authService = context.read<AuthService>();
+    final prefs = await SharedPreferences.getInstance();
+    final userCode = authService.userCode ?? 'guest';
+    final patientCode = authService.patientCode ?? 'none';
+    final key =
+        'contact_card_expanded_${authService.userType}_${userCode}_$patientCode';
+    await prefs.setBool(key, isExpanded);
+  }
+
+  Future<void> _loadAdherenciaCardExpandedState() async {
+    final authService = context.read<AuthService>();
+    final prefs = await SharedPreferences.getInstance();
+    final userCode = authService.userCode ?? 'guest';
+    final patientCode = authService.patientCode ?? 'none';
+    final key =
+        'adherencia_card_expanded_${authService.userType}_${userCode}_$patientCode';
+    final savedState = prefs.getBool(key);
+
+    if (!mounted) return;
+    setState(() {
+      _isAdherenciaCardExpanded = savedState ?? true;
+    });
+  }
+
+  Future<void> _saveAdherenciaCardExpandedState(bool isExpanded) async {
+    final authService = context.read<AuthService>();
+    final prefs = await SharedPreferences.getInstance();
+    final userCode = authService.userCode ?? 'guest';
+    final patientCode = authService.patientCode ?? 'none';
+    final key =
+        'adherencia_card_expanded_${authService.userType}_${userCode}_$patientCode';
+    await prefs.setBool(key, isExpanded);
   }
 
   Future<void> _loadComentariosPendientes() async {
@@ -203,20 +267,35 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
       final patientCode = authService.patientCode;
       final isGuestMode = authService.isGuestMode;
 
-      if (patientCode != null && patientCode.isNotEmpty && !isGuestMode) {
-        final patientId = int.parse(patientCode);
+      if (!isGuestMode) {
+        final patientId = int.tryParse((patientCode ?? '').trim());
 
-        // Cargar datos del paciente
-        final pacientes = await _apiService.getPacientes();
-        _paciente = pacientes.firstWhere(
-          (p) => p.codigo == patientId,
-          orElse: () => throw Exception('Paciente no encontrado'),
-        );
+        List<dynamic> planesNutri = [];
+        List<dynamic> planesFit = [];
 
-        // Verificar si tiene planes
-        final planesNutri = await _apiService.getPlanes(patientId);
-        final planesFit = await _apiService.getPlanesFit(patientId);
+        try {
+          planesNutri = await _apiService.getPlanes(patientId);
+        } catch (_) {
+          if (patientId != null) {
+            try {
+              planesNutri = await _apiService.getPlanes(null);
+            } catch (_) {}
+          }
+        }
+
+        try {
+          planesFit = await _apiService.getPlanesFit(patientId);
+        } catch (_) {
+          if (patientId != null) {
+            try {
+              planesFit = await _apiService.getPlanesFit(null);
+            } catch (_) {}
+          }
+        }
+
         _hasPlanes = planesNutri.isNotEmpty || planesFit.isNotEmpty;
+        _hasPlanNutri = planesNutri.isNotEmpty;
+        _hasPlanFit = planesFit.isNotEmpty;
 
         // Si no tiene planes, cargar información de contacto
         if (!_hasPlanes) {
@@ -224,17 +303,345 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
         }
       } else if (isGuestMode) {
         // En modo guest, siempre mostrar información de contacto
+        _hasPlanNutri = false;
+        _hasPlanFit = false;
+        _adherenciaResumen = null;
         await _loadContactInfo();
       }
-
+    } catch (e) {
+      _hasPlanes = false;
+      _hasPlanNutri = false;
+      _hasPlanFit = false;
+      _adherenciaResumen = null;
+    } finally {
       setState(() {
         _isLoading = false;
       });
-    } catch (e) {
+      await _loadAdherenciaResumen();
+    }
+  }
+
+  Future<void> _loadAdherenciaResumen() async {
+    final authService = context.read<AuthService>();
+    final userCode = authService.userCode;
+
+    if (authService.isGuestMode ||
+        userCode == null ||
+        userCode.isEmpty ||
+        (!_hasPlanNutri && !_hasPlanFit)) {
+      if (mounted) {
+        setState(() {
+          _adherenciaResumen = null;
+          _loadingAdherencia = false;
+        });
+      }
+      return;
+    }
+
+    if (mounted) {
       setState(() {
-        _isLoading = false;
+        _loadingAdherencia = true;
       });
     }
+
+    final resumen = await _adherenciaService.getResumenSemanal(
+      userCode: userCode,
+      incluirNutri: _hasPlanNutri,
+      incluirFit: _hasPlanFit,
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _adherenciaResumen = resumen;
+      _loadingAdherencia = false;
+    });
+  }
+
+  String _adherenciaTipoLabel(AdherenciaTipo tipo) {
+    return tipo == AdherenciaTipo.nutri ? 'Plan nutricional' : 'Plan Fit';
+  }
+
+  String _adherenciaEstadoLabel(AdherenciaEstado estado) {
+    switch (estado) {
+      case AdherenciaEstado.cumplido:
+        return 'Cumplido';
+      case AdherenciaEstado.parcial:
+        return 'Parcial';
+      case AdherenciaEstado.noRealizado:
+        return 'No realizado';
+    }
+  }
+
+  Color _adherenciaColorByPercent(int percent) {
+    if (percent >= 75) return Colors.green;
+    if (percent >= 50) return Colors.orange;
+    return Colors.red;
+  }
+
+  Widget _buildAdherenciaMetric(AdherenciaMetricaSemanal metric) {
+    final trend = metric.tendencia;
+    final trendColor = trend > 0
+        ? Colors.green
+        : trend < 0
+            ? Colors.red
+            : Colors.grey;
+    final trendIcon = trend > 0
+        ? Icons.trending_up
+        : trend < 0
+            ? Icons.trending_down
+            : Icons.trending_flat;
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _adherenciaTipoLabel(metric.tipo),
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              Text(
+                '${metric.porcentaje}%',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: _adherenciaColorByPercent(metric.porcentaje),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(
+              minHeight: 8,
+              value: metric.porcentaje / 100,
+              backgroundColor: Colors.grey.shade300,
+              valueColor: AlwaysStoppedAnimation<Color>(
+                _adherenciaColorByPercent(metric.porcentaje),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Icon(trendIcon, size: 16, color: trendColor),
+              const SizedBox(width: 4),
+              Text(
+                trend == 0
+                    ? 'Sin cambios'
+                    : '${trend > 0 ? '+' : ''}$trend pts',
+                style: TextStyle(
+                  color: trendColor,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${metric.logrados.toStringAsFixed(1)}/${metric.planificados}',
+                style: TextStyle(
+                  color: Colors.grey.shade700,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMiniAdherenciaCircle({
+    required String label,
+    required int percent,
+    VoidCallback? onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Tooltip(
+        message: '$label: $percent%',
+        child: SizedBox(
+          width: 20,
+          height: 20,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              CircularProgressIndicator(
+                value: (percent.clamp(0, 100)) / 100,
+                strokeWidth: 3,
+                backgroundColor: Colors.grey.shade300,
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  _adherenciaColorByPercent(percent),
+                ),
+              ),
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 8,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showAdherenciaRegistroRapido(
+      {AdherenciaTipo? tipoInicial}) async {
+    final authService = context.read<AuthService>();
+    final userCode = authService.userCode;
+    if (userCode == null || userCode.isEmpty) return;
+
+    final tipos = <AdherenciaTipo>[
+      if (_hasPlanNutri) AdherenciaTipo.nutri,
+      if (_hasPlanFit) AdherenciaTipo.fit,
+    ];
+    if (tipos.isEmpty) return;
+
+    await showAdherenciaRegistroBottomSheet(
+      context: context,
+      userCode: userCode,
+      tiposDisponibles: tipos,
+      tipoInicial: tipoInicial,
+      estadoHoyInicial: {
+        if (_adherenciaResumen?.nutri != null)
+          AdherenciaTipo.nutri: _adherenciaResumen!.nutri!.estadoHoy,
+        if (_adherenciaResumen?.fit != null)
+          AdherenciaTipo.fit: _adherenciaResumen!.fit!.estadoHoy,
+      },
+      onSaved: _loadAdherenciaResumen,
+    );
+  }
+
+  Widget _buildAdherenciaCard() {
+    if (_loadingAdherencia) {
+      return const Card(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      );
+    }
+
+    final resumen = _adherenciaResumen;
+    if (resumen == null || !resumen.hasData) {
+      return const SizedBox.shrink();
+    }
+
+    return Card(
+      elevation: 4,
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.fact_check_outlined,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Cumplimiento',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                ),
+                if (!_isAdherenciaCardExpanded && resumen.nutri != null)
+                  _buildMiniAdherenciaCircle(
+                    label: 'N',
+                    percent: resumen.nutri!.porcentaje,
+                    onTap: () => _showAdherenciaRegistroRapido(
+                      tipoInicial: AdherenciaTipo.nutri,
+                    ),
+                  ),
+                if (!_isAdherenciaCardExpanded &&
+                    resumen.nutri != null &&
+                    resumen.fit != null)
+                  const SizedBox(width: 6),
+                if (!_isAdherenciaCardExpanded && resumen.fit != null)
+                  _buildMiniAdherenciaCircle(
+                    label: 'F',
+                    percent: resumen.fit!.porcentaje,
+                    onTap: () => _showAdherenciaRegistroRapido(
+                      tipoInicial: AdherenciaTipo.fit,
+                    ),
+                  ),
+                if (!_isAdherenciaCardExpanded &&
+                    (resumen.nutri != null || resumen.fit != null))
+                  const SizedBox(width: 8),
+                _isAdherenciaCardExpanded
+                    ? TextButton.icon(
+                        onPressed: _showAdherenciaRegistroRapido,
+                        icon:
+                            const Icon(Icons.edit_calendar_outlined, size: 18),
+                        label: const Text('Registrar hoy'),
+                      )
+                    : IconButton(
+                        tooltip: 'Registrar hoy',
+                        onPressed: _showAdherenciaRegistroRapido,
+                        icon:
+                            const Icon(Icons.edit_calendar_outlined, size: 20),
+                      ),
+                IconButton(
+                  tooltip: _isAdherenciaCardExpanded ? 'Plegar' : 'Desplegar',
+                  onPressed: () {
+                    final next = !_isAdherenciaCardExpanded;
+                    setState(() {
+                      _isAdherenciaCardExpanded = next;
+                    });
+                    _saveAdherenciaCardExpandedState(next);
+                  },
+                  icon: Icon(
+                    _isAdherenciaCardExpanded
+                        ? Icons.expand_less
+                        : Icons.expand_more,
+                  ),
+                ),
+              ],
+            ),
+            if (_isAdherenciaCardExpanded) ...[
+              if (resumen.nutri != null) ...[
+                const SizedBox(height: 8),
+                _buildAdherenciaMetric(resumen.nutri!),
+              ],
+              if (resumen.fit != null) ...[
+                const SizedBox(height: 8),
+                _buildAdherenciaMetric(resumen.fit!),
+              ],
+              if (resumen.puntosMejora.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                const Text(
+                  'Puntos de mejora',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 4),
+                ...resumen.puntosMejora.map(
+                  (tip) => Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: Text('• $tip'),
+                  ),
+                ),
+              ],
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _loadContactInfo() async {
@@ -444,6 +851,12 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     await _launchExternalUrl('tel:$phoneNumber');
   }
 
+  Future<void> _launchTelegram(String username) async {
+    final clean = username.trim().replaceFirst('@', '');
+    if (clean.isEmpty) return;
+    await _launchExternalUrl('https://t.me/$clean');
+  }
+
   Widget _buildWelcomeCard() {
     final genero = _paciente?.sexo ?? '';
     final saludo = genero.isEmpty
@@ -645,15 +1058,6 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   }
 
   Widget _buildContactCard() {
-    final authService = context.read<AuthService>();
-    final hasPatient = (authService.patientCode ?? '').isNotEmpty;
-
-    // Si es paciente con planes asociados, mostrar en acordeón plegado
-    if (hasPatient && _hasPlanes) {
-      return _buildContactAccordion();
-    }
-
-    // Si es paciente sin planes o guest, mostrar formas principales de contacto
     return _buildPrimaryContactCard();
   }
 
@@ -688,41 +1092,57 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
       elevation: 4,
       margin: const EdgeInsets.only(bottom: 16),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      clipBehavior: Clip.antiAlias,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: _isContactCardExpanded,
+          onExpansionChanged: (expanded) {
+            setState(() {
+              _isContactCardExpanded = expanded;
+            });
+            _saveContactCardExpandedState(expanded);
+          },
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          title: Row(
+            children: [
+              Icon(Icons.help_outline,
+                  color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Contactar con dietista online',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
           children: [
-            Row(
-              children: [
-                Icon(Icons.help_outline,
-                    color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text(
-                    'Contactar con dietista online',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildPrimaryContactItems(),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              const ContactoNutricionistaScreen(),
+                        ),
+                      ),
+                      icon: const Icon(Icons.arrow_forward),
+                      label: const Text('Más formas de contacto'),
                     ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _buildPrimaryContactItems(),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const ContactoNutricionistaScreen(),
-                  ),
-                ),
-                icon: const Icon(Icons.arrow_forward),
-                label: const Text('Más formas de contacto'),
+                ],
               ),
             ),
           ],
@@ -732,51 +1152,22 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   }
 
   Widget _buildPrimaryContactItems() {
-    final authService = context.read<AuthService>();
-    final hasPatient = (authService.patientCode ?? '').isNotEmpty;
-    final isGuestMode = authService.isGuestMode;
-
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _buildSimpleContactRow(
-          icon: Icons.mark_chat_unread_outlined,
-          label: 'Chat con dietista',
-          onTap: () async {
-            if (isGuestMode) {
-              _showChatGuestDialog();
-              return;
-            }
-            await Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => const ChatScreen(),
-              ),
-            );
-            if (mounted) {
-              _loadChatPendientes();
-              _loadComentariosPendientes();
-            }
-          },
-        ),
-
-        // Email - siempre se muestra si existe
         if ((_contactInfo['email'] ?? '').isNotEmpty) ...[
-          const SizedBox(height: 12),
           _buildSimpleContactRow(
             icon: Icons.email,
-            label: 'Email',
+            label: 'Email a dietista',
             onTap: () => _launchEmail(_contactInfo['email'] ?? ''),
           ),
         ],
-
-        // Teléfono - solo para usuarios sin paciente o guest
-        if (!hasPatient && (_contactInfo['telefono'] ?? '').isNotEmpty) ...[
+        if ((_contactInfo['telegram'] ?? '').isNotEmpty) ...[
           const SizedBox(height: 12),
           _buildSimpleContactRow(
-            icon: Icons.phone,
-            label: 'Llamar a dietista',
-            onTap: () => _launchPhone(_contactInfo['telefono'] ?? ''),
+            icon: Icons.telegram,
+            label: 'Telegram a dietista',
+            onTap: () => _launchTelegram(_contactInfo['telegram'] ?? ''),
           ),
         ],
       ],
@@ -843,79 +1234,10 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     }
 
     // Si no tiene paciente, mostrar diálogo de contacto
-    _showPlanesRestrictedDialog(planType);
-  }
-
-  void _showPlanesRestrictedDialog(String planType) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.lock_outline,
-                color: Theme.of(context).colorScheme.primary),
-            const SizedBox(width: 8),
-            Expanded(child: Text('$planType Personalizados')),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Para acceder a tus planes personalizados, primero necesitas contactar con el dietista para que te asigne un plan específico, ajustado a tus necesidades.',
-                style: TextStyle(fontSize: 14),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                'Formas de contacto:',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-              ),
-              const SizedBox(height: 12),
-              // Email
-              if ((_contactInfo['email'] ?? '').isNotEmpty)
-                _buildDialogContactRow(
-                  icon: Icons.email,
-                  label: 'Email',
-                  value: _contactInfo['email'] ?? '',
-                  onTap: () => _launchEmail(_contactInfo['email'] ?? ''),
-                ),
-
-              // Teléfono
-              if ((_contactInfo['telefono'] ?? '').isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _buildDialogContactRow(
-                  icon: Icons.phone,
-                  label: 'Teléfono',
-                  value: _contactInfo['telefono'] ?? '',
-                  onTap: () => _launchPhone(_contactInfo['telefono'] ?? ''),
-                ),
-              ],
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
-          ),
-          ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const ContactoNutricionistaScreen(),
-                ),
-              );
-            },
-            icon: const Icon(Icons.arrow_forward, size: 18),
-            label: const Text('Más formas de contacto'),
-          ),
-        ],
-      ),
-    );
+    final dialogTitle = planType == 'Planes Nutricionales'
+        ? 'Planes nutricionales'
+        : 'Entrenamientos personalizados';
+    RestrictedAccessDialogHelper.show(context, title: dialogTitle);
   }
 
   void _showChatGuestDialog() {
@@ -936,91 +1258,15 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
               Navigator.pop(context);
               Navigator.pushNamed(context, '/register');
             },
-            child: const Text('Registrarse'),
+            child: const Text('Iniciar registro'),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildDialogContactRow({
-    required IconData icon,
-    required String label,
-    required String value,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-        child: Row(
-          children: [
-            Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                    ),
-                  ),
-                  Text(
-                    value,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-            Icon(Icons.arrow_forward_ios,
-                size: 16, color: Colors.grey.shade400),
-          ],
-        ),
-      ),
-    );
-  }
-
   void _handleListaCompraNavigation(BuildContext context) {
-    final authService = Provider.of<AuthService>(context, listen: false);
-
-    if (authService.isGuestMode) {
-      // Mostrar diálogo para usuarios invitados
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Registro requerido'),
-          content: const Text(
-            'Para utilizar la Lista de la Compra necesitas registrarte. '
-            '¿Deseas crear una cuenta ahora?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancelar'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                Navigator.pushNamed(context, '/register');
-              },
-              child: const Text('Registrarse'),
-            ),
-          ],
-        ),
-      );
-    } else {
-      // Usuario registrado: navegar a la lista de compra
-      Navigator.pushNamed(context, '/lista_compra');
-    }
+    Navigator.pushNamed(context, '/lista_compra');
   }
 
   void _handleChatDietista() {
@@ -1045,7 +1291,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                 Navigator.pop(context);
                 Navigator.pushNamed(context, '/register');
               },
-              child: const Text('Registrarse'),
+              child: const Text('Iniciar registro'),
             ),
           ],
         ),
@@ -1070,75 +1316,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
 
     // Si no está registrado o no tiene paciente asignado
     if (authService.isGuestMode || !hasPatient) {
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Row(
-            children: [
-              Icon(Icons.lock_outline,
-                  color: Theme.of(context).colorScheme.primary),
-              const SizedBox(width: 8),
-              const Expanded(child: Text('Recomendaciones Personalizadas')),
-            ],
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Para acceder a tus recomendaciones personalizadas, primero necesitas contactar con el dietista para que te asigne un plan específico, ajustado a tus necesidades.',
-                  style: TextStyle(fontSize: 14),
-                ),
-                const SizedBox(height: 20),
-                const Text(
-                  'Formas de contacto:',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                ),
-                const SizedBox(height: 12),
-                // Email
-                if ((_contactInfo['email'] ?? '').isNotEmpty)
-                  _buildDialogContactRow(
-                    icon: Icons.email,
-                    label: 'Email',
-                    value: _contactInfo['email'] ?? '',
-                    onTap: () => _launchEmail(_contactInfo['email'] ?? ''),
-                  ),
-
-                // Teléfono
-                if ((_contactInfo['telefono'] ?? '').isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  _buildDialogContactRow(
-                    icon: Icons.phone,
-                    label: 'Teléfono',
-                    value: _contactInfo['telefono'] ?? '',
-                    onTap: () => _launchPhone(_contactInfo['telefono'] ?? ''),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cerrar'),
-            ),
-            ElevatedButton.icon(
-              onPressed: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const ContactoNutricionistaScreen(),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.arrow_forward, size: 18),
-              label: const Text('Más formas de contacto'),
-            ),
-          ],
-        ),
-      );
+      RestrictedAccessDialogHelper.show(context, title: 'Recomendaciones');
       return;
     }
 
@@ -1170,15 +1348,21 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
               Icon(icon,
                   size: 38, color: Theme.of(context).colorScheme.primary),
               const SizedBox(height: 8),
-              Text(
-                label,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontSize:
-                          (Theme.of(context).textTheme.titleSmall?.fontSize ??
-                                  14) +
-                              1,
-                    ),
+              SizedBox(
+                width: double.infinity,
+                child: Text(
+                  label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontSize:
+                            (Theme.of(context).textTheme.titleSmall?.fontSize ??
+                                    14) -
+                                1,
+                        height: 1.1,
+                      ),
+                ),
               ),
             ],
           ),
@@ -1189,6 +1373,9 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDebugAppMode =
+        context.watch<ConfigService>().appMode == AppMode.debug;
+
     // Si el usuario no está autorizado, mostrar una pantalla de carga mientras se redirige
     if (!_isAuthorized) {
       return Scaffold(
@@ -1209,6 +1396,26 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
       appBar: AppBar(
         title: const Text('Inicio'),
         actions: [
+          if (isDebugAppMode)
+            Padding(
+              padding: const EdgeInsets.only(right: 8.0, top: 8.0),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade700,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Text(
+                  'DEBUG',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
           // Comentarios pendientes
           Stack(
             children: [
@@ -1376,6 +1583,9 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                     const SizedBox(height: 8),
                   ],
 
+                  if ((_hasPlanNutri || _hasPlanFit) && !_isLoading)
+                    _buildAdherenciaCard(),
+
                   // Recomendaciones personalizadas no leídas (máximo 3)
                   if (_consejosPersonalizadosNoLeidos.isNotEmpty) ...[
                     const Padding(
@@ -1438,13 +1648,22 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                     mainAxisSpacing: 10,
                     childAspectRatio: 1.5,
                     children: [
-                      if (!hasPendientesPersonalizadas)
-                        _buildHomeCard(
-                          context: context,
-                          icon: Icons.recommend_outlined,
-                          label: 'Recomendaciones',
-                          onTap: _handleRecomendacionesPersonalizadas,
+                      _buildHomeCard(
+                        context: context,
+                        icon: Icons.recommend_outlined,
+                        label: 'Recomendaciones',
+                        onTap: _handleRecomendacionesPersonalizadas,
+                      ),
+                      _buildHomeCard(
+                        context: context,
+                        icon: Icons.lightbulb_outlined,
+                        label: 'Consejos',
+                        onTap: () => Navigator.pushNamed(
+                          context,
+                          '/consejos_paciente',
+                          arguments: {'openDestacados': true},
                         ),
+                      ),
                       _buildHomeCard(
                         context: context,
                         icon: Icons.article_outlined,
@@ -1477,16 +1696,6 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                       ),
                       _buildHomeCard(
                         context: context,
-                        icon: Icons.lightbulb_outlined,
-                        label: 'Consejos',
-                        onTap: () => Navigator.pushNamed(
-                          context,
-                          '/consejos_paciente',
-                          arguments: {'openDestacados': true},
-                        ),
-                      ),
-                      _buildHomeCard(
-                        context: context,
                         icon: Icons.restaurant_menu,
                         label: 'Recetas',
                         onTap: () =>
@@ -1515,6 +1724,24 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                         icon: Icons.shopping_cart_outlined,
                         label: 'Lista Compra',
                         onTap: () => _handleListaCompraNavigation(context),
+                      ),
+                      _buildHomeCard(
+                        context: context,
+                        icon: Icons.document_scanner_outlined,
+                        label: 'Escáner',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                const EtiquetaNutricionalScannerScreen(),
+                          ),
+                        ),
+                      ),
+                      _buildHomeCard(
+                        context: context,
+                        icon: Icons.checklist_outlined,
+                        label: 'Tareas',
+                        onTap: () => Navigator.pushNamed(context, '/todo_list'),
                       ),
                     ],
                   ),

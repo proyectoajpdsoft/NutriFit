@@ -16,6 +16,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   final _nameController = TextEditingController();
+  final _edadController = TextEditingController();
+  final _alturaController = TextEditingController();
   bool _isLoading = false;
   bool _passwordVisible = false;
   bool _confirmPasswordVisible = false;
@@ -37,10 +39,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     try {
       final authService = Provider.of<AuthService>(context, listen: false);
+      final edad = int.tryParse(_edadController.text.trim());
+      final altura = int.tryParse(_alturaController.text.trim());
       await authService.register(
         _nickController.text,
         _passwordController.text,
         _nameController.text,
+        edad: (edad != null && edad > 0) ? edad : null,
+        altura: (altura != null && altura > 0) ? altura : null,
       );
 
       if (mounted) {
@@ -87,7 +93,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Registrarse'),
+        title: const Text('Iniciar registro'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
@@ -112,10 +118,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                   ),
                   child: Center(
-                    child: Icon(
-                      Icons.health_and_safety,
-                      size: 48,
-                      color: Theme.of(context).colorScheme.tertiary,
+                    child: Image.asset(
+                      'assets/logo-192.png',
+                      width: 80,
+                      height: 80,
+                      fit: BoxFit.contain,
                     ),
                   ),
                 ),
@@ -147,6 +154,72 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     }
                     if (value.length < 3) {
                       return 'El usuario debe tener al menos 3 caracteres';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.orange.shade200),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.info_outline,
+                        color: Colors.orange.shade800,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          ' de IMC, MVP y recomendaciones, completa Edad y Altura.',
+                          style: TextStyle(
+                            color: Colors.orange.shade900,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _edadController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Edad',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.cake_outlined),
+                  ),
+                  validator: (value) {
+                    if ((value ?? '').trim().isEmpty) return null;
+                    final parsed = int.tryParse(value!.trim());
+                    if (parsed == null || parsed <= 0 || parsed > 120) {
+                      return 'Edad no válida';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _alturaController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Altura (cm)',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.height),
+                  ),
+                  validator: (value) {
+                    if ((value ?? '').trim().isEmpty) return null;
+                    final parsed = int.tryParse(value!.trim());
+                    if (parsed == null || parsed < 80 || parsed > 250) {
+                      return 'Altura no válida';
                     }
                     return null;
                   },
@@ -204,7 +277,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         style: ElevatedButton.styleFrom(
                           minimumSize: const Size(double.infinity, 50),
                         ),
-                        child: const Text('Registrarse'),
+                        child: const Text('Iniciar registro'),
                       ),
                 const SizedBox(height: 16),
                 TextButton(
@@ -226,6 +299,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     _nameController.dispose();
+    _edadController.dispose();
+    _alturaController.dispose();
     super.dispose();
   }
 }

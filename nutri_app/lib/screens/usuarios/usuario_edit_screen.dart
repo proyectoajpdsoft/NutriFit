@@ -34,6 +34,8 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
   String? _email;
   String? _tipo;
   int? _codigoPaciente;
+  int? _edad;
+  int? _altura;
   bool _activo = true;
   bool _accesoWeb = true;
   String? _imageBase64;
@@ -53,6 +55,8 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
       _email = u.email;
       _tipo = u.tipo;
       _codigoPaciente = u.codigoPaciente;
+      _edad = u.edad;
+      _altura = u.altura;
       _activo = u.activo == 'S';
       _accesoWeb = u.accesoweb == 'S';
       _imageBase64 = u.imgPerfil;
@@ -193,6 +197,8 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
         'email': _email,
         'tipo': _tipo,
         'codigo_paciente': _codigoPaciente,
+        'edad': _edad,
+        'altura': _altura,
         'activo': _activo ? 'S' : 'N',
         'accesoweb': _accesoWeb ? 'S' : 'N',
         'administrador': isAdmin,
@@ -365,6 +371,71 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
                     decoration: const InputDecoration(labelText: 'Email'),
                     keyboardType: TextInputType.emailAddress,
                     onSaved: (value) => _email = value,
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.orange.shade200),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          color: Colors.orange.shade800,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Para habilitar cálculo de IMC, MVP y métricas de salud, indica Edad y Altura del usuario.',
+                            style: TextStyle(
+                              color: Colors.orange.shade900,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    initialValue: _edad?.toString() ?? '',
+                    decoration: const InputDecoration(labelText: 'Edad'),
+                    keyboardType: TextInputType.number,
+                    validator: (value) {
+                      if ((value ?? '').trim().isEmpty) return null;
+                      final parsed = int.tryParse(value!.trim());
+                      if (parsed == null || parsed <= 0 || parsed > 120) {
+                        return 'Edad no válida';
+                      }
+                      return null;
+                    },
+                    onSaved: (value) {
+                      final parsed = int.tryParse((value ?? '').trim());
+                      _edad = (parsed != null && parsed > 0) ? parsed : null;
+                    },
+                  ),
+                  TextFormField(
+                    initialValue: _altura?.toString() ?? '',
+                    decoration: const InputDecoration(labelText: 'Altura (cm)'),
+                    keyboardType: TextInputType.number,
+                    validator: (value) {
+                      if ((value ?? '').trim().isEmpty) return null;
+                      final parsed = int.tryParse(value!.trim());
+                      if (parsed == null || parsed < 80 || parsed > 250) {
+                        return 'Altura no válida';
+                      }
+                      return null;
+                    },
+                    onSaved: (value) {
+                      final parsed = int.tryParse((value ?? '').trim());
+                      _altura = (parsed != null && parsed > 0) ? parsed : null;
+                    },
                   ),
                   TextFormField(
                     obscureText: true,

@@ -137,6 +137,9 @@ class _EntrenamientosPacientePlanFitListScreenState
 
   @override
   Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    final listBottomPadding = bottomInset > 0 ? bottomInset + 20 : 28.0;
+
     return Scaffold(
       appBar: AppBar(
         title: Text('Actividades - ${widget.paciente.nombre}'),
@@ -776,6 +779,9 @@ class _EntrenamientoPacientePlanFitDetailScreenState
 
   @override
   Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    final listBottomPadding = bottomInset > 0 ? bottomInset + 20 : 28.0;
+
     return Scaffold(
       appBar: AppBar(
         title: Column(
@@ -793,17 +799,20 @@ class _EntrenamientoPacientePlanFitDetailScreenState
           ],
         ),
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _ejercicios.isEmpty
-              ? const Center(child: Text('No hay ejercicios registrados.'))
-              : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
-                  itemCount: _ejercicios.length,
-                  itemBuilder: (context, index) {
-                    return _buildEjercicioCard(_ejercicios[index]);
-                  },
-                ),
+      body: SafeArea(
+        top: false,
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _ejercicios.isEmpty
+                ? const Center(child: Text('No hay ejercicios registrados.'))
+                : ListView.builder(
+                    padding: EdgeInsets.fromLTRB(16, 16, 16, listBottomPadding),
+                    itemCount: _ejercicios.length,
+                    itemBuilder: (context, index) {
+                      return _buildEjercicioCard(_ejercicios[index]);
+                    },
+                  ),
+      ),
     );
   }
 }

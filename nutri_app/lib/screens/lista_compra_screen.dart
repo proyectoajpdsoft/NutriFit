@@ -33,15 +33,12 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
       }
     });
 
-    // Verificar si es usuario guest después de que el widget esté construido
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final authService = Provider.of<AuthService>(context, listen: false);
-      if (authService.isGuestMode) {
-        _showGuestDialog();
-      } else {
-        _loadItems();
-      }
-    });
+    final authService = Provider.of<AuthService>(context, listen: false);
+    if (authService.isGuestMode) {
+      _isLoading = false;
+    } else {
+      _loadItems();
+    }
   }
 
   String? _getOwnerCode(AuthService authService) {
@@ -54,38 +51,12 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
     super.dispose();
   }
 
-  void _showGuestDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('Registro requerido'),
-        content: const Text(
-          'Para utilizar la Lista de la Compra necesitas registrarte. '
-          '¿Deseas crear una cuenta ahora?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context); // Cerrar diálogo
-              Navigator.pop(context); // Volver a la pantalla anterior
-            },
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context); // Cerrar diálogo
-              Navigator.pop(context); // Volver a la pantalla anterior
-              Navigator.pushNamed(context, '/register');
-            },
-            child: const Text('Registrarse'),
-          ),
-        ],
-      ),
-    );
-  }
-
   void _cambiarFiltro() {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    if (authService.isGuestMode) {
+      return;
+    }
+
     final filtros = [
       'todos',
       'pendientes',
@@ -101,12 +72,20 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
   }
 
   Future<void> _loadItems() async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    if (authService.isGuestMode) {
+      setState(() {
+        _items = [];
+        _isLoading = false;
+      });
+      return;
+    }
+
     setState(() {
       _isLoading = true;
     });
 
     try {
-      final authService = Provider.of<AuthService>(context, listen: false);
       final apiService = Provider.of<ApiService>(context, listen: false);
       final ownerCode = _getOwnerCode(authService);
 
@@ -288,6 +267,8 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
 
   @override
   Widget build(BuildContext context) {
+    final isGuest = context.watch<AuthService>().isGuestMode;
+
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -295,159 +276,194 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
           onPressed: () => Navigator.pop(context),
         ),
         title: const Text('Lista de la Compra'),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(kToolbarHeight),
-          child: Scrollbar(
-            thumbVisibility: true,
-            child: TabBar(
-              controller: _tabController,
-              isScrollable: true,
-              tabs: const [
-                Tab(text: 'Todos'),
-                Tab(text: 'Próxima compra'),
-                Tab(text: 'Comprados'),
-                Tab(text: 'Por caducar'),
-                Tab(text: 'Caducados'),
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          if (_filtroActual == 'comprados' && _items.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.delete_sweep),
-              onPressed: _deleteComprados,
-              tooltip: 'Limpiar comprados',
-            ),
-          PopupMenuButton<String>(
-            onSelected: (value) {
-              setState(() {
-                _categoriaFiltro = value == 'todas' ? null : value;
-              });
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'todas',
-                child: Text('Todas las categorías'),
-              ),
-              const PopupMenuDivider(),
-              ...ListaCompraItem.categorias.map((cat) => PopupMenuItem(
-                    value: cat,
-                    child: Row(
-                      children: [
-                        Text(ListaCompraItem.getCategoriaIcon(cat),
-                            style: const TextStyle(fontSize: 20)),
-                        const SizedBox(width: 8),
-                        Text(ListaCompraItem.getCategoriaNombre(cat)),
-                      ],
-                    ),
-                  )),
-            ],
-            icon: const Icon(Icons.filter_list),
-            tooltip: 'Filtrar por categoría',
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadItems,
-            tooltip: 'Refrescar',
-          ),
-        ],
-      ),
-      drawer: const AppDrawer(),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _items.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.shopping_cart_outlined,
-                        size: 80,
-                        color: Colors.grey[400],
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        _filtroActual == 'todos'
-                            ? 'No hay items en tu lista'
-                            : 'No hay items ${_getFiltroTexto()}',
-                        style: TextStyle(
-                          fontSize: 18,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Toca + para agregar tu primer item',
-                        style: TextStyle(color: Colors.grey),
-                      ),
-                    ],
-                  ),
-                )
-              : RefreshIndicator(
-                  onRefresh: _loadItems,
-                  child: ListView(
-                    padding: const EdgeInsets.all(8),
-                    children: [
-                      // Estadísticas rápidas
-                      if (_filtroActual == 'todos') _buildEstadisticas(),
-
-                      // Items agrupados por categoría
-                      ..._itemsPorCategoria.entries.map((entry) {
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 12),
-                              child: Row(
-                                children: [
-                                  Text(
-                                    ListaCompraItem.getCategoriaIcon(entry.key),
-                                    style: const TextStyle(fontSize: 24),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    ListaCompraItem.getCategoriaNombre(
-                                        entry.key),
-                                    style: const TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    '(${entry.value.length})',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      color: Colors.grey[600],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            ...entry.value.map((item) => _buildItemCard(item)),
-                            const SizedBox(height: 8),
-                          ],
-                        );
-                      }),
+        bottom: isGuest
+            ? null
+            : PreferredSize(
+                preferredSize: const Size.fromHeight(kToolbarHeight),
+                child: Scrollbar(
+                  thumbVisibility: true,
+                  child: TabBar(
+                    controller: _tabController,
+                    isScrollable: true,
+                    tabs: const [
+                      Tab(text: 'Todos'),
+                      Tab(text: 'Próxima compra'),
+                      Tab(text: 'Comprados'),
+                      Tab(text: 'Por caducar'),
+                      Tab(text: 'Caducados'),
                     ],
                   ),
                 ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const ListaCompraEditScreen(),
+              ),
+        actions: isGuest
+            ? []
+            : [
+                if (_filtroActual == 'comprados' && _items.isNotEmpty)
+                  IconButton(
+                    icon: const Icon(Icons.delete_sweep),
+                    onPressed: _deleteComprados,
+                    tooltip: 'Limpiar comprados',
+                  ),
+                PopupMenuButton<String>(
+                  onSelected: (value) {
+                    setState(() {
+                      _categoriaFiltro = value == 'todas' ? null : value;
+                    });
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      value: 'todas',
+                      child: Text('Todas las categorías'),
+                    ),
+                    const PopupMenuDivider(),
+                    ...ListaCompraItem.categorias.map((cat) => PopupMenuItem(
+                          value: cat,
+                          child: Row(
+                            children: [
+                              Text(ListaCompraItem.getCategoriaIcon(cat),
+                                  style: const TextStyle(fontSize: 20)),
+                              const SizedBox(width: 8),
+                              Text(ListaCompraItem.getCategoriaNombre(cat)),
+                            ],
+                          ),
+                        )),
+                  ],
+                  icon: const Icon(Icons.filter_list),
+                  tooltip: 'Filtrar por categoría',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: _loadItems,
+                  tooltip: 'Refrescar',
+                ),
+              ],
+      ),
+      drawer: const AppDrawer(),
+      body: isGuest
+          ? _buildGuestBody()
+          : _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _items.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.shopping_cart_outlined,
+                            size: 80,
+                            color: Colors.grey[400],
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            _filtroActual == 'todos'
+                                ? 'No hay items en tu lista'
+                                : 'No hay items ${_getFiltroTexto()}',
+                            style: TextStyle(
+                              fontSize: 18,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Toca + para agregar tu primer item',
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                    )
+                  : RefreshIndicator(
+                      onRefresh: _loadItems,
+                      child: ListView(
+                        padding: const EdgeInsets.all(8),
+                        children: [
+                          // Estadísticas rápidas
+                          if (_filtroActual == 'todos') _buildEstadisticas(),
+
+                          // Items agrupados por categoría
+                          ..._itemsPorCategoria.entries.map((entry) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 12),
+                                  child: Row(
+                                    children: [
+                                      Text(
+                                        ListaCompraItem.getCategoriaIcon(
+                                            entry.key),
+                                        style: const TextStyle(fontSize: 24),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        ListaCompraItem.getCategoriaNombre(
+                                            entry.key),
+                                        style: const TextStyle(
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        '(${entry.value.length})',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          color: Colors.grey[600],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                ...entry.value
+                                    .map((item) => _buildItemCard(item)),
+                                const SizedBox(height: 8),
+                              ],
+                            );
+                          }),
+                        ],
+                      ),
+                    ),
+      floatingActionButton: isGuest
+          ? null
+          : FloatingActionButton(
+              onPressed: () async {
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ListaCompraEditScreen(),
+                  ),
+                );
+                if (result == true) {
+                  _loadItems();
+                }
+              },
+              tooltip: 'Añadir item',
+              child: const Icon(Icons.add),
             ),
-          );
-          if (result == true) {
-            _loadItems();
-          }
-        },
-        tooltip: 'Añadir item',
-        child: const Icon(Icons.add),
+    );
+  }
+
+  Widget _buildGuestBody() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.lock_outline, size: 48),
+            const SizedBox(height: 12),
+            const Text(
+              'Para poder usar la Lista de la compra, debes registrarte (es gratis).',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pushNamed(context, '/register'),
+              icon: const Icon(Icons.app_registration),
+              label: const Text('Iniciar registro'),
+            ),
+          ],
+        ),
       ),
     );
   }

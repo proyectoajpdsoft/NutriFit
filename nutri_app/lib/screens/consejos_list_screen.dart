@@ -101,8 +101,8 @@ class _ConsejosListScreenState extends State<ConsejosListScreen> {
             try {
               return Consejo.fromJson(item);
             } catch (e) {
-              debugPrint('Error al parsear consejo: $e');
-              debugPrint('Item: $item');
+              //debugPrint('Error al parsear consejo: $e');
+              //debugPrint('Item: $item');
               rethrow;
             }
           }).toList();

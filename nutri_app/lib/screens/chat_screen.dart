@@ -100,7 +100,7 @@ class _ChatScreenState extends State<ChatScreen> {
               Navigator.pop(context);
               Navigator.pushNamed(context, '/register');
             },
-            child: const Text('Registrarse'),
+            child: const Text('Iniciar registro'),
           ),
         ],
       ),

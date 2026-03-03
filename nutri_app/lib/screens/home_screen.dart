@@ -19,6 +19,7 @@ import 'package:nutri_app/screens/entrenamientos_screen.dart';
 import 'package:nutri_app/widgets/app_drawer.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
+import 'package:nutri_app/services/config_service.dart';
 import 'package:nutri_app/mixins/auth_error_handler_mixin.dart';
 import 'package:provider/provider.dart';
 // import 'package:url_launcher/url_launcher.dart' as url_launcher;
@@ -102,6 +103,9 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
 
   @override
   Widget build(BuildContext context) {
+    final isDebugAppMode =
+        context.watch<ConfigService>().appMode == AppMode.debug;
+
     // Si el usuario no está autorizado, mostrar una pantalla de carga mientras se redirige
     if (!_isAuthorized) {
       return Scaffold(
@@ -120,6 +124,26 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
         elevation: 4,
         toolbarHeight: 48,
         actions: [
+          if (isDebugAppMode)
+            Padding(
+              padding: const EdgeInsets.only(right: 8.0, top: 8.0),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade700,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Text(
+                  'DEBUG',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
           if (!_isLoading)
             Padding(
               padding: const EdgeInsets.only(right: 4.0, top: 8.0),
@@ -403,6 +427,12 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
                     context,
                     MaterialPageRoute(
                         builder: (context) => const UsuariosListScreen())),
+              ),
+              _buildDashboardCard(
+                context,
+                icon: Icons.checklist_outlined,
+                label: 'Tareas',
+                onTap: () => Navigator.pushNamed(context, '/todo_list'),
               ),
             ],
           ),

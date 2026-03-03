@@ -247,7 +247,7 @@ class _ContactoNutricionistaScreenState
               Navigator.pop(context); // Cerrar pantalla de contacto
               Navigator.pushNamed(context, '/register');
             },
-            child: const Text('Registrarse'),
+            child: const Text('Iniciar registro'),
           ),
         ],
       ),
