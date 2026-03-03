@@ -26,7 +26,7 @@ class _EtiquetaNutricionalScannerScreenState
 
   Future<void> _seleccionarYAnalizar(ImageSource source) async {
     try {
-      final picked = await _picker.pickImage(source: source, imageQuality: 85);
+      final picked = await _picker.pickImage(source: source, imageQuality: 100);
       if (picked == null) {
         return;
       }
@@ -66,6 +66,13 @@ class _EtiquetaNutricionalScannerScreenState
       );
     }
   }
+
+  bool get _allNutrientsNull =>
+      _nutrientes != null &&
+      _nutrientes!.azucarGr == null &&
+      _nutrientes!.salGr == null &&
+      _nutrientes!.grasasGr == null &&
+      _nutrientes!.proteinaGr == null;
 
   @override
   Widget build(BuildContext context) {
@@ -132,52 +139,55 @@ class _EtiquetaNutricionalScannerScreenState
             ],
             if (!_analizando && resultado != null) ...[
               const SizedBox(height: 20),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Resultado por porción',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 10),
-                      _NutrienteEstadoTile(
-                        titulo: 'Azúcar',
-                        unidad: 'g',
-                        valor: resultado.azucarGr,
-                        estado: _estadoAzucar(resultado.azucarGr),
-                      ),
-                      _NutrienteEstadoTile(
-                        titulo: 'Sal',
-                        unidad: 'g',
-                        valor: resultado.salGr,
-                        estado: _estadoSal(resultado.salGr),
-                      ),
-                      _NutrienteEstadoTile(
-                        titulo: 'Grasas',
-                        unidad: 'g',
-                        valor: resultado.grasasGr,
-                        estado: _estadoGrasas(resultado.grasasGr),
-                      ),
-                      _NutrienteEstadoTile(
-                        titulo: 'Proteína',
-                        unidad: 'g',
-                        valor: resultado.proteinaGr,
-                        estado: _estadoProteina(resultado.proteinaGr),
-                      ),
-                      if (resultado.porcionGr != null) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          'Porción detectada: ${resultado.porcionGr!.toStringAsFixed(0)} g',
-                          style: const TextStyle(fontSize: 12),
+              if (_allNutrientsNull)
+                _buildNoDataMessage()
+              else
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Resultado por porción',
+                          style: TextStyle(fontWeight: FontWeight.bold),
                         ),
+                        const SizedBox(height: 10),
+                        _NutrienteEstadoTile(
+                          titulo: 'Azúcar',
+                          unidad: 'g',
+                          valor: resultado.azucarGr,
+                          estado: _estadoAzucar(resultado.azucarGr),
+                        ),
+                        _NutrienteEstadoTile(
+                          titulo: 'Sal',
+                          unidad: 'g',
+                          valor: resultado.salGr,
+                          estado: _estadoSal(resultado.salGr),
+                        ),
+                        _NutrienteEstadoTile(
+                          titulo: 'Grasas',
+                          unidad: 'g',
+                          valor: resultado.grasasGr,
+                          estado: _estadoGrasas(resultado.grasasGr),
+                        ),
+                        _NutrienteEstadoTile(
+                          titulo: 'Proteína',
+                          unidad: 'g',
+                          valor: resultado.proteinaGr,
+                          estado: _estadoProteina(resultado.proteinaGr),
+                        ),
+                        if (resultado.porcionGr != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            'Porción detectada: ${resultado.porcionGr!.toStringAsFixed(0)} g',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
-              ),
             ],
             if (_textoDetectado.isNotEmpty) ...[
               const SizedBox(height: 16),
@@ -203,6 +213,51 @@ class _EtiquetaNutricionalScannerScreenState
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildNoDataMessage() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.amber.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.amber.shade300),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.camera_enhance_outlined,
+                  color: Colors.amber.shade800),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'No se han podido leer los valores nutricionales',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.amber.shade900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Para mejorar el resultado:',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 4),
+          const Text('• Fotografía únicamente la tabla de información nutricional'),
+          const Text('• Asegúrate de que haya buena iluminación'),
+          const Text('• Mantén el texto nítido y bien enfocado'),
+          const Text('• Evita reflejos y sombras sobre la etiqueta'),
+          const Text('• Sostén el móvil paralelo a la etiqueta y cerca del texto'),
+        ],
       ),
     );
   }
@@ -498,10 +553,47 @@ class NutrientesPorPorcion {
     replacements.forEach((source, target) {
       text = text.replaceAll(source, target);
     });
-    return text.replaceAll(',', '.');
+    text = text.replaceAll(',', '.');
+    // Fix common OCR digit/letter substitutions in numeric context.
+    // 'o' between two digits: '1o5' → '105'
+    text = text.replaceAllMapped(
+      RegExp(r'(\d)o(\d)'),
+      (m) => '${m.group(1)}0${m.group(2)}',
+    );
+    // 'o' after a digit immediately before a unit: '1og' → '10g', '1o g' → '10 g'
+    text = text.replaceAllMapped(
+      RegExp(r'(\d)o(\s*(?:gr?|mg|ml)\b)'),
+      (m) => '${m.group(1)}0${m.group(2)}',
+    );
+    // Isolated 'o' (not preceded by a letter) before decimal point + digit: 'o.5' → '0.5'
+    text = text.replaceAllMapped(
+      RegExp(r'(?<![a-z])o\.(\d)'),
+      (m) => '0.${m.group(1)}',
+    );
+    // Isolated 'o' (not preceded by a letter) immediately before a unit: 'o g' → '0 g'
+    text = text.replaceAllMapped(
+      RegExp(r'(?<![a-z])o(\s*(?:gr?|mg|ml)\b)'),
+      (m) => '0${m.group(1)}',
+    );
+    // Isolated 'o' (not preceded by a letter) before digit: 'o5' → '05'
+    text = text.replaceAllMapped(
+      RegExp(r'(?<![a-z])o(\d)'),
+      (m) => '0${m.group(1)}',
+    );
+    // 'l' between two digits: '1l5' → '115'
+    text = text.replaceAllMapped(
+      RegExp(r'(\d)l(\d)'),
+      (m) => '${m.group(1)}1${m.group(2)}',
+    );
+    // 'l' after a digit immediately before a unit: '1lg' → '11g', '1l g' → '11 g'
+    text = text.replaceAllMapped(
+      RegExp(r'(\d)l(\s*(?:gr?|mg|ml)\b)'),
+      (m) => '${m.group(1)}1${m.group(2)}',
+    );
+    return text;
   }
 
-  static final RegExp _valueRegex = RegExp(r'(\d+(?:\.\d+)?)\s*(g|mg|ml)\b');
+  static final RegExp _valueRegex = RegExp(r'(\d+(?:\.\d+)?)\s*(gr?|mg|ml)\b');
 
   static const List<String> _servingHints = [
     'porcion',
@@ -558,7 +650,8 @@ class NutrientesPorPorcion {
   }) {
     _ValorUnidad? best;
 
-    for (final line in lines) {
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
       if (!_containsAny(line, keywords)) {
         continue;
       }
@@ -571,6 +664,21 @@ class NutrientesPorPorcion {
           continue;
         }
         candidates.add(_ValorUnidad(value, unit, score: 0));
+      }
+
+      // If no values found on the keyword line, look at the next line.
+      // This handles labels where the nutrient name and its value are on
+      // separate lines in the OCR output.
+      if (candidates.isEmpty && i + 1 < lines.length) {
+        final nextLine = lines[i + 1];
+        for (final match in _valueRegex.allMatches(nextLine)) {
+          final value = double.tryParse(match.group(1) ?? '');
+          final unit = match.group(2);
+          if (value == null || unit == null) {
+            continue;
+          }
+          candidates.add(_ValorUnidad(value, unit, score: 0));
+        }
       }
 
       if (candidates.isEmpty) {
@@ -604,7 +712,14 @@ class NutrientesPorPorcion {
             } else {
               score -= 1;
             }
+          } else if (!hasPer100 && !hasServing) {
+            // No column hints: per-100g usually listed first, so prefer the
+            // last value which is more likely to be the per-portion amount.
+            if (index == candidates.length - 1) {
+              score += 1;
+            }
           } else {
+            // hasServing && !hasPer100: prefer first value
             if (index == 0) {
               score += 1;
             }
