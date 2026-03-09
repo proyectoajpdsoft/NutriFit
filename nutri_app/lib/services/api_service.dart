@@ -25,18 +25,34 @@ import 'package:nutri_app/models/cobro.dart';
 import 'package:nutri_app/models/usuario.dart';
 import 'package:nutri_app/models/session.dart';
 import 'package:nutri_app/models/entrenamiento_ejercicio.dart';
+import 'package:nutri_app/models/todo_item.dart';
 import 'package:flutter/foundation.dart'; // Import necesario para debugPrint
 import 'package:nutri_app/exceptions/auth_exceptions.dart';
 import 'package:nutri_app/services/auth_error_handler.dart';
 import 'package:nutri_app/services/thumbnail_generator.dart';
 
+class ChatMessagesPage {
+  final List<ChatMessage> items;
+  final bool hasMore;
+  final int? nextBeforeId;
+
+  ChatMessagesPage({
+    required this.items,
+    required this.hasMore,
+    required this.nextBeforeId,
+  });
+}
+
 class ApiService {
   // Se elimina la dependencia de AuthService. ApiService vuelve a ser autocontenido.
-  // URL dinámica de arranque. Luego se autoconfigura desde parámetro url_api.
+  // URL dinámica de arranque. Luego se autoconfigura desde parámetro url_base.
   static const String _defaultBaseUrl =
       "https://aprendeconpatricia.com/php_api/";
   static const String _prefsApiBaseUrlKey = 'api_base_url';
-  static const String _apiUrlParamName = 'url_api';
+  static const String _apiBaseParamName = 'url_base';
+  static const String _prefsDebugModeKey = 'isDebugMode';
+  static const String _prefsEffectiveDebugModeKey = 'effectiveDebugMode';
+  static const String _globalDebugParamName = 'modo_debug';
 
   static Future<void>? _baseUrlBootstrapFuture;
   static String _resolvedBaseUrl = _defaultBaseUrl;
@@ -60,9 +76,112 @@ class ApiService {
     return trimmed.endsWith('/') ? trimmed : '$trimmed/';
   }
 
-  Future<String?> _fetchRemoteApiBaseUrl(String fromBaseUrl) async {
+  bool _isAdminUserType(String? userType) {
+    final normalized = (userType ?? '').trim().toLowerCase();
+    return normalized == 'nutricionista' ||
+        normalized == 'administrador' ||
+        normalized == 'admin';
+  }
+
+  bool _isTruthy(dynamic value) {
+    final normalized = (value ?? '').toString().trim().toLowerCase();
+    return normalized == 's' ||
+        normalized == '1' ||
+        normalized == 'true' ||
+        normalized == 'si' ||
+        normalized == 'sí';
+  }
+
+  Future<bool> _fetchRemoteGlobalDebugFlag(String fromBaseUrl) async {
+    try {
+      final uri = Uri.parse('${fromBaseUrl}api/parametros.php')
+          .replace(queryParameters: {'nombre': _globalDebugParamName});
+
+      final response = await http.get(
+        uri,
+        headers: const {
+          'Content-Type': 'application/json; charset=UTF-8',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 8));
+
+      if (response.statusCode != 200) {
+        return false;
+      }
+
+      final dynamic decoded = json.decode(response.body);
+      if (decoded is Map<String, dynamic>) {
+        final candidate = decoded['valor'] ?? decoded['valor1'];
+        return _isTruthy(candidate);
+      }
+
+      if (decoded is String) {
+        return _isTruthy(decoded);
+      }
+    } catch (_) {
+      // Si falla, no se activa debug global.
+    }
+
+    return false;
+  }
+
+  Future<bool> _resolveEffectiveDebugMode(
+    SharedPreferences prefs, {
+    required String baseUrlForLookup,
+    String? userType,
+  }) async {
+    final localOrBuildDebug =
+        (prefs.getBool(_prefsDebugModeKey) ?? false) || kDebugMode;
+    if (!_isAdminUserType(userType)) {
+      return localOrBuildDebug;
+    }
+
+    final globalDebug = await _fetchRemoteGlobalDebugFlag(baseUrlForLookup);
+    return localOrBuildDebug || globalDebug;
+  }
+
+  Future<void> refreshRuntimeDebugAndBaseUrl({String? userType}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      final stored = _normalizeBaseUrl(prefs.getString(_prefsApiBaseUrlKey));
+      final baseToCheck = stored.isNotEmpty
+          ? stored
+          : (_normalizeBaseUrl(_resolvedBaseUrl).isNotEmpty
+              ? _resolvedBaseUrl
+              : _defaultBaseUrl);
+
+      final effectiveDebugMode = await _resolveEffectiveDebugMode(
+        prefs,
+        baseUrlForLookup: baseToCheck,
+        userType: userType,
+      );
+
+      await prefs.setBool(_prefsEffectiveDebugModeKey, effectiveDebugMode);
+
+      final remote = await _fetchRemoteApiBaseUrl(
+        baseToCheck,
+        isDebugMode: effectiveDebugMode,
+      );
+
+      final nextBase = _normalizeBaseUrl(remote ?? baseToCheck);
+      final finalBase = nextBase.isNotEmpty ? nextBase : _defaultBaseUrl;
+
+      _resolvedBaseUrl = finalBase;
+      _baseUrl = finalBase;
+      await prefs.setString(_prefsApiBaseUrlKey, finalBase);
+      _baseUrlBootstrapFuture = Future.value();
+    } catch (_) {
+      // Fallback silencioso.
+    }
+  }
+
+  Future<String?> _fetchRemoteApiBaseUrl(
+    String fromBaseUrl, {
+    required bool isDebugMode,
+  }) async {
     final uri = Uri.parse('${fromBaseUrl}api/parametros.php')
-        .replace(queryParameters: {'nombre': _apiUrlParamName});
+        .replace(queryParameters: {'nombre': _apiBaseParamName});
 
     final response = await http.get(
       uri,
@@ -79,11 +198,9 @@ class ApiService {
     final dynamic decoded = json.decode(response.body);
 
     if (decoded is Map<String, dynamic>) {
-      final candidates = [
-        decoded['valor1'],
-        decoded['valor'],
-        decoded['valor2']
-      ];
+      final candidates = isDebugMode
+          ? [decoded['valor2'], decoded['valor']]
+          : [decoded['valor']];
       for (final candidate in candidates) {
         final normalized = _normalizeBaseUrl(candidate?.toString());
         if (normalized.isNotEmpty) return normalized;
@@ -101,6 +218,7 @@ class ApiService {
   Future<void> _bootstrapAndRefreshBaseUrl() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      final storedUserType = await _storage.read(key: 'userType');
 
       // 1) Arranca con URL guardada o por defecto.
       final stored = _normalizeBaseUrl(prefs.getString(_prefsApiBaseUrlKey));
@@ -108,8 +226,17 @@ class ApiService {
       _resolvedBaseUrl = baseToCheck;
       _baseUrl = _resolvedBaseUrl;
 
-      // 2) Lee url_api desde la URL activa y actualiza si cambia.
-      final remote = await _fetchRemoteApiBaseUrl(baseToCheck);
+      // 2) Lee url_base y selecciona valor1/valor2 según modo normal/debug.
+      final isDebugMode = await _resolveEffectiveDebugMode(
+        prefs,
+        baseUrlForLookup: baseToCheck,
+        userType: storedUserType,
+      );
+      await prefs.setBool(_prefsEffectiveDebugModeKey, isDebugMode);
+      final remote = await _fetchRemoteApiBaseUrl(
+        baseToCheck,
+        isDebugMode: isDebugMode,
+      );
       if (remote != null && remote != _resolvedBaseUrl) {
         _resolvedBaseUrl = remote;
         _baseUrl = remote;
@@ -278,10 +405,11 @@ class ApiService {
   Future<http.Response> _safeDelete(
     Uri uri, {
     Map<String, String>? headers,
+    dynamic body,
   }) async {
     await _ensureBaseUrlReady();
     try {
-      return await http.delete(uri, headers: headers).timeout(
+      return await http.delete(uri, headers: headers, body: body).timeout(
             const Duration(seconds: 15),
             onTimeout: () =>
                 http.Response('Conexión lenta o servidor inaccesible', 408),
@@ -307,7 +435,14 @@ class ApiService {
   // --- LOGIN ---
 
   // El login vuelve a ser un método de instancia normal
-  Future<Map<String, dynamic>> login(String nick, String password) async {
+  Future<Map<String, dynamic>> login(
+    String nick,
+    String password, {
+    String? twoFactorCode,
+    String? trustedDeviceId,
+    String? trustedDeviceToken,
+    bool trustThisDevice = false,
+  }) async {
     // Determinar el tipo de dispositivo
     String deviceType;
     if (kIsWeb) {
@@ -329,6 +464,13 @@ class ApiService {
       body: jsonEncode({
         'nick': nick,
         'contrasena': password,
+        if (twoFactorCode != null && twoFactorCode.trim().isNotEmpty)
+          'codigo_2fa': twoFactorCode.trim(),
+        if (trustedDeviceId != null && trustedDeviceId.trim().isNotEmpty)
+          'trusted_device_id': trustedDeviceId.trim(),
+        if (trustedDeviceToken != null && trustedDeviceToken.trim().isNotEmpty)
+          'trusted_device_token': trustedDeviceToken.trim(),
+        if (trustThisDevice) 'confiar_dispositivo': true,
         'dispositivo_tipo': deviceType,
         'url_api': _baseUrl,
       }),
@@ -349,6 +491,15 @@ class ApiService {
         decoded['message']?.toString() ??
             'No se pudo completar el inicio de sesión. Inténtalo de nuevo.',
       );
+    }
+
+    decoded['_statusCode'] = response.statusCode;
+
+    final userData = decoded['usuario'];
+    final userType =
+        userData is Map<String, dynamic> ? userData['tipo']?.toString() : null;
+    if (response.statusCode == 200) {
+      await refreshRuntimeDebugAndBaseUrl(userType: userType);
     }
 
     return decoded;
@@ -390,6 +541,341 @@ class ApiService {
       }
       throw Exception('No se pudo acceder como invitado. Inténtalo de nuevo.');
     }
+  }
+
+  Future<Map<String, dynamic>> getTwoFactorStatus() async {
+    final headers = await _getHeaders();
+    final response = await _safeGet(
+      Uri.parse('${_baseUrl}api/two_factor.php?action=status'),
+      headers: headers,
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+    throw Exception(decoded['message']?.toString() ??
+        'No se pudo consultar el estado del 2FA.');
+  }
+
+  Future<Map<String, dynamic>> setupTwoFactor() async {
+    final headers = await _getHeaders();
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/two_factor.php?action=setup'),
+      headers: headers,
+      body: jsonEncode({}),
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+    throw Exception(decoded['message']?.toString() ??
+        'No se pudo iniciar la configuración 2FA.');
+  }
+
+  Future<Map<String, dynamic>> enableTwoFactor({
+    required String secret,
+    required String code,
+  }) async {
+    final headers = await _getHeaders();
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/two_factor.php?action=enable'),
+      headers: headers,
+      body: jsonEncode({
+        'secret': secret,
+        'codigo_2fa': code,
+      }),
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+    throw Exception(
+        decoded['message']?.toString() ?? 'No se pudo activar 2FA.');
+  }
+
+  Future<Map<String, dynamic>> disableTwoFactor({required String code}) async {
+    final headers = await _getHeaders();
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/two_factor.php?action=disable'),
+      headers: headers,
+      body: jsonEncode({'codigo_2fa': code}),
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+
+    throw Exception(
+        decoded['message']?.toString() ?? 'No se pudo desactivar 2FA.');
+  }
+
+  Future<Map<String, dynamic>> adminDisableTwoFactorForUser({
+    required int codigoUsuario,
+  }) async {
+    final headers = await _getHeaders();
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/two_factor.php?action=admin_disable'),
+      headers: headers,
+      body: jsonEncode({'codigo_usuario': codigoUsuario}),
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+    throw Exception(decoded['message']?.toString() ??
+        'No se pudo desactivar 2FA del usuario.');
+  }
+
+  Future<Map<String, dynamic>> getEmailVerificationStatus() async {
+    final headers = await _getHeaders();
+    final response = await _safeGet(
+      Uri.parse(
+        '${_baseUrl}api/account_recovery.php?action=email_verification_status',
+      ),
+      headers: headers,
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+    throw Exception(decoded['message']?.toString() ??
+        'No se pudo consultar la verificacion del email.');
+  }
+
+  Future<Map<String, dynamic>> sendEmailVerificationCode() async {
+    final headers = await _getHeaders();
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/account_recovery.php'),
+      headers: headers,
+      body: jsonEncode({'action': 'send_email_verification_code'}),
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+    throw Exception(decoded['message']?.toString() ??
+        'No se pudo enviar el código de verificación.');
+  }
+
+  Future<Map<String, dynamic>> verifyEmailCode({required String code}) async {
+    final headers = await _getHeaders();
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/account_recovery.php'),
+      headers: headers,
+      body: jsonEncode({'action': 'verify_email_code', 'code': code}),
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+    throw Exception(
+      decoded['message']?.toString() ?? 'No se pudo verificar el email.',
+    );
+  }
+
+  Future<Map<String, dynamic>> getPasswordRecoveryOptions({
+    required String identifier,
+  }) async {
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/account_recovery.php'),
+      headers: {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Accept': 'application/json',
+      },
+      body:
+          jsonEncode({'action': 'recovery_options', 'identifier': identifier}),
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+    throw Exception(
+      decoded['message']?.toString() ??
+          'No se pudieron obtener opciones de recuperacion.',
+    );
+  }
+
+  Future<Map<String, dynamic>> requestPasswordRecoveryByEmail({
+    required String identifier,
+  }) async {
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/account_recovery.php'),
+      headers: {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'action': 'request_password_recovery_email',
+        'identifier': identifier,
+      }),
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+    throw Exception(
+      decoded['message']?.toString() ??
+          'No se pudo iniciar la recuperacion por email.',
+    );
+  }
+
+  Future<Map<String, dynamic>> resetPasswordWithEmailCode({
+    required String identifier,
+    required String code,
+    required String newPassword,
+  }) async {
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/account_recovery.php'),
+      headers: {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'action': 'reset_password_with_email_code',
+        'identifier': identifier,
+        'code': code,
+        'new_password': newPassword,
+      }),
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+    throw Exception(
+      decoded['message']?.toString() ?? 'No se pudo restablecer la contrasena.',
+    );
+  }
+
+  Future<Map<String, dynamic>> resetPasswordWithTwoFactor({
+    required String identifier,
+    required String code2fa,
+    required String newPassword,
+  }) async {
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/account_recovery.php'),
+      headers: {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'action': 'reset_password_with_2fa',
+        'identifier': identifier,
+        'code_2fa': code2fa,
+        'new_password': newPassword,
+      }),
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+    throw Exception(
+      decoded['message']?.toString() ??
+          'No se pudo restablecer la contrasena con 2FA.',
+    );
+  }
+
+  Future<Map<String, dynamic>> getSmtpSettings() async {
+    final headers = await _getHeaders();
+    final response = await _safeGet(
+      Uri.parse('${_baseUrl}api/account_recovery.php?action=get_smtp_settings'),
+      headers: headers,
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+    throw Exception(
+      decoded['message']?.toString() ??
+          'No se pudo cargar la configuracion SMTP.',
+    );
+  }
+
+  Future<Map<String, dynamic>> updateSmtpSettings({
+    required String servidor,
+    required String puerto,
+    required String usuario,
+    String? contrasena,
+    bool mantenerContrasena = false,
+  }) async {
+    final headers = await _getHeaders();
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/account_recovery.php'),
+      headers: headers,
+      body: jsonEncode({
+        'action': 'update_smtp_settings',
+        'servidor_smtp': servidor,
+        'puerto_smtp': puerto,
+        'usuario_smtp': usuario,
+        'contrasena_smtp': contrasena ?? '',
+        'mantener_contrasena': mantenerContrasena,
+      }),
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+    throw Exception(
+      decoded['message']?.toString() ??
+          'No se pudo guardar la configuracion SMTP.',
+    );
+  }
+
+  Future<Map<String, dynamic>> encryptRecoveryText({
+    required String text,
+    String? passphrase,
+  }) async {
+    final headers = await _getHeaders();
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/account_recovery.php'),
+      headers: headers,
+      body: jsonEncode({
+        'action': 'encrypt_text_value',
+        'text': text,
+        'passphrase': passphrase ?? '',
+      }),
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+    throw Exception(decoded['message']?.toString() ?? 'No se pudo cifrar.');
+  }
+
+  Future<Map<String, dynamic>> decryptRecoveryText({
+    required String text,
+    String? passphrase,
+  }) async {
+    final headers = await _getHeaders();
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/account_recovery.php'),
+      headers: headers,
+      body: jsonEncode({
+        'action': 'decrypt_text_value',
+        'text': text,
+        'passphrase': passphrase ?? '',
+      }),
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+    throw Exception(decoded['message']?.toString() ?? 'No se pudo descifrar.');
   }
 
   // --- MÉTODOS DE DEPURACIÓN ---
@@ -982,6 +1468,12 @@ ${response.body}
     required DateTime fecha,
     required double peso,
     String? observacionUsuario,
+    double? cintura,
+    double? cadera,
+    double? muslo,
+    double? brazo,
+    int? presionSistolica,
+    int? presionDiastolica,
   }) async {
     final patientCode = await _storage.read(key: 'patientCode');
     final userCode = await _storage.read(key: 'userCode');
@@ -991,6 +1483,12 @@ ${response.body}
       codigoPaciente: int.tryParse(patientCode ?? '') ?? 0,
       fecha: fecha,
       peso: peso,
+      cintura: cintura,
+      cadera: cadera,
+      muslo: muslo,
+      brazo: brazo,
+      presionSistolica: presionSistolica,
+      presionDiastolica: presionDiastolica,
       tipo: 'Usuario',
       observacionUsuario: observacionUsuario,
       codigoUsuario: int.tryParse(userCode ?? ''),
@@ -1024,6 +1522,15 @@ ${response.body}
       'altura_paciente': data['altura_paciente'] == null
           ? null
           : int.tryParse(data['altura_paciente'].toString()),
+      'edad_usuario': data['edad_usuario'] == null
+          ? null
+          : int.tryParse(data['edad_usuario'].toString()),
+      'altura_usuario': data['altura_usuario'] == null
+          ? null
+          : int.tryParse(data['altura_usuario'].toString()),
+      'edad_paciente': data['edad_paciente'] == null
+          ? null
+          : int.tryParse(data['edad_paciente'].toString()),
     };
   }
 
@@ -2541,21 +3048,46 @@ ${response.body}
     throw Exception('Error al cargar conversaciones');
   }
 
-  Future<List<ChatMessage>> getChatMessages({int? otherUserId}) async {
-    final otherParam = otherUserId != null ? '&user_id=$otherUserId' : '';
+  Future<ChatMessagesPage> getChatMessagesPage({
+    int? otherUserId,
+    int? limit,
+    int? beforeId,
+  }) async {
+    final params = <String, String>{
+      'action': 'get_messages',
+      if (otherUserId != null) 'user_id': otherUserId.toString(),
+      if (limit != null && limit > 0) 'limit': limit.toString(),
+      if (beforeId != null && beforeId > 0) 'before_id': beforeId.toString(),
+    };
+
     final response = await http.get(
-      Uri.parse('${_baseUrl}api/chat.php?action=get_messages$otherParam'),
+      Uri.parse('${_baseUrl}api/chat.php').replace(queryParameters: params),
       headers: await _getHeaders(),
     );
 
     if (response.statusCode == 200) {
       final Map<String, dynamic> data = json.decode(response.body);
       final List<dynamic> items = data['items'] ?? [];
-      return items.map((item) => ChatMessage.fromJson(item)).toList();
+      final hasMore = data['has_more'] == true ||
+          data['has_more']?.toString() == '1' ||
+          data['has_more']?.toString().toLowerCase() == 'true';
+      final nextBeforeId =
+          int.tryParse(data['next_before_id']?.toString() ?? '');
+
+      return ChatMessagesPage(
+        items: items.map((item) => ChatMessage.fromJson(item)).toList(),
+        hasMore: hasMore,
+        nextBeforeId: nextBeforeId,
+      );
     }
 
     _validateResponse(response.statusCode, response.body);
     throw Exception('Error al cargar mensajes');
+  }
+
+  Future<List<ChatMessage>> getChatMessages({int? otherUserId}) async {
+    final page = await getChatMessagesPage(otherUserId: otherUserId);
+    return page.items;
   }
 
   Future<void> markChatRead({int? otherUserId}) async {
@@ -2623,6 +3155,85 @@ ${response.body}
 
     _validateResponse(response.statusCode, response.body);
     throw Exception('Error al borrar mensaje');
+  }
+
+  Future<bool> getChatUnreadPushEnabled() async {
+    final response = await _safeGet(
+      Uri.parse('${_baseUrl}api/push_notifications.php?action=get_preferences'),
+      headers: await _getHeaders(),
+    );
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      final raw = data['chat_unread_enabled'];
+      final normalized = raw?.toString().trim().toLowerCase();
+      return normalized == '1' ||
+          normalized == 'true' ||
+          normalized == 's' ||
+          normalized == 'si' ||
+          normalized == 'sí';
+    }
+
+    _validateResponse(response.statusCode, response.body);
+    throw Exception('Error al cargar preferencias push');
+  }
+
+  Future<bool> getNutriChatUnreadPushEnabled() async {
+    return getChatUnreadPushEnabled();
+  }
+
+  Future<void> setChatUnreadPushEnabled({
+    required bool enabled,
+  }) async {
+    final response = await _safePost(
+      Uri.parse(
+        '${_baseUrl}api/push_notifications.php?action=update_preferences',
+      ),
+      headers: await _getHeaders(),
+      body: jsonEncode({'chat_unread_enabled': enabled ? 1 : 0}),
+    );
+
+    if (response.statusCode == 200) {
+      return;
+    }
+
+    _validateResponse(response.statusCode, response.body);
+    throw Exception('Error al guardar preferencias push');
+  }
+
+  Future<void> setNutriChatUnreadPushEnabled({
+    required bool enabled,
+  }) async {
+    await setChatUnreadPushEnabled(enabled: enabled);
+  }
+
+  Future<void> registerPushDeviceToken({
+    required String token,
+    required String platform,
+    String? deviceId,
+    bool? chatUnreadEnabled,
+  }) async {
+    final payload = <String, dynamic>{
+      'token': token,
+      'platform': platform,
+      if (deviceId != null && deviceId.trim().isNotEmpty)
+        'device_id': deviceId.trim(),
+      if (chatUnreadEnabled != null)
+        'chat_unread_enabled': chatUnreadEnabled ? 1 : 0,
+    };
+
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/push_notifications.php?action=register_device'),
+      headers: await _getHeaders(),
+      body: jsonEncode(payload),
+    );
+
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return;
+    }
+
+    _validateResponse(response.statusCode, response.body);
+    throw Exception('Error al registrar token push');
   }
 
   Future<EntrenamientoActividadCustom> createActividadCustom({
@@ -3119,43 +3730,6 @@ ${response.body}
     return jsonDecode(response.body) ?? {};
   }
 
-  Future<bool> deleteUsuario(int codigo) async {
-    final response = await http.delete(
-      Uri.parse('${_baseUrl}api/usuarios.php'),
-      headers: await _getHeaders(),
-      body: jsonEncode({'codigo': codigo}),
-    );
-    if (response.statusCode != 200) {
-      final body =
-          response.body.trim().isEmpty ? 'sin contenido' : response.body;
-      throw Exception(
-        'Respuesta del servidor (${response.statusCode}): $body',
-      );
-    }
-    return response.statusCode == 200;
-  }
-
-  // Verificar dependencias de un usuario antes de eliminarlo
-  Future<Map<String, dynamic>> checkUsuarioDependencies(int codigo) async {
-    final response = await http.post(
-      Uri.parse('${_baseUrl}api/usuarios.php'),
-      headers: await _getHeaders(),
-      body: jsonEncode({
-        'action': 'check_dependencies',
-        'codigo': codigo,
-      }),
-    );
-    if (response.statusCode != 200) {
-      final body =
-          response.body.trim().isEmpty ? 'sin contenido' : response.body;
-      throw Exception(
-        'Respuesta del servidor (${response.statusCode}): $body',
-      );
-    }
-    final data = jsonDecode(response.body);
-    return data['dependencies'] ?? {};
-  }
-
   // Eliminar usuario en cascada (elimina todos sus registros relacionados)
   Future<bool> deleteUsuarioCascade(int codigo) async {
     final response = await http.post(
@@ -3195,6 +3769,93 @@ ${response.body}
       );
     }
     return response.statusCode == 200;
+  }
+
+  // Obtener información completa del flujo de eliminación de usuario
+  Future<Map<String, dynamic>> getUsuarioDeleteFlowInfo(int codigo) async {
+    final response = await http.post(
+      Uri.parse('${_baseUrl}api/usuarios.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode({
+        'action': 'delete_flow_info',
+        'codigo': codigo,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception('Respuesta del servidor (${response.statusCode}): $body');
+    }
+
+    final data = jsonDecode(response.body);
+    return Map<String, dynamic>.from(data as Map);
+  }
+
+  // Transferir paciente asociado de un usuario origen a otro usuario destino
+  Future<Map<String, dynamic>> transferUsuarioPacienteAsociado(
+    int codigoUsuarioOrigen,
+    int codigoUsuarioDestino,
+  ) async {
+    final response = await http.post(
+      Uri.parse('${_baseUrl}api/usuarios.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode({
+        'action': 'transfer_paciente_asociado',
+        'codigo_usuario_origen': codigoUsuarioOrigen,
+        'codigo_usuario_destino': codigoUsuarioDestino,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception('Respuesta del servidor (${response.statusCode}): $body');
+    }
+
+    final data = jsonDecode(response.body);
+    return Map<String, dynamic>.from(data as Map);
+  }
+
+  // Eliminar usuario devolviendo detalle de filas eliminadas por tabla
+  Future<Map<String, dynamic>> deleteUsuarioWithDetails(int codigo) async {
+    final response = await http.post(
+      Uri.parse('${_baseUrl}api/usuarios.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode({
+        'action': 'delete_with_details',
+        'codigo': codigo,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception('Respuesta del servidor (${response.statusCode}): $body');
+    }
+
+    final data = jsonDecode(response.body);
+    return Map<String, dynamic>.from(data as Map);
+  }
+
+  // Autoeliminación del usuario autenticado con detalle de filas eliminadas
+  Future<Map<String, dynamic>> deleteCurrentUserWithDetails() async {
+    final response = await http.post(
+      Uri.parse('${_baseUrl}api/usuarios.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode({
+        'action': 'delete_self_with_details',
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception('Respuesta del servidor (${response.statusCode}): $body');
+    }
+
+    final data = jsonDecode(response.body);
+    return Map<String, dynamic>.from(data as Map);
   }
 
   // Revocar token de un usuario (forzar desconexión)
@@ -3573,6 +4234,206 @@ ${response.body}
     );
   }
 
+  // --- TODO LIST ---
+
+  Future<List<TodoItem>> getTodoItems({
+    String? estado,
+    int? year,
+    int? month,
+  }) async {
+    final queryParameters = <String, String>{};
+
+    if (estado != null && estado.isNotEmpty) {
+      queryParameters['estado'] = estado;
+    }
+
+    if (year != null && month != null) {
+      queryParameters['year'] = year.toString();
+      queryParameters['month'] = month.toString();
+    }
+
+    final uri = Uri.parse('${_baseUrl}api/todo_list.php').replace(
+      queryParameters: queryParameters.isEmpty ? null : queryParameters,
+    );
+
+    final response = await _safeGet(uri, headers: await _getHeaders());
+
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception('Respuesta del servidor (${response.statusCode}): $body');
+    }
+
+    final dynamic decoded = jsonDecode(response.body);
+    if (decoded is! List) {
+      return <TodoItem>[];
+    }
+
+    return decoded
+        .whereType<Map<String, dynamic>>()
+        .map((item) => TodoItem.fromJson(item))
+        .toList();
+  }
+
+  Future<TodoItem> createTodoItem(Map<String, dynamic> data) async {
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/todo_list.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode(data),
+    );
+
+    if (response.statusCode != 201) {
+      _validateResponse(response.statusCode, response.body);
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception('Respuesta del servidor (${response.statusCode}): $body');
+    }
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final item = decoded['item'];
+    if (item is Map<String, dynamic>) {
+      return TodoItem.fromJson(item);
+    }
+
+    throw Exception('Respuesta del servidor inválida al crear tarea.');
+  }
+
+  Future<TodoItem> updateTodoItem(Map<String, dynamic> data) async {
+    final response = await _safePut(
+      Uri.parse('${_baseUrl}api/todo_list.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode(data),
+    );
+
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception('Respuesta del servidor (${response.statusCode}): $body');
+    }
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final item = decoded['item'];
+    if (item is Map<String, dynamic>) {
+      return TodoItem.fromJson(item);
+    }
+
+    throw Exception('Respuesta del servidor inválida al actualizar tarea.');
+  }
+
+  Future<void> deleteTodoItem(int codigo) async {
+    final response = await _safeDelete(
+      Uri.parse('${_baseUrl}api/todo_list.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode({'codigo': codigo}),
+    );
+
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception('Respuesta del servidor (${response.statusCode}): $body');
+    }
+  }
+
+  // --- ADHERENCIA ---
+
+  Future<List<Map<String, dynamic>>> getAdherenciaRegistros({
+    DateTime? fechaDesde,
+    DateTime? fechaHasta,
+    int? codigoUsuario,
+  }) async {
+    String formatDate(DateTime value) {
+      final day = DateTime(value.year, value.month, value.day);
+      return '${day.year.toString().padLeft(4, '0')}-'
+          '${day.month.toString().padLeft(2, '0')}-'
+          '${day.day.toString().padLeft(2, '0')}';
+    }
+
+    final query = <String, String>{};
+    if (fechaDesde != null) {
+      query['fecha_desde'] = formatDate(fechaDesde);
+    }
+    if (fechaHasta != null) {
+      query['fecha_hasta'] = formatDate(fechaHasta);
+    }
+    if (codigoUsuario != null && codigoUsuario > 0) {
+      query['codigo_usuario'] = codigoUsuario.toString();
+    }
+
+    final uri = Uri.parse('${_baseUrl}api/adherencia.php').replace(
+      queryParameters: query.isEmpty ? null : query,
+    );
+
+    final response = await _safeGet(uri, headers: await _getHeaders());
+
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      throw Exception(
+        'Error al obtener cumplimiento (${response.statusCode}): ${response.body}',
+      );
+    }
+
+    final dynamic decoded = jsonDecode(response.body);
+    if (decoded is Map<String, dynamic>) {
+      final items = decoded['items'];
+      if (items is List) {
+        return items
+            .whereType<Map<String, dynamic>>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList();
+      }
+    }
+
+    return <Map<String, dynamic>>[];
+  }
+
+  Future<void> upsertAdherenciaRegistro({
+    required String tipo,
+    required String estado,
+    DateTime? fecha,
+    String? observacion,
+    int? codigoUsuario,
+    int? codigoPaciente,
+    int? codigoUsuarioActor,
+  }) async {
+    String? fechaString;
+    if (fecha != null) {
+      final day = DateTime(fecha.year, fecha.month, fecha.day);
+      fechaString = '${day.year.toString().padLeft(4, '0')}-'
+          '${day.month.toString().padLeft(2, '0')}-'
+          '${day.day.toString().padLeft(2, '0')}';
+    }
+
+    final payload = <String, dynamic>{
+      'tipo': tipo,
+      'estado': estado,
+      if (fechaString != null) 'fecha': fechaString,
+      if ((observacion ?? '').trim().isNotEmpty)
+        'observacion': observacion!.trim(),
+      if (codigoUsuario != null && codigoUsuario > 0)
+        'codigo_usuario': codigoUsuario,
+      if (codigoPaciente != null && codigoPaciente > 0)
+        'codigo_paciente': codigoPaciente,
+      if (codigoUsuarioActor != null && codigoUsuarioActor > 0)
+        'codusuarioa': codigoUsuarioActor,
+    };
+
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/adherencia.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode(payload),
+    );
+
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      _validateResponse(response.statusCode, response.body);
+      throw Exception(
+        'Error al guardar cumplimiento (${response.statusCode}): ${response.body}',
+      );
+    }
+  }
+
   /// Verifica si un nick ya existe en la base de datos
   Future<bool> checkNickExists(String nick) async {
     try {
@@ -3602,6 +4463,9 @@ ${response.body}
     required String contrasena,
     required String tipo,
     String? nombre,
+    String? email,
+    int? edad,
+    int? altura,
   }) async {
     try {
       final payload = {
@@ -3610,6 +4474,9 @@ ${response.body}
         'contrasena': contrasena,
         'tipo': tipo,
         if ((nombre ?? '').trim().isNotEmpty) 'nombre': nombre,
+        if ((email ?? '').trim().isNotEmpty) 'email': email,
+        if (edad != null && edad > 0) 'edad': edad,
+        if (altura != null && altura > 0) 'altura': altura,
         'codigo_paciente': null,
       };
 
@@ -3629,6 +4496,9 @@ ${response.body}
           'contrasena': contrasena,
           'tipo': tipo,
           if ((nombre ?? '').trim().isNotEmpty) 'nombre': nombre!,
+          if ((email ?? '').trim().isNotEmpty) 'email': email!,
+          if (edad != null && edad > 0) 'edad': edad.toString(),
+          if (altura != null && altura > 0) 'altura': altura.toString(),
           'codigo_paciente': '',
         };
         response = await http.post(

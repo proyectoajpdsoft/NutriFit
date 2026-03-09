@@ -69,9 +69,13 @@ function get_pesos_usuario() {
                         return;
                 }
 
-                $query = "SELECT m.*, p.nombre as nombre_paciente, p.activo as paciente_activo, p.altura as altura_paciente
+                $query = "SELECT m.*, p.nombre as nombre_paciente, p.activo as paciente_activo
+                                    , u.edad as edad_usuario
+                                    , u.altura as altura_usuario
+                                    , COALESCE(u.altura, p.altura) as altura_paciente
                                     FROM nu_paciente_medicion m
                                     LEFT JOIN nu_paciente p ON m.codigo_paciente = p.codigo
+                                    LEFT JOIN usuario u ON u.codigo = m.codigo_usuario
                                     WHERE m.codigo_paciente = :codigo_paciente
                                         AND m.tipo = 'Usuario'
                                     ORDER BY m.fecha DESC";
@@ -88,9 +92,13 @@ function get_pesos_usuario() {
                 return;
         }
 
-        $query = "SELECT m.*, p.nombre as nombre_paciente, p.activo as paciente_activo, p.altura as altura_paciente
+        $query = "SELECT m.*, p.nombre as nombre_paciente, p.activo as paciente_activo,
+                            u.edad as edad_usuario,
+                            u.altura as altura_usuario,
+                            COALESCE(u.altura, p.altura) as altura_paciente
                             FROM nu_paciente_medicion m
                             LEFT JOIN nu_paciente p ON m.codigo_paciente = p.codigo
+                            LEFT JOIN usuario u ON u.codigo = m.codigo_usuario
                             WHERE m.tipo = 'Usuario'
                                 AND m.codigo_usuario = :codigo_usuario
                             ORDER BY m.fecha DESC";
@@ -125,7 +133,12 @@ function get_objetivo_peso_usuario() {
         return;
     }
 
-    $query = "SELECT u.peso_objetivo, p.altura as altura_paciente
+    $query = "SELECT u.peso_objetivo,
+                     u.edad as edad_usuario,
+                     u.altura as altura_usuario,
+                     p.edad as edad_paciente,
+                     p.altura as altura_paciente_raw,
+                     COALESCE(u.altura, p.altura) as altura_paciente
               FROM usuario u
               LEFT JOIN nu_paciente p ON u.codigo_paciente = p.codigo
               WHERE u.codigo = :codigo_usuario
@@ -147,11 +160,20 @@ function get_objetivo_peso_usuario() {
 
     if (!$item) {
         http_response_code(404);
-        echo json_encode(array("message" => "Usuario no encontrado."));
+        echo json_encode(array("message" => "Usuario o contraseña incorrectos."));
         return;
     }
 
     $altura_cm = isset($item['altura_paciente']) ? intval($item['altura_paciente']) : null;
+    $edad_usuario = isset($item['edad_usuario']) && $item['edad_usuario'] !== null
+        ? intval($item['edad_usuario'])
+        : null;
+    $altura_usuario = isset($item['altura_usuario']) && $item['altura_usuario'] !== null
+        ? intval($item['altura_usuario'])
+        : null;
+    $edad_paciente = isset($item['edad_paciente']) && $item['edad_paciente'] !== null
+        ? intval($item['edad_paciente'])
+        : null;
     $peso_objetivo_sugerido = null;
     if (!empty($altura_cm) && $altura_cm > 0) {
         $altura_m = $altura_cm / 100.0;
@@ -161,7 +183,10 @@ function get_objetivo_peso_usuario() {
     echo json_encode(array(
         "peso_objetivo" => isset($item['peso_objetivo']) ? ($item['peso_objetivo'] !== null ? floatval($item['peso_objetivo']) : null) : null,
         "peso_objetivo_sugerido" => $peso_objetivo_sugerido,
-        "altura_paciente" => $altura_cm
+        "altura_paciente" => $altura_cm,
+        "edad_usuario" => $edad_usuario,
+        "altura_usuario" => $altura_usuario,
+        "edad_paciente" => $edad_paciente
     ));
 }
 
@@ -288,6 +313,8 @@ function bind_medicion_params($stmt, $data) {
     $data->cintura = ($data->cintura === '' || $data->cintura === null) ? null : floatval($data->cintura);
     $data->muslo = ($data->muslo === '' || $data->muslo === null) ? null : floatval($data->muslo);
     $data->brazo = ($data->brazo === '' || $data->brazo === null) ? null : floatval($data->brazo);
+    $data->presion_sistolica = ($data->presion_sistolica === '' || $data->presion_sistolica === null) ? null : intval($data->presion_sistolica);
+    $data->presion_diastolica = ($data->presion_diastolica === '' || $data->presion_diastolica === null) ? null : intval($data->presion_diastolica);
     $data->pliegue_abdominal = ($data->pliegue_abdominal === '' || $data->pliegue_abdominal === null) ? null : floatval($data->pliegue_abdominal);
     $data->pliegue_cuadricipital = ($data->pliegue_cuadricipital === '' || $data->pliegue_cuadricipital === null) ? null : floatval($data->pliegue_cuadricipital);
     $data->pliegue_peroneal = ($data->pliegue_peroneal === '' || $data->pliegue_peroneal === null) ? null : floatval($data->pliegue_peroneal);
@@ -311,6 +338,8 @@ function bind_medicion_params($stmt, $data) {
     $stmt->bindParam(":cintura", $data->cintura);
     $stmt->bindParam(":muslo", $data->muslo);
     $stmt->bindParam(":brazo", $data->brazo);
+    $stmt->bindParam(":presion_sistolica", $data->presion_sistolica);
+    $stmt->bindParam(":presion_diastolica", $data->presion_diastolica);
     $stmt->bindParam(":actividad_fisica", $data->actividad_fisica);
     $stmt->bindParam(":pliegue_abdominal", $data->pliegue_abdominal);
     $stmt->bindParam(":pliegue_cuadricipital", $data->pliegue_cuadricipital);
@@ -346,6 +375,7 @@ function create_medicion() {
     $query = "INSERT INTO nu_paciente_medicion SET
                 codigo_paciente = :codigo_paciente, codigo_usuario = :codigo_usuario, fecha = :fecha, peso = :peso,
                 cadera = :cadera, cintura = :cintura, muslo = :muslo, brazo = :brazo,
+                presion_sistolica = :presion_sistolica, presion_diastolica = :presion_diastolica,
                 actividad_fisica = :actividad_fisica, pliegue_abdominal = :pliegue_abdominal,
                 pliegue_cuadricipital = :pliegue_cuadricipital, pliegue_peroneal = :pliegue_peroneal,
                 pliegue_subescapular = :pliegue_subescapular, pligue_tricipital = :pligue_tricipital,
@@ -394,6 +424,7 @@ function update_medicion() {
     $query = "UPDATE nu_paciente_medicion SET
                 codigo_paciente = :codigo_paciente, codigo_usuario = :codigo_usuario, fecha = :fecha, peso = :peso,
                 cadera = :cadera, cintura = :cintura, muslo = :muslo, brazo = :brazo,
+                presion_sistolica = :presion_sistolica, presion_diastolica = :presion_diastolica,
                 actividad_fisica = :actividad_fisica, pliegue_abdominal = :pliegue_abdominal,
                 pliegue_cuadricipital = :pliegue_cuadricipital, pliegue_peroneal = :pliegue_peroneal,
                 pliegue_subescapular = :pliegue_subescapular, pligue_tricipital = :pligue_tricipital,

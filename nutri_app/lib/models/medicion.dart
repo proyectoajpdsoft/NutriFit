@@ -15,6 +15,8 @@ class Medicion {
   double? cintura;
   double? muslo;
   double? brazo;
+  int? presionSistolica;
+  int? presionDiastolica;
   String? actividadFisica;
   double? pliegueAbdominal;
   double? pliegueCuadricipital;
@@ -39,6 +41,8 @@ class Medicion {
     this.cintura,
     this.muslo,
     this.brazo,
+    this.presionSistolica,
+    this.presionDiastolica,
     this.actividadFisica,
     this.pliegueAbdominal,
     this.pliegueCuadricipital,
@@ -90,6 +94,12 @@ class Medicion {
       brazo: json["brazo"] is double
           ? json["brazo"]
           : double.tryParse(json["brazo"]?.toString() ?? ''),
+      presionSistolica: json["presion_sistolica"] is int
+          ? json["presion_sistolica"]
+          : int.tryParse(json["presion_sistolica"]?.toString() ?? ''),
+      presionDiastolica: json["presion_diastolica"] is int
+          ? json["presion_diastolica"]
+          : int.tryParse(json["presion_diastolica"]?.toString() ?? ''),
       actividadFisica: json["actividad_fisica"],
       pliegueAbdominal: json["pliegue_abdominal"] == null
           ? null
@@ -128,6 +138,8 @@ class Medicion {
         "cintura": cintura,
         "muslo": muslo,
         "brazo": brazo,
+        "presion_sistolica": presionSistolica,
+        "presion_diastolica": presionDiastolica,
         "actividad_fisica": actividadFisica,
         "pliegue_abdominal": pliegueAbdominal,
         "pliegue_cuadricipital": pliegueCuadricipital,

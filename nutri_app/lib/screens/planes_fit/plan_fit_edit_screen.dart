@@ -625,114 +625,115 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
     TextEditingController? controller,
     FocusNode? focusNode,
   }) {
-    return Row(
-      children: [
-        Expanded(
-          child: TextFormField(
-            controller: controller,
-            focusNode: focusNode,
-            initialValue: controller == null ? value.toString() : null,
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(
-              labelText: labelIcon == null ? label : null,
-              label: labelIcon == null
-                  ? null
-                  : Tooltip(message: label, child: Icon(labelIcon, size: 18)),
-              border: const OutlineInputBorder(),
-              isDense: true,
-            ),
-            onChanged: (text) {
-              final parsed = int.tryParse(text) ?? value;
-              onChanged(_clampInt(parsed, min, max));
-            },
+    return TextFormField(
+      controller: controller,
+      focusNode: focusNode,
+      initialValue: controller == null ? value.toString() : null,
+      keyboardType: TextInputType.number,
+      decoration: InputDecoration(
+        labelText: labelIcon == null ? label : null,
+        label: labelIcon == null
+            ? null
+            : Tooltip(message: label, child: Icon(labelIcon, size: 18)),
+        border: const OutlineInputBorder(),
+        isDense: true,
+        suffixIconConstraints:
+            const BoxConstraints(minWidth: 32, minHeight: 56),
+        suffixIcon: SizedBox(
+          width: 32,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              GestureDetector(
+                onTap: () {
+                  final current =
+                      int.tryParse(controller?.text ?? value.toString()) ??
+                          value;
+                  final next = _clampInt(current + 1, min, max);
+                  onChanged(next);
+                  if (controller != null) {
+                    controller.text = next.toString();
+                  }
+                },
+                onLongPressStart: (_) {
+                  _stopTimers();
+                  _incrementTimer = Timer.periodic(
+                    const Duration(milliseconds: 80),
+                    (timer) {
+                      final current =
+                          int.tryParse(controller?.text ?? value.toString()) ??
+                              value;
+                      if (current < max) {
+                        final next = _clampInt(current + 1, min, max);
+                        onChanged(next);
+                        if (controller != null) {
+                          controller.text = next.toString();
+                        }
+                      } else {
+                        timer.cancel();
+                      }
+                    },
+                  );
+                },
+                onLongPressEnd: (_) => _stopTimers(),
+                onLongPressCancel: () => _stopTimers(),
+                child: const IconButton(
+                  icon: Icon(Icons.add),
+                  iconSize: 16,
+                  padding: EdgeInsets.zero,
+                  constraints: BoxConstraints(minWidth: 28, minHeight: 24),
+                  onPressed: null,
+                ),
+              ),
+              GestureDetector(
+                onTap: () {
+                  final current =
+                      int.tryParse(controller?.text ?? value.toString()) ??
+                          value;
+                  final next = _clampInt(current - 1, min, max);
+                  onChanged(next);
+                  if (controller != null) {
+                    controller.text = next.toString();
+                  }
+                },
+                onLongPressStart: (_) {
+                  _stopTimers();
+                  _decrementTimer = Timer.periodic(
+                    const Duration(milliseconds: 80),
+                    (timer) {
+                      final current =
+                          int.tryParse(controller?.text ?? value.toString()) ??
+                              value;
+                      if (current > min) {
+                        final next = _clampInt(current - 1, min, max);
+                        onChanged(next);
+                        if (controller != null) {
+                          controller.text = next.toString();
+                        }
+                      } else {
+                        timer.cancel();
+                      }
+                    },
+                  );
+                },
+                onLongPressEnd: (_) => _stopTimers(),
+                onLongPressCancel: () => _stopTimers(),
+                child: const IconButton(
+                  icon: Icon(Icons.remove),
+                  iconSize: 16,
+                  padding: EdgeInsets.zero,
+                  constraints: BoxConstraints(minWidth: 28, minHeight: 24),
+                  onPressed: null,
+                ),
+              ),
+            ],
           ),
         ),
-        const SizedBox(width: 6),
-        Column(
-          children: [
-            GestureDetector(
-              onTap: () {
-                final current =
-                    int.tryParse(controller?.text ?? value.toString()) ?? value;
-                final next = _clampInt(current + 1, min, max);
-                onChanged(next);
-                if (controller != null) {
-                  controller.text = next.toString();
-                }
-              },
-              onLongPressStart: (_) {
-                _stopTimers();
-                _incrementTimer = Timer.periodic(
-                  const Duration(milliseconds: 80),
-                  (timer) {
-                    final current =
-                        int.tryParse(controller?.text ?? value.toString()) ??
-                            value;
-                    if (current < max) {
-                      final next = _clampInt(current + 1, min, max);
-                      onChanged(next);
-                      if (controller != null) {
-                        controller.text = next.toString();
-                      }
-                    } else {
-                      timer.cancel();
-                    }
-                  },
-                );
-              },
-              onLongPressEnd: (_) => _stopTimers(),
-              onLongPressCancel: () => _stopTimers(),
-              child: const IconButton(
-                icon: Icon(Icons.add),
-                iconSize: 18,
-                padding: EdgeInsets.zero,
-                constraints: BoxConstraints(minWidth: 32, minHeight: 32),
-                onPressed: null,
-              ),
-            ),
-            GestureDetector(
-              onTap: () {
-                final current =
-                    int.tryParse(controller?.text ?? value.toString()) ?? value;
-                final next = _clampInt(current - 1, min, max);
-                onChanged(next);
-                if (controller != null) {
-                  controller.text = next.toString();
-                }
-              },
-              onLongPressStart: (_) {
-                _stopTimers();
-                _decrementTimer = Timer.periodic(
-                  const Duration(milliseconds: 80),
-                  (timer) {
-                    final current =
-                        int.tryParse(controller?.text ?? value.toString()) ??
-                            value;
-                    if (current > min) {
-                      final next = _clampInt(current - 1, min, max);
-                      onChanged(next);
-                      if (controller != null) {
-                        controller.text = next.toString();
-                      }
-                    } else {
-                      timer.cancel();
-                    }
-                  },
-                );
-              },
-              onLongPressEnd: (_) => _stopTimers(),
-              onLongPressCancel: () => _stopTimers(),
-              child: const IconButton(
-                icon: Icon(Icons.remove),
-                iconSize: 18,
-                padding: EdgeInsets.zero,
-                constraints: BoxConstraints(minWidth: 32, minHeight: 32),
-                onPressed: null,
-              ),
-            ),
-          ],
-        ),
-      ],
+      ),
+      onChanged: (text) {
+        final parsed = int.tryParse(text) ?? value;
+        onChanged(_clampInt(parsed, min, max));
+      },
     );
   }
 
@@ -2135,7 +2136,7 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          'Días del Plan',
+                          'Días',
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         Row(
@@ -2167,7 +2168,7 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
                                 ),
                               ),
                               icon: const Icon(Icons.fitness_center),
-                              label: const Text('Ejercicio'),
+                              label: const Text('+ Ejerc.'),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor:
                                     const Color.fromARGB(255, 157, 238, 162),

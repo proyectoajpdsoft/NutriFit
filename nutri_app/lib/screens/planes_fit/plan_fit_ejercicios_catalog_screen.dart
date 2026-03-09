@@ -62,74 +62,82 @@ class _PlanFitEjerciciosCatalogScreenState
       _removeTimer = null;
     }
 
-    return Row(
-      children: [
-        Expanded(
-          child: TextField(
-            controller: controller,
-            decoration: InputDecoration(
-              labelText: label.isNotEmpty ? label : null,
-              label: labelIcon != null ? Icon(labelIcon, size: 18) : null,
-              border: const OutlineInputBorder(),
-              floatingLabelBehavior: labelIcon != null
-                  ? FloatingLabelBehavior.always
-                  : FloatingLabelBehavior.auto,
-            ),
-            keyboardType: TextInputType.number,
-            onChanged: (_) {
-              setStateDialog(() {});
-              hasChangesSetter();
-            },
-          ),
-        ),
-        const SizedBox(width: 4),
-        Column(
-          children: [
-            GestureDetector(
-              onTap: () {
-                final next = getValue() + 1;
-                setValue(next > max ? max : next);
-              },
-              onLongPressStart: (_) {
-                stopTimers();
-                _addTimer = Timer.periodic(const Duration(milliseconds: 80), (
-                  t,
-                ) {
+    return TextField(
+      controller: controller,
+      decoration: InputDecoration(
+        labelText: label.isNotEmpty ? label : null,
+        label: labelIcon != null ? Icon(labelIcon, size: 18) : null,
+        border: const OutlineInputBorder(),
+        floatingLabelBehavior: labelIcon != null
+            ? FloatingLabelBehavior.always
+            : FloatingLabelBehavior.auto,
+        suffixIconConstraints:
+            const BoxConstraints(minWidth: 32, minHeight: 56),
+        suffixIcon: SizedBox(
+          width: 32,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              GestureDetector(
+                onTap: () {
                   final next = getValue() + 1;
                   setValue(next > max ? max : next);
-                });
-              },
-              onLongPressEnd: (_) {
-                stopTimers();
-              },
-              child: const IconButton(icon: Icon(Icons.add), onPressed: null),
-            ),
-            GestureDetector(
-              onTap: () {
-                final next = getValue() - 1;
-                setValue(next < min ? min : next);
-              },
-              onLongPressStart: (_) {
-                stopTimers();
-                _removeTimer = Timer.periodic(
-                  const Duration(milliseconds: 80),
-                  (t) {
-                    final next = getValue() - 1;
-                    setValue(next < min ? min : next);
-                  },
-                );
-              },
-              onLongPressEnd: (_) {
-                stopTimers();
-              },
-              child: const IconButton(
-                icon: Icon(Icons.remove),
-                onPressed: null,
+                },
+                onLongPressStart: (_) {
+                  stopTimers();
+                  _addTimer = Timer.periodic(const Duration(milliseconds: 80), (
+                    t,
+                  ) {
+                    final next = getValue() + 1;
+                    setValue(next > max ? max : next);
+                  });
+                },
+                onLongPressEnd: (_) {
+                  stopTimers();
+                },
+                child: const IconButton(
+                  icon: Icon(Icons.add),
+                  iconSize: 16,
+                  padding: EdgeInsets.zero,
+                  constraints: BoxConstraints(minWidth: 28, minHeight: 24),
+                  onPressed: null,
+                ),
               ),
-            ),
-          ],
+              GestureDetector(
+                onTap: () {
+                  final next = getValue() - 1;
+                  setValue(next < min ? min : next);
+                },
+                onLongPressStart: (_) {
+                  stopTimers();
+                  _removeTimer = Timer.periodic(
+                    const Duration(milliseconds: 80),
+                    (t) {
+                      final next = getValue() - 1;
+                      setValue(next < min ? min : next);
+                    },
+                  );
+                },
+                onLongPressEnd: (_) {
+                  stopTimers();
+                },
+                child: const IconButton(
+                  icon: Icon(Icons.remove),
+                  iconSize: 16,
+                  padding: EdgeInsets.zero,
+                  constraints: BoxConstraints(minWidth: 28, minHeight: 24),
+                  onPressed: null,
+                ),
+              ),
+            ],
+          ),
         ),
-      ],
+      ),
+      keyboardType: TextInputType.number,
+      onChanged: (_) {
+        setStateDialog(() {});
+        hasChangesSetter();
+      },
     );
   }
 
@@ -699,7 +707,7 @@ class _PlanFitEjerciciosCatalogScreenState
           ejercicio = ejercicioConFoto;
         }
       } catch (e) {
-        // //debugPrint('Error al cargar foto completa: $e');
+        // debugPrint('Error al cargar foto completa: $e');
         // Continuar con el ejercicio sin foto
       }
     }
@@ -1040,7 +1048,7 @@ class _PlanFitEjerciciosCatalogScreenState
                               fotoExistente,
                             );
                           } catch (e) {
-                            // //debugPrint('Error al generar miniatura desde foto existente: $e');
+                            // debugPrint('Error al generar miniatura desde foto existente: $e');
                           }
                         }
 

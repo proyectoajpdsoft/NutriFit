@@ -177,112 +177,6 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
         .then((_) => _refreshUsuarios());
   }
 
-  Future<void> _deleteUsuario(int codigo) async {
-    try {
-      // Primero verificar si tiene dependencias
-      final dependencies = await _apiService.checkUsuarioDependencies(codigo);
-
-      if (dependencies.isEmpty) {
-        // No tiene dependencias, eliminar directamente con confirmación
-        if (!mounted) return;
-        final shouldDelete = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Confirmar eliminación'),
-            content:
-                const Text('¿Está seguro de que desea eliminar este usuario?'),
-            actions: [
-              TextButton(
-                child: const Text('Cancelar'),
-                onPressed: () => Navigator.pop(context, false),
-              ),
-              TextButton(
-                child: const Text('Eliminar'),
-                onPressed: () => Navigator.pop(context, true),
-              ),
-            ],
-          ),
-        );
-
-        if (shouldDelete ?? false) {
-          final success = await _apiService.deleteUsuario(codigo);
-          if (success) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                  content: Text('Usuario eliminado'),
-                  backgroundColor: Colors.green),
-            );
-            _refreshUsuarios();
-          }
-        }
-      } else {
-        // Tiene dependencias, mostrar diálogo con opciones
-        if (!mounted) return;
-        _showDependenciesDialog(codigo, dependencies);
-      }
-    } catch (e) {
-      if (!handleAuthError(e)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
-      }
-    }
-  }
-
-  void _showDependenciesDialog(int codigo, Map<String, dynamic> dependencies) {
-    showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('El usuario tiene registros asociados'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Este usuario tiene los siguientes registros en otras tablas:',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 12),
-              ...dependencies.entries.map((entry) => Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4.0),
-                    child: Text(
-                      '• ${entry.key}: ${entry.value} registros',
-                      style: const TextStyle(fontSize: 14),
-                    ),
-                  )),
-              const SizedBox(height: 16),
-              const Text(
-                'Seleccione una opción:',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            child: const Text('Cancelar'),
-            onPressed: () => Navigator.pop(context, 'cancel'),
-          ),
-          TextButton(
-            child: const Text('Eliminar completo'),
-            onPressed: () => Navigator.pop(context, 'delete'),
-          ),
-          TextButton(
-            child: const Text('Mover a otro usuario'),
-            onPressed: () => Navigator.pop(context, 'move'),
-          ),
-        ],
-      ),
-    ).then((action) async {
-      if (action == 'delete') {
-        await _deleteUsuarioCascade(codigo);
-      } else if (action == 'move') {
-        await _showMoveUsuarioDialog(codigo);
-      }
-    });
-  }
-
   Future<void> _deleteUsuarioCascade(int codigo) async {
     try {
       final success = await _apiService.deleteUsuarioCascade(codigo);
@@ -318,53 +212,86 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
         );
 
         // Filtrar el usuario actual (no puede mover a sí mismo)
-        usuariosList.removeWhere((u) => u['codigo'] == codigoOrigen);
+        usuariosList.removeWhere(
+          (u) =>
+              (int.tryParse(u['codigo']?.toString() ?? '') ?? 0) ==
+              codigoOrigen,
+        );
 
         if (!mounted) return;
 
         int? usuarioDestino;
         await showDialog(
           context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Seleccionar usuario destino'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text(
-                      'Seleccione a qué usuario desea mover los registros:'),
-                  const SizedBox(height: 12),
-                  DropdownButton<int>(
-                    isExpanded: true,
-                    hint: const Text('Seleccionar usuario...'),
-                    onChanged: (value) {
-                      usuarioDestino = value;
+          builder: (context) {
+            return StatefulBuilder(
+              builder: (context, setDialogState) => AlertDialog(
+                title: const Text('Seleccionar usuario destino'),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Seleccione a qué usuario desea mover los registros:',
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<int>(
+                        isExpanded: true,
+                        initialValue: usuarioDestino,
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                          labelText: 'Usuario destino',
+                        ),
+                        items: usuariosList
+                            .map((usuario) {
+                              final codigo = int.tryParse(
+                                  usuario['codigo']?.toString() ?? '');
+                              if (codigo == null) {
+                                return null;
+                              }
+                              return DropdownMenuItem<int>(
+                                value: codigo,
+                                child: Text(
+                                    usuario['nombre'] ?? 'Usuario desconocido'),
+                              );
+                            })
+                            .whereType<DropdownMenuItem<int>>()
+                            .toList(),
+                        onChanged: (value) {
+                          setDialogState(() {
+                            usuarioDestino = value;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    child: const Text('Cancelar'),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                  TextButton(
+                    child: const Text('Mover'),
+                    onPressed: () {
+                      if (usuarioDestino == null) {
+                        ScaffoldMessenger.of(this.context).showSnackBar(
+                          const SnackBar(
+                            content:
+                                Text('Selecciona un usuario destino primero.'),
+                            backgroundColor: Colors.orange,
+                          ),
+                        );
+                        return;
+                      }
+                      Navigator.pop(context);
                     },
-                    items: usuariosList.map((usuario) {
-                      return DropdownMenuItem<int>(
-                        value: usuario['codigo'] as int,
-                        child: Text(usuario['nombre'] ?? 'Usuario desconocido'),
-                      );
-                    }).toList(),
                   ),
                 ],
               ),
-            ),
-            actions: [
-              TextButton(
-                child: const Text('Cancelar'),
-                onPressed: () => Navigator.pop(context),
-              ),
-              TextButton(
-                child: const Text('Mover'),
-                onPressed: () {
-                  if (usuarioDestino != null) {
-                    Navigator.pop(context);
-                  }
-                },
-              ),
-            ],
-          ),
+            );
+          },
         );
 
         if (usuarioDestino != null && mounted) {
@@ -380,6 +307,146 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
         }
       }
     }
+  }
+
+  Future<void> _showTransferPacienteDialog({
+    required Usuario usuario,
+    required Map<String, dynamic>? pacienteAsociado,
+    required List<Map<String, dynamic>> usuariosDestino,
+  }) async {
+    if (!mounted) return;
+
+    int? selectedDestino;
+    bool busy = false;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Mover a otro paciente'),
+              content: busy
+                  ? const SizedBox(
+                      height: 90,
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Paciente asociado: ${pacienteAsociado?['nombre'] ?? 'Sin nombre'} (código ${pacienteAsociado?['codigo'] ?? '-'})',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Selecciona el usuario destino para transferir el paciente:',
+                        ),
+                        const SizedBox(height: 10),
+                        DropdownButtonFormField<int>(
+                          isExpanded: true,
+                          initialValue: selectedDestino,
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            labelText: 'Usuario destino',
+                          ),
+                          items: usuariosDestino
+                              .map(
+                                (u) => DropdownMenuItem<int>(
+                                  value: int.tryParse(
+                                      u['codigo']?.toString() ?? ''),
+                                  child: Text(
+                                    '${u['nombre'] ?? u['nick'] ?? 'Usuario'} (${u['nick'] ?? ''})',
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              )
+                              .where(
+                                (item) => item.value != null && item.value! > 0,
+                              )
+                              .cast<DropdownMenuItem<int>>()
+                              .toList(),
+                          onChanged: (value) {
+                            setDialogState(() {
+                              selectedDestino = value;
+                            });
+                          },
+                        ),
+                        if (usuariosDestino.isEmpty) ...[
+                          const SizedBox(height: 10),
+                          const Text(
+                            'No hay usuarios activos disponibles sin paciente asociado.',
+                            style: TextStyle(color: Colors.red),
+                          ),
+                        ],
+                      ],
+                    ),
+              actions: [
+                TextButton(
+                  onPressed:
+                      busy ? null : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                ElevatedButton(
+                  onPressed: busy || usuariosDestino.isEmpty
+                      ? null
+                      : () async {
+                          if (selectedDestino == null || selectedDestino == 0) {
+                            ScaffoldMessenger.of(this.context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Selecciona un usuario destino para transferir el paciente.',
+                                ),
+                                backgroundColor: Colors.orange,
+                              ),
+                            );
+                            return;
+                          }
+
+                          setDialogState(() {
+                            busy = true;
+                          });
+
+                          try {
+                            await _apiService.transferUsuarioPacienteAsociado(
+                              usuario.codigo,
+                              selectedDestino!,
+                            );
+                            if (!mounted) return;
+                            Navigator.of(dialogContext).pop();
+                            ScaffoldMessenger.of(this.context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Paciente asociado transferido correctamente.',
+                                ),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
+                            _refreshUsuarios();
+                          } catch (e) {
+                            setDialogState(() {
+                              busy = false;
+                            });
+                            ScaffoldMessenger.of(this.context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'No se pudo transferir el paciente: $e',
+                                ),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        },
+                  child: const Text('Transferir paciente'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _moveUsuarioData(int codigoOrigen, int codigoDestino) async {
@@ -456,6 +523,141 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
           );
         }
       }
+    }
+  }
+
+  String _tableLabel(String tableName) {
+    switch (tableName) {
+      case 'nu_adherencia_diaria':
+        return 'nu_adherencia_diaria';
+      case 'nu_consejo_usuario':
+        return 'nu_consejo_usuario';
+      case 'nu_entrenamientos':
+        return 'nu_entrenamientos';
+      case 'nu_entrenamientos_actividad_custom':
+        return 'nu_entrenamientos_actividad_custom';
+      case 'nu_entrenamientos_imagenes':
+        return 'nu_entrenamientos_imagenes';
+      case 'nu_lista_compra':
+        return 'nu_lista_compra';
+      case 'nu_receta_usuario':
+        return 'nu_receta_usuario';
+      case 'nu_todo_list':
+        return 'nu_todo_list';
+      case 'usuario_push_dispositivo':
+        return 'usuario_push_dispositivo';
+      case 'usuario':
+        return 'usuario';
+      default:
+        return tableName;
+    }
+  }
+
+  Future<void> _runDeleteWizard(Usuario usuario) async {
+    Map<String, dynamic> flowInfo;
+    try {
+      flowInfo = await _apiService.getUsuarioDeleteFlowInfo(usuario.codigo);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    final hasPacienteAsociado = flowInfo['has_paciente_asociado'] == true;
+    final pacienteAsociado = flowInfo['paciente_asociado'] is Map
+        ? Map<String, dynamic>.from(flowInfo['paciente_asociado'] as Map)
+        : null;
+    final dependencies = flowInfo['dependencies'] is Map<String, dynamic>
+        ? Map<String, dynamic>.from(flowInfo['dependencies'])
+        : <String, dynamic>{};
+    final usuariosDestino =
+        (flowInfo['usuarios_destino_disponibles'] as List<dynamic>? ?? [])
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+
+    if (!mounted) return;
+
+    final action = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Eliminar usuario: ${usuario.nick}'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Este usuario tiene los siguientes registros en otras tablas:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              if (dependencies.isEmpty)
+                const Text('No se encontraron registros asociados.')
+              else
+                ...dependencies.entries.map(
+                  (entry) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4.0),
+                    child: Text(
+                      '• ${_tableLabel(entry.key)}: ${entry.value} registros',
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                  ),
+                ),
+              if (hasPacienteAsociado) ...[
+                const SizedBox(height: 12),
+                Text(
+                  'Paciente asociado: ${pacienteAsociado?['nombre'] ?? 'Sin nombre'} (código ${pacienteAsociado?['codigo'] ?? '-'})',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ],
+              const SizedBox(height: 16),
+              const Text(
+                'Seleccione una opción:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('Cancelar'),
+            onPressed: () => Navigator.pop(dialogContext, 'cancel'),
+          ),
+          TextButton(
+            child: const Text('Eliminar completo'),
+            onPressed: () => Navigator.pop(dialogContext, 'delete'),
+          ),
+          TextButton(
+            child: const Text('Mover a otro usuario'),
+            onPressed: () => Navigator.pop(dialogContext, 'move_user'),
+          ),
+          if (hasPacienteAsociado)
+            TextButton(
+              child: const Text('Mover a otro paciente'),
+              onPressed: () => Navigator.pop(dialogContext, 'move_patient'),
+            ),
+        ],
+      ),
+    );
+
+    if (action == 'delete') {
+      await _deleteUsuarioCascade(usuario.codigo);
+      return;
+    }
+
+    if (action == 'move_user') {
+      await _showMoveUsuarioDialog(usuario.codigo);
+      return;
+    }
+
+    if (action == 'move_patient') {
+      await _showTransferPacienteDialog(
+        usuario: usuario,
+        pacienteAsociado: pacienteAsociado,
+        usuariosDestino: usuariosDestino,
+      );
     }
   }
 
@@ -801,7 +1003,7 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
                   const Text('Eliminar', style: TextStyle(color: Colors.red)),
               onPressed: () {
                 Navigator.of(context).pop();
-                _deleteUsuario(usuario.codigo);
+                _runDeleteWizard(usuario);
               },
             ),
           ],

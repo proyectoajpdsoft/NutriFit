@@ -135,17 +135,20 @@ function get_entrenamiento($db, $codigo) {
 
 // Función para crear un entrenamiento
 function create_entrenamiento($db, $data) {
+    $titulo = isset($data['titulo']) ? $data['titulo'] : null;
+
     $query = "INSERT INTO nu_entrenamientos 
-              (codigo_paciente, actividad, descripcion_actividad, fecha, 
+              (codigo_paciente, actividad, titulo, descripcion_actividad, fecha, 
                duracion_horas, duracion_minutos, duracion_kilometros, nivel_esfuerzo, notas, vueltas, codigo_plan_fit, codusuario, validado, validado_fecha, validado_usuario, fechaa) 
               VALUES 
-              (:codigo_paciente, :actividad, :descripcion_actividad, :fecha, 
+              (:codigo_paciente, :actividad, :titulo, :descripcion_actividad, :fecha, 
                :duracion_horas, :duracion_minutos, :duracion_kilometros, :nivel_esfuerzo, :notas, :vueltas, :codigo_plan_fit, :codusuario, 0, NULL, NULL, NOW())";
     
     $stmt = $db->prepare($query);
     
     $stmt->bindParam(':codigo_paciente', $data['codigo_paciente']);
     $stmt->bindParam(':actividad', $data['actividad']);
+    $stmt->bindParam(':titulo', $titulo);
     $stmt->bindParam(':descripcion_actividad', $data['descripcion_actividad']);
     $stmt->bindParam(':fecha', $data['fecha']);
     $stmt->bindParam(':duracion_horas', $data['duracion_horas']);
@@ -243,8 +246,11 @@ function delete_entrenamiento_image($db, $id_imagen) {
 
 
 function update_entrenamiento($db, $codigo, $data) {
+    $titulo = isset($data['titulo']) ? $data['titulo'] : null;
+
     $query = "UPDATE nu_entrenamientos SET 
               actividad = :actividad,
+              titulo = :titulo,
               descripcion_actividad = :descripcion_actividad,
               fecha = :fecha,
               duracion_horas = :duracion_horas,
@@ -260,6 +266,7 @@ function update_entrenamiento($db, $codigo, $data) {
     
     $stmt->bindParam(':codigo', $codigo);
     $stmt->bindParam(':actividad', $data['actividad']);
+    $stmt->bindParam(':titulo', $titulo);
     $stmt->bindParam(':descripcion_actividad', $data['descripcion_actividad']);
     $stmt->bindParam(':fecha', $data['fecha']);
     $stmt->bindParam(':duracion_horas', $data['duracion_horas']);

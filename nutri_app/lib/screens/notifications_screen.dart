@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:auto_size_text/auto_size_text.dart';
 import 'package:intl/intl.dart';
 import 'package:nutri_app/models/cita.dart';
+import 'package:nutri_app/models/paciente.dart';
 import 'package:nutri_app/models/revision.dart';
 import 'package:nutri_app/screens/citas/cita_edit_screen.dart';
 import 'package:nutri_app/screens/revisiones/revision_edit_screen.dart';
@@ -122,6 +123,25 @@ class _NotificationsPendingScreenState
                     const Text(
                       'No tienes citas ni revisiones pendientes',
                       style: TextStyle(color: Colors.grey),
+                    ),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: 260,
+                      child: ElevatedButton.icon(
+                        onPressed: _navigateToAddCita,
+                        icon: const Icon(Icons.add_circle_outline),
+                        label: const Text('Añadir cita'),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: 260,
+                      child: OutlinedButton.icon(
+                        onPressed: _navigateToAddRevision,
+                        icon: const Icon(
+                            Icons.playlist_add_check_circle_outlined),
+                        label: const Text('Añadir revisión'),
+                      ),
                     ),
                   ],
                 ),
@@ -892,5 +912,140 @@ class _NotificationsPendingScreenState
         ],
       ),
     );
+  }
+
+  Future<void> _navigateToAddCita() async {
+    final paciente = await _selectPacienteForNewItem(
+      dialogTitle: 'Nueva Cita',
+      fieldLabel: 'Paciente para la cita',
+      continueText: 'Continuar',
+    );
+    if (!mounted || paciente == null) {
+      return;
+    }
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CitaEditScreen(
+          paciente: paciente,
+          selectedDate: DateTime.now(),
+        ),
+      ),
+    );
+
+    if (mounted) {
+      setState(() {
+        _loadPendingData();
+      });
+    }
+  }
+
+  Future<void> _navigateToAddRevision() async {
+    final paciente = await _selectPacienteForNewItem(
+      dialogTitle: 'Nueva Revisión',
+      fieldLabel: 'Paciente para la revisión',
+      continueText: 'Continuar',
+    );
+    if (!mounted || paciente == null) {
+      return;
+    }
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => RevisionEditScreen(
+          paciente: paciente,
+        ),
+      ),
+    );
+
+    if (mounted) {
+      setState(() {
+        _loadPendingData();
+      });
+    }
+  }
+
+  Future<Paciente?> _selectPacienteForNewItem({
+    required String dialogTitle,
+    required String fieldLabel,
+    required String continueText,
+  }) async {
+    final apiService = context.read<ApiService>();
+
+    try {
+      final pacientes = await apiService.getPacientes(activo: 'S');
+      if (!mounted) {
+        return null;
+      }
+
+      if (pacientes.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No hay pacientes activos para seleccionar'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return null;
+      }
+
+      Paciente? selectedPaciente = pacientes.first;
+
+      final result = await showDialog<Paciente>(
+        context: context,
+        builder: (context) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                title: Text(dialogTitle),
+                content: DropdownButtonFormField<Paciente>(
+                  isExpanded: true,
+                  decoration: InputDecoration(labelText: fieldLabel),
+                  initialValue: selectedPaciente,
+                  items: pacientes
+                      .map(
+                        (paciente) => DropdownMenuItem<Paciente>(
+                          value: paciente,
+                          child: Text(paciente.nombre),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    setDialogState(() {
+                      selectedPaciente = value;
+                    });
+                  },
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancelar'),
+                  ),
+                  ElevatedButton(
+                    onPressed: selectedPaciente == null
+                        ? null
+                        : () => Navigator.of(context).pop(selectedPaciente),
+                    child: Text(continueText),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+
+      return result;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al cargar pacientes: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return null;
+    }
   }
 }

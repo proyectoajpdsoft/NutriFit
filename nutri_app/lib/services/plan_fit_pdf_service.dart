@@ -33,26 +33,32 @@ class PlanFitPdfService {
     bool showRecomendaciones = true,
   }) async {
     try {
-      if (plan.codigoPaciente == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Selecciona un paciente primero.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-        return;
-      }
-
       final ejerciciosPlan = (ejercicios == null || ejercicios.isEmpty)
           ? await apiService.getPlanFitEjercicios(plan.codigo)
           : ejercicios;
       final diasPlan = await apiService.getDiasPlanFit(plan.codigo);
 
-      final pacientes = await apiService.getPacientes();
-      final paciente = pacientes.firstWhere(
-        (p) => p.codigo == plan.codigoPaciente,
-        orElse: () => Paciente(codigo: 0, nombre: 'Paciente'),
+      final pacienteFallback = Paciente(
+        codigo: plan.codigoPaciente ?? 0,
+        nombre: (plan.nombrePaciente ?? '').trim().isNotEmpty
+            ? plan.nombrePaciente!.trim()
+            : 'Paciente',
       );
+
+      var paciente = pacienteFallback;
+      try {
+        final codigoPaciente = plan.codigoPaciente;
+        if (codigoPaciente != null && codigoPaciente > 0) {
+          final pacientes = await apiService.getPacientes();
+          paciente = pacientes.firstWhere(
+            (p) => p.codigo == codigoPaciente,
+            orElse: () => pacienteFallback,
+          );
+        }
+      } catch (_) {
+        paciente = pacienteFallback;
+      }
+
       final edad = _calcularEdad(paciente);
 
       final nutricionistaParam =
@@ -587,6 +593,11 @@ class PlanFitPdfService {
   }
 
   static pw.Widget _buildExerciseCard(PlanFitEjercicio e) {
+    const cardHeight = 118.0;
+    const imageHeight = 60.0;
+    const titleHeight = 24.0;
+    const linkAreaHeight = 12.0;
+
     final hasImage = (e.fotoBase64 ?? '').isNotEmpty;
     final hasUrl = (e.urlVideo ?? '').isNotEmpty;
     pw.Widget imageWidget;
@@ -594,17 +605,17 @@ class PlanFitPdfService {
     if (hasImage) {
       final bytes = base64Decode(e.fotoBase64!);
       imageWidget = pw.Container(
-        height: 60,
+        height: imageHeight,
         alignment: pw.Alignment.center,
         child: pw.Image(
           pw.MemoryImage(bytes),
-          height: 60,
+          height: imageHeight,
           fit: pw.BoxFit.contain,
         ),
       );
     } else {
       imageWidget = pw.Container(
-        height: 60,
+        height: imageHeight,
         decoration: pw.BoxDecoration(
           color: PdfColors.grey200,
           borderRadius: pw.BorderRadius.circular(4),
@@ -613,6 +624,7 @@ class PlanFitPdfService {
     }
 
     return pw.Container(
+      height: cardHeight,
       padding: const pw.EdgeInsets.all(8),
       decoration: pw.BoxDecoration(
         border: pw.Border.all(color: PdfColors.grey300),
@@ -621,20 +633,30 @@ class PlanFitPdfService {
       child: pw.Column(
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
-          pw.Text(e.nombre,
-              style:
-                  pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
+          pw.SizedBox(
+            height: titleHeight,
+            child: pw.Text(
+              e.nombre,
+              maxLines: 2,
+              style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10),
+            ),
+          ),
           pw.SizedBox(height: 6),
           imageWidget,
-          if (hasUrl) ...[
-            pw.SizedBox(height: 6),
-            pw.UrlLink(
-              destination: e.urlVideo ?? '',
-              child: pw.Text('Cómo se hace...',
-                  style:
-                      const pw.TextStyle(fontSize: 9, color: PdfColors.blue)),
-            )
-          ],
+          pw.SizedBox(height: 6),
+          pw.SizedBox(
+            height: linkAreaHeight,
+            child: hasUrl
+                ? pw.UrlLink(
+                    destination: e.urlVideo ?? '',
+                    child: pw.Text(
+                      'Cómo se hace...',
+                      style: const pw.TextStyle(
+                          fontSize: 9, color: PdfColors.blue),
+                    ),
+                  )
+                : pw.SizedBox(),
+          ),
         ],
       ),
     );

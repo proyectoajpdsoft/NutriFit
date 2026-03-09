@@ -2,6 +2,7 @@ class Entrenamiento {
   final int? codigo;
   final String codigoPaciente;
   final String actividad;
+  final String? titulo;
   final String? descripcionActividad;
   final DateTime fecha;
   final int duracionHoras;
@@ -25,6 +26,7 @@ class Entrenamiento {
     this.codigo,
     required this.codigoPaciente,
     required this.actividad,
+    this.titulo,
     this.descripcionActividad,
     required this.fecha,
     required this.duracionHoras,
@@ -60,6 +62,7 @@ class Entrenamiento {
           : null,
       codigoPaciente: json['codigo_paciente'] ?? '',
       actividad: json['actividad'] ?? '',
+      titulo: json['titulo']?.toString(),
       descripcionActividad: json['descripcion_actividad'],
       fecha: DateTime.parse(json['fecha']),
       duracionHoras: int.tryParse(json['duracion_horas'].toString()) ?? 0,
@@ -103,6 +106,7 @@ class Entrenamiento {
       'codigo': codigo,
       'codigo_paciente': codigoPaciente,
       'actividad': actividad,
+      'titulo': titulo,
       'descripcion_actividad': descripcionActividad,
       'fecha': fecha.toIso8601String(),
       'duracion_horas': duracionHoras,

@@ -6,6 +6,7 @@ enum AppMode { normal, debug }
 
 class ConfigService with ChangeNotifier {
   static const _kDebugModeKey = 'isDebugMode';
+  static const _kEffectiveDebugModeKey = 'effectiveDebugMode';
   static const _kDefaultTipoCitaKey = 'defaultTipoCita';
   static const _kDefaultEstadoCitaKey = 'defaultEstadoCita';
   static const _kDefaultOnlineCitaKey = 'defaultOnlineCita';
@@ -28,6 +29,8 @@ class ConfigService with ChangeNotifier {
   static const _kDefaultTipoUsuarioKey = 'defaultTipoUsuario';
   static const _kDefaultActivoUsuarioKey = 'defaultActivoUsuario';
   static const _kDefaultAccesoUsuarioKey = 'defaultAccesoUsuario';
+  static const _kShowEquivalenciasActividadesKey =
+      'showEquivalenciasActividades';
 
   AppMode _appMode = AppMode.normal;
   String? _defaultTipoCita;
@@ -52,6 +55,7 @@ class ConfigService with ChangeNotifier {
   String _defaultTipoUsuario = 'Paciente';
   bool _defaultActivoUsuario = true;
   bool _defaultAccesoUsuario = true;
+  bool _showEquivalenciasActividades = true;
   bool _isInitialized = false;
 
   AppMode get appMode => _appMode;
@@ -77,6 +81,7 @@ class ConfigService with ChangeNotifier {
   String get defaultTipoUsuario => _defaultTipoUsuario;
   bool get defaultActivoUsuario => _defaultActivoUsuario;
   bool get defaultAccesoUsuario => _defaultAccesoUsuario;
+  bool get showEquivalenciasActividades => _showEquivalenciasActividades;
   bool get isInitialized => _isInitialized;
 
   ConfigService() {
@@ -86,7 +91,9 @@ class ConfigService with ChangeNotifier {
   Future<void> _loadConfig() async {
     final prefs = await SharedPreferences.getInstance();
     final isDebug = prefs.getBool(_kDebugModeKey) ?? false;
-    _appMode = isDebug ? AppMode.debug : AppMode.normal;
+    final effectiveDebug = prefs.getBool(_kEffectiveDebugModeKey);
+    final debugEnabled = kDebugMode || (effectiveDebug ?? isDebug);
+    _appMode = debugEnabled ? AppMode.debug : AppMode.normal;
 
     _defaultTipoCita = prefs.getString(_kDefaultTipoCitaKey);
     _defaultEstadoCita = prefs.getString(_kDefaultEstadoCitaKey);
@@ -132,6 +139,8 @@ class ConfigService with ChangeNotifier {
         prefs.getString(_kDefaultTipoUsuarioKey) ?? 'Paciente';
     _defaultActivoUsuario = prefs.getBool(_kDefaultActivoUsuarioKey) ?? true;
     _defaultAccesoUsuario = prefs.getBool(_kDefaultAccesoUsuarioKey) ?? true;
+    _showEquivalenciasActividades =
+        prefs.getBool(_kShowEquivalenciasActividadesKey) ?? true;
 
     _isInitialized = true;
     notifyListeners();
@@ -141,6 +150,16 @@ class ConfigService with ChangeNotifier {
     _appMode = mode;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kDebugModeKey, mode == AppMode.debug);
+    await prefs.setBool(_kEffectiveDebugModeKey, mode == AppMode.debug);
+    notifyListeners();
+  }
+
+  Future<void> refreshDebugModeFromPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    final isDebug = prefs.getBool(_kDebugModeKey) ?? false;
+    final effectiveDebug = prefs.getBool(_kEffectiveDebugModeKey);
+    final debugEnabled = kDebugMode || (effectiveDebug ?? isDebug);
+    _appMode = debugEnabled ? AppMode.debug : AppMode.normal;
     notifyListeners();
   }
 
@@ -400,6 +419,13 @@ class ConfigService with ChangeNotifier {
     _defaultAccesoUsuario = acceso;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kDefaultAccesoUsuarioKey, acceso);
+    notifyListeners();
+  }
+
+  Future<void> setShowEquivalenciasActividades(bool show) async {
+    _showEquivalenciasActividades = show;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kShowEquivalenciasActividadesKey, show);
     notifyListeners();
   }
 }

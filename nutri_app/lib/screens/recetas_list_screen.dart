@@ -201,6 +201,61 @@ class _RecetasListScreenState extends State<RecetasListScreen> {
     }
   }
 
+  Future<Receta?> _fetchRecetaDetalle(int? codigo) async {
+    if (codigo == null) return null;
+
+    try {
+      final apiService = Provider.of<ApiService>(context, listen: false);
+      final response = await apiService.get('api/recetas.php?codigo=$codigo');
+
+      if (response.statusCode != 200) {
+        return null;
+      }
+
+      final data = json.decode(response.body);
+      if (data is Map<String, dynamic>) {
+        return Receta.fromJson(data);
+      }
+
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _openRecetaImageViewer(Receta receta) async {
+    final detalle = await _fetchRecetaDetalle(receta.codigo);
+    final imagenPortada = (detalle?.imagenPortada ?? '').trim();
+    final imagenFallback =
+        (receta.imagenPortada ?? receta.imagenMiniatura ?? '').trim();
+    final imagen = imagenPortada.isNotEmpty ? imagenPortada : imagenFallback;
+
+    if (!mounted || imagen.isEmpty) return;
+
+    showImageViewerDialog(
+      context: context,
+      base64Image: imagen,
+      title: receta.titulo,
+    );
+  }
+
+  Future<void> _openRecetaPreview(Receta receta) async {
+    final detalle = await _fetchRecetaDetalle(receta.codigo);
+    final recetaPreview = detalle ?? receta;
+
+    if (!mounted) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => RecetaDetailScreen(
+          receta: recetaPreview,
+          isPreviewMode: true,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -389,15 +444,9 @@ class _RecetasListScreenState extends State<RecetasListScreen> {
                                     // Imagen (using thumbnail for better performance)
                                     receta.imagenMiniatura != null
                                         ? GestureDetector(
-                                            onTap: () {
-                                              final imagen =
-                                                  receta.imagenPortada ??
-                                                      receta.imagenMiniatura!;
-                                              showImageViewerDialog(
-                                                context: context,
-                                                base64Image: imagen,
-                                                title: receta.titulo,
-                                              );
+                                            onTap: () async {
+                                              await _openRecetaImageViewer(
+                                                  receta);
                                             },
                                             child: ClipRRect(
                                               borderRadius:
@@ -506,17 +555,9 @@ class _RecetasListScreenState extends State<RecetasListScreen> {
                                                 color: Colors.blue,
                                                 iconSize: 28,
                                                 tooltip: 'Vista previa',
-                                                onPressed: () {
-                                                  Navigator.push(
-                                                    context,
-                                                    MaterialPageRoute(
-                                                      builder: (context) =>
-                                                          RecetaDetailScreen(
-                                                        receta: receta,
-                                                        isPreviewMode: true,
-                                                      ),
-                                                    ),
-                                                  );
+                                                onPressed: () async {
+                                                  await _openRecetaPreview(
+                                                      receta);
                                                 },
                                               ),
                                               IconButton(

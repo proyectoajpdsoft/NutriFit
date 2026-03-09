@@ -181,31 +181,65 @@ function update_parametro() {
         return;
     }
 
-    // Verificar si el parámetro ya existe
-    $checkQuery = "SELECT codigo FROM parametro WHERE nombre = :nombre LIMIT 1";
-    $checkStmt = $db->prepare($checkQuery);
-    $checkStmt->bindParam(':nombre', $data->nombre);
-    $checkStmt->execute();
-    $exists = $checkStmt->fetch(PDO::FETCH_ASSOC);
+    // Localizar el parámetro objetivo por prioridad: codigo > nombre_original > nombre actual.
+    $targetCodigo = null;
 
-    if($exists) {
-        // El parámetro existe, actualizar SOLO valor, fecham y codusuariom
+    if (isset($data->codigo) && intval($data->codigo) > 0) {
+        $targetCodigo = intval($data->codigo);
+    } else if (!empty($data->nombre_original)) {
+        $checkByOriginal = $db->prepare("SELECT codigo FROM parametro WHERE nombre = :nombre LIMIT 1");
+        $nombreOriginal = $data->nombre_original;
+        $checkByOriginal->bindParam(':nombre', $nombreOriginal);
+        $checkByOriginal->execute();
+        $rowOriginal = $checkByOriginal->fetch(PDO::FETCH_ASSOC);
+        if ($rowOriginal && !empty($rowOriginal['codigo'])) {
+            $targetCodigo = intval($rowOriginal['codigo']);
+        }
+    }
+
+    if ($targetCodigo === null) {
+        $checkByNombre = $db->prepare("SELECT codigo FROM parametro WHERE nombre = :nombre LIMIT 1");
+        $nombreActual = $data->nombre;
+        $checkByNombre->bindParam(':nombre', $nombreActual);
+        $checkByNombre->execute();
+        $rowNombre = $checkByNombre->fetch(PDO::FETCH_ASSOC);
+        if ($rowNombre && !empty($rowNombre['codigo'])) {
+            $targetCodigo = intval($rowNombre['codigo']);
+        }
+    }
+
+    if($targetCodigo !== null) {
+        // El parámetro existe, actualizar los campos editables del formulario.
         $codusuariom = isset($data->codusuariom) ? $data->codusuariom : 1;
         
         $query = "UPDATE parametro SET
+                    nombre = :nombre,
                     valor = :valor,
+                    valor2 = :valor2,
+                    descripcion = :descripcion,
+                    categoria = :categoria,
+                    tipo = :tipo,
                     codusuariom = :codusuariom,
                     fecham = NOW()
-                  WHERE nombre = :nombre";
+                  WHERE codigo = :codigo";
 
         $stmt = $db->prepare($query);
 
         $nombre = $data->nombre;
         $valor = $data->valor ?? null;
+        $valor2 = $data->valor2 ?? null;
+        $descripcion = $data->descripcion ?? null;
+        $categoria = $data->categoria ?? null;
+        $tipo = $data->tipo ?? null;
 
         $stmt->bindParam(':nombre', $nombre);
         $stmt->bindParam(':valor', $valor);
+        $stmt->bindParam(':valor2', $valor2);
+        $stmt->bindParam(':descripcion', $descripcion);
+        $stmt->bindParam(':categoria', $categoria);
+        $stmt->bindParam(':tipo', $tipo);
         $stmt->bindParam(':codusuariom', $codusuariom);
+        $stmt->bindParam(':codigo', $targetCodigo);
 
         if($stmt->execute()){
             http_response_code(200);

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:nutri_app/services/config_service.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
+import 'package:nutri_app/services/nutri_push_settings_service.dart';
 import 'package:nutri_app/models/session.dart';
 import 'package:nutri_app/screens/parametros/parametro_edit_screen.dart'
     as parametro;
@@ -14,14 +15,14 @@ class ConfigScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 10,
+      length: 6,
       child: Scaffold(
         appBar: AppBar(
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
             onPressed: () => Navigator.of(context).pop(),
           ),
-          title: const Text('Configuración'),
+          title: const Text('Ajustes'),
           bottom: const PreferredSize(
             preferredSize: Size.fromHeight(kToolbarHeight),
             child: Scrollbar(
@@ -33,12 +34,8 @@ class ConfigScreen extends StatelessWidget {
                   Tab(text: 'General'),
                   Tab(text: 'Seguridad'),
                   Tab(text: 'Usuario'),
-                  Tab(text: 'Citas'),
-                  Tab(text: 'Entrevistas'),
-                  Tab(text: 'Revisiones'),
-                  Tab(text: 'Planes'),
-                  Tab(text: 'Pacientes'),
-                  Tab(text: 'Clientes'),
+                  Tab(text: 'Mostrar'),
+                  Tab(text: 'Defecto'),
                 ],
               ),
             ),
@@ -50,14 +47,114 @@ class ConfigScreen extends StatelessWidget {
             _GeneralTab(),
             _SecurityTab(),
             _UsuarioTab(),
-            _CitasTab(),
-            _EntrevistasTab(),
-            _RevisionesTab(),
-            _PlanesTab(),
-            _PacientesTab(),
-            _ClientesTab(),
+            _MostrarTab(),
+            _DefectoTab(),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _MostrarTab extends StatelessWidget {
+  const _MostrarTab();
+
+  @override
+  Widget build(BuildContext context) {
+    final configService = context.watch<ConfigService>();
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Card(
+          child: SwitchListTile(
+            title: const Text('Mostrar equivalencias en actividades'),
+            subtitle: const Text(
+              'Activa o desactiva los mensajes de equivalencias en la pantalla de actividades.',
+            ),
+            value: configService.showEquivalenciasActividades,
+            onChanged: (value) {
+              context
+                  .read<ConfigService>()
+                  .setShowEquivalenciasActividades(value);
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DefectoTab extends StatelessWidget {
+  const _DefectoTab();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: const [
+        _DefectoExpandableCard(
+          title: 'Citas',
+          height: 440,
+          child: _CitasTab(),
+        ),
+        _DefectoExpandableCard(
+          title: 'Entrevistas',
+          height: 260,
+          child: _EntrevistasTab(),
+        ),
+        _DefectoExpandableCard(
+          title: 'Revisiones',
+          height: 260,
+          child: _RevisionesTab(),
+        ),
+        _DefectoExpandableCard(
+          title: 'Planes',
+          height: 280,
+          child: _PlanesTab(),
+        ),
+        _DefectoExpandableCard(
+          title: 'Pacientes',
+          height: 360,
+          child: _PacientesTab(),
+        ),
+        _DefectoExpandableCard(
+          title: 'Clientes',
+          height: 320,
+          child: _ClientesTab(),
+        ),
+        SizedBox(height: 18),
+      ],
+    );
+  }
+}
+
+class _DefectoExpandableCard extends StatelessWidget {
+  const _DefectoExpandableCard({
+    required this.title,
+    required this.child,
+    required this.height,
+  });
+
+  final String title;
+  final Widget child;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: ExpansionTile(
+        initiallyExpanded: false,
+        title: Text(
+          title,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        children: [
+          SizedBox(
+            height: height,
+            child: child,
+          ),
+        ],
       ),
     );
   }
@@ -411,7 +508,6 @@ class _SessionsSubTabState extends State<_SessionsSubTab> {
     final horaFormato = sesion.hora ?? 'N/A';
     final tipoDispositivo = sesion.tipo ?? 'N/A';
     final ipPublica = sesion.ipPublica ?? '-';
-    final ipLocal = sesion.ipLocal ?? '-';
 
     // Función para obtener el icono según el tipo de dispositivo
     IconData getDeviceIcon(String? tipo) {
@@ -478,21 +574,6 @@ class _SessionsSubTabState extends State<_SessionsSubTab> {
               Expanded(
                 child: Text(
                   'Pública: $ipPublica',
-                  style: const TextStyle(fontSize: 13),
-                ),
-              ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(left: 8),
-          child: Row(
-            children: [
-              const Icon(Icons.router, size: 16),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Local: $ipLocal',
                   style: const TextStyle(fontSize: 13),
                 ),
               ),
@@ -1268,6 +1349,21 @@ class _UsuarioTabState extends State<_UsuarioTab> {
   String _defaultUserType = 'Paciente';
   bool _defaultActivo = true;
   bool _defaultAcceso = true;
+  bool _nutriChatUnreadPushEnabled = true;
+  bool _isNutriPushLoading = false;
+
+  bool get _isNutri {
+    final authService = context.read<AuthService>();
+    return authService.userType == 'Nutricionista' ||
+        authService.userType == 'Administrador';
+  }
+
+  String _nutriScope() {
+    final authService = context.read<AuthService>();
+    final userCode = (authService.userCode ?? '').trim();
+    final userType = (authService.userType ?? '').trim();
+    return '${userType}_$userCode';
+  }
 
   @override
   void initState() {
@@ -1290,6 +1386,23 @@ class _UsuarioTabState extends State<_UsuarioTab> {
       _defaultUserType = configService.defaultTipoUsuario;
       _defaultActivo = configService.defaultActivoUsuario;
       _defaultAcceso = configService.defaultAccesoUsuario;
+
+      if (_isNutri) {
+        final scope = _nutriScope();
+        _nutriChatUnreadPushEnabled =
+            await NutriPushSettingsService.getChatUnreadPushEnabled(scope);
+        try {
+          final serverEnabled =
+              await _apiService.getNutriChatUnreadPushEnabled();
+          _nutriChatUnreadPushEnabled = serverEnabled;
+          await NutriPushSettingsService.setChatUnreadPushEnabled(
+            scope,
+            serverEnabled,
+          );
+        } catch (_) {
+          // Mantener preferencia local si el servidor falla.
+        }
+      }
     } catch (e) {
       // Si no existen, usar valores por defecto
     }
@@ -1331,16 +1444,655 @@ class _UsuarioTabState extends State<_UsuarioTab> {
     }
   }
 
+  Future<void> _updateNutriChatUnreadPush(bool enabled) async {
+    if (!_isNutri) return;
+
+    final scope = _nutriScope();
+    setState(() {
+      _isNutriPushLoading = true;
+      _nutriChatUnreadPushEnabled = enabled;
+    });
+
+    try {
+      await NutriPushSettingsService.setChatUnreadPushEnabled(scope, enabled);
+      await _apiService.setNutriChatUnreadPushEnabled(enabled: enabled);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            enabled
+                ? 'Notificaciones push de chat activadas'
+                : 'Notificaciones push de chat desactivadas',
+          ),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo actualizar la preferencia push: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isNutriPushLoading = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
 
+    return DefaultTabController(
+      length: 3,
+      child: Column(
+        children: [
+          Container(
+            color: Theme.of(context).colorScheme.surface,
+            child: const Scrollbar(
+              thumbVisibility: true,
+              child: TabBar(
+                tabs: [
+                  Tab(text: 'General'),
+                  Tab(text: 'Notificaciones'),
+                  Tab(text: 'SMTP'),
+                ],
+              ),
+            ),
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Tamaño de imagen de perfil',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Tamaño máximo permitido: ${_maxImageSizeKb.round()} KB',
+                              style: Theme.of(context).textTheme.bodyMedium,
+                            ),
+                            const SizedBox(height: 16),
+                            Slider(
+                              value: _maxImageSizeKb,
+                              min: 1,
+                              max: 3000,
+                              divisions: 2999,
+                              label: '${_maxImageSizeKb.round()} KB',
+                              onChanged: (value) {
+                                setState(() {
+                                  _maxImageSizeKb = value;
+                                });
+                              },
+                            ),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  '1 KB',
+                                  style: TextStyle(color: Colors.grey[600]),
+                                ),
+                                Text(
+                                  '3000 KB',
+                                  style: TextStyle(color: Colors.grey[600]),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Valores por defecto en alta de usuario',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 16),
+                            DropdownButtonFormField<String>(
+                              initialValue: _defaultUserType,
+                              decoration: const InputDecoration(
+                                labelText: 'Tipo de usuario por defecto',
+                                border: OutlineInputBorder(),
+                              ),
+                              items: const [
+                                DropdownMenuItem(
+                                  value: 'Paciente',
+                                  child: Text('Paciente'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'Nutricionista',
+                                  child: Text('Nutricionista'),
+                                ),
+                              ],
+                              onChanged: (value) {
+                                setState(() {
+                                  _defaultUserType = value ?? 'Paciente';
+                                });
+                              },
+                            ),
+                            const SizedBox(height: 16),
+                            SwitchListTile(
+                              title: const Text('Activo por defecto'),
+                              subtitle: const Text(
+                                'Los nuevos usuarios se crearán activos',
+                              ),
+                              value: _defaultActivo,
+                              onChanged: (value) {
+                                setState(() {
+                                  _defaultActivo = value;
+                                });
+                              },
+                            ),
+                            SwitchListTile(
+                              title: const Text('Permitir acceso por defecto'),
+                              subtitle: const Text(
+                                'Los nuevos usuarios tendrán acceso habilitado',
+                              ),
+                              value: _defaultAcceso,
+                              onChanged: (value) {
+                                setState(() {
+                                  _defaultAcceso = value;
+                                });
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (_isNutri) ...[
+                      const SizedBox(height: 16),
+                      const _TextCipherToolCard(),
+                    ],
+                    const SizedBox(height: 24),
+                    ElevatedButton.icon(
+                      onPressed: _saveConfig,
+                      icon: const Icon(Icons.save),
+                      label: const Text('Guardar configuración'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                    ),
+                    const SizedBox(height: 60),
+                  ],
+                ),
+                ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Notificaciones push',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              _isNutri
+                                  ? 'Configura qué notificaciones push recibirá el nutricionista en el dispositivo.'
+                                  : 'Las notificaciones push de chat solo aplican a usuarios nutricionistas.',
+                            ),
+                            const SizedBox(height: 12),
+                            SwitchListTile(
+                              title: const Text(
+                                'Activar notificaciones de chats no leídos',
+                              ),
+                              subtitle: const Text(
+                                'Recibe una notificación cuando llegue un mensaje nuevo de chat sin leer.',
+                              ),
+                              value: _nutriChatUnreadPushEnabled,
+                              onChanged: !_isNutri || _isNutriPushLoading
+                                  ? null
+                                  : _updateNutriChatUnreadPush,
+                            ),
+                            if (_isNutriPushLoading)
+                              const Padding(
+                                padding: EdgeInsets.only(top: 8),
+                                child: LinearProgressIndicator(),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 60),
+                  ],
+                ),
+                _SmtpSubTab(canManageSmtp: _isNutri),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TextCipherToolCard extends StatefulWidget {
+  const _TextCipherToolCard();
+
+  @override
+  State<_TextCipherToolCard> createState() => _TextCipherToolCardState();
+}
+
+class _TextCipherToolCardState extends State<_TextCipherToolCard> {
+  final _inputController = TextEditingController();
+  final _passphraseController = TextEditingController();
+  final _outputController = TextEditingController();
+  bool _isBusy = false;
+  bool _showPassphrase = false;
+
+  @override
+  void dispose() {
+    _inputController.dispose();
+    _passphraseController.dispose();
+    _outputController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _encryptText() async {
+    final input = _inputController.text;
+    if (input.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Introduce un texto para cifrar.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isBusy = true);
+    try {
+      final api = context.read<ApiService>();
+      final result = await api.encryptRecoveryText(
+        text: input,
+        passphrase: _passphraseController.text,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _outputController.text = (result['encrypted_text'] ?? '').toString();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Texto cifrado correctamente.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al cifrar: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isBusy = false);
+      }
+    }
+  }
+
+  Future<void> _decryptText() async {
+    final input = _inputController.text;
+    if (input.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Introduce un texto para descifrar.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isBusy = true);
+    try {
+      final api = context.read<ApiService>();
+      final result = await api.decryptRecoveryText(
+        text: input,
+        passphrase: _passphraseController.text,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _outputController.text = (result['decrypted_text'] ?? '').toString();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Texto descifrado correctamente.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al descifrar: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isBusy = false);
+      }
+    }
+  }
+
+  void _useOutputAsInput() {
+    final value = _outputController.text;
+    if (value.trim().isEmpty) return;
+    setState(() {
+      _inputController.text = value;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Utilidad de cifrado/descifrado SMTP',
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Permite generar un valor cifrado compatible con contrasena_smtp (prefijo ENC1:) y validar su descifrado. La palabra de paso es opcional.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _inputController,
+              minLines: 2,
+              maxLines: 5,
+              decoration: const InputDecoration(
+                labelText: 'Texto de entrada',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _passphraseController,
+              obscureText: !_showPassphrase,
+              decoration: InputDecoration(
+                labelText: 'Palabra de paso (opcional)',
+                border: const OutlineInputBorder(),
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _showPassphrase ? Icons.visibility_off : Icons.visibility,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _showPassphrase = !_showPassphrase;
+                    });
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _isBusy ? null : _encryptText,
+                    icon: const Icon(Icons.lock),
+                    label: const Text('Cifrar'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _isBusy ? null : _decryptText,
+                    icon: const Icon(Icons.lock_open),
+                    label: const Text('Descifrar'),
+                  ),
+                ),
+              ],
+            ),
+            if (_isBusy) ...[
+              const SizedBox(height: 12),
+              const LinearProgressIndicator(),
+            ],
+            const SizedBox(height: 12),
+            TextField(
+              controller: _outputController,
+              minLines: 2,
+              maxLines: 5,
+              readOnly: true,
+              decoration: const InputDecoration(
+                labelText: 'Resultado',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [
+                TextButton.icon(
+                  onPressed: _isBusy ? null : _useOutputAsInput,
+                  icon: const Icon(Icons.sync_alt),
+                  label: const Text('Pasar resultado a entrada'),
+                ),
+                TextButton.icon(
+                  onPressed: _isBusy
+                      ? null
+                      : () {
+                          setState(() {
+                            _inputController.clear();
+                            _outputController.clear();
+                            _passphraseController.clear();
+                          });
+                        },
+                  icon: const Icon(Icons.clear),
+                  label: const Text('Limpiar'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SmtpSubTab extends StatefulWidget {
+  const _SmtpSubTab({required this.canManageSmtp});
+
+  final bool canManageSmtp;
+
+  @override
+  State<_SmtpSubTab> createState() => _SmtpSubTabState();
+}
+
+class _SmtpSubTabState extends State<_SmtpSubTab> {
+  final _serverController = TextEditingController();
+  final _portController = TextEditingController();
+  final _userController = TextEditingController();
+  final _passwordController = TextEditingController();
+  bool _isLoading = true;
+  bool _isSaving = false;
+  bool _hasStoredPassword = false;
+  bool _keepCurrentPassword = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSmtpSettings();
+  }
+
+  @override
+  void dispose() {
+    _serverController.dispose();
+    _portController.dispose();
+    _userController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadSmtpSettings() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final apiService = context.read<ApiService>();
+      final data = await apiService.getSmtpSettings();
+
+      if (!mounted) return;
+      setState(() {
+        _serverController.text = (data['servidor_smtp'] ?? '').toString();
+        _portController.text = (data['puerto_smtp'] ?? '').toString();
+        _userController.text = (data['usuario_smtp'] ?? '').toString();
+        _hasStoredPassword = data['contrasena_guardada'] == true;
+        _keepCurrentPassword = _hasStoredPassword;
+        _passwordController.clear();
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo cargar SMTP: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _saveSmtpSettings() async {
+    final server = _serverController.text.trim();
+    final port = _portController.text.trim();
+    final user = _userController.text.trim();
+    final password = _passwordController.text;
+
+    if (server.isEmpty || port.isEmpty || user.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Servidor, puerto y usuario SMTP son obligatorios.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    if ((!_keepCurrentPassword || !_hasStoredPassword) && password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Introduce la contraseña SMTP o marca mantener.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isSaving = true;
+    });
+
+    try {
+      final apiService = context.read<ApiService>();
+      final response = await apiService.updateSmtpSettings(
+        servidor: server,
+        puerto: port,
+        usuario: user,
+        contrasena: password,
+        mantenerContrasena: _keepCurrentPassword,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _isSaving = false;
+        _hasStoredPassword = true;
+        _keepCurrentPassword = true;
+        _passwordController.clear();
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text((response['message'] ?? 'SMTP guardado.').toString()),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isSaving = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo guardar SMTP: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (!widget.canManageSmtp) {
+      return ListView(
+        padding: const EdgeInsets.all(16),
+        children: const [
+          Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                'La configuracion SMTP solo esta disponible para nutricionistas y administradores.',
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        // Sección: Tamaño de imagen
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -1348,120 +2100,93 @@ class _UsuarioTabState extends State<_UsuarioTab> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Tamaño de imagen de perfil',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                  'Servidor SMTP global',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  'Tamaño máximo permitido: ${_maxImageSizeKb.round()} KB',
-                  style: Theme.of(context).textTheme.bodyMedium,
+                const Text(
+                  'Se utiliza para verificacion de email y recuperacion de contrasena. La contraseña se guarda cifrada en base de datos.',
                 ),
                 const SizedBox(height: 16),
-                Slider(
-                  value: _maxImageSizeKb,
-                  min: 1,
-                  max: 3000,
-                  divisions: 2999,
-                  label: '${_maxImageSizeKb.round()} KB',
-                  onChanged: (value) {
-                    setState(() {
-                      _maxImageSizeKb = value;
-                    });
-                  },
-                ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('1 KB', style: TextStyle(color: Colors.grey[600])),
-                    Text('3000 KB', style: TextStyle(color: Colors.grey[600])),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        // Sección: Valores por defecto
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Valores por defecto en alta de usuario',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                ),
-                const SizedBox(height: 16),
-                // Tipo de usuario por defecto
-                DropdownButtonFormField<String>(
-                  initialValue: _defaultUserType,
+                TextField(
+                  controller: _serverController,
+                  enabled: !_isSaving,
                   decoration: const InputDecoration(
-                    labelText: 'Tipo de usuario por defecto',
+                    labelText: 'Servidor SMTP',
                     border: OutlineInputBorder(),
+                    hintText: 'smtp.tudominio.com',
                   ),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'Paciente',
-                      child: Text('Paciente'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'Nutricionista',
-                      child: Text('Nutricionista'),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    setState(() {
-                      _defaultUserType = value ?? 'Paciente';
-                    });
-                  },
                 ),
-                const SizedBox(height: 16),
-                // Activo por defecto
-                SwitchListTile(
-                  title: const Text('Activo por defecto'),
-                  subtitle: const Text(
-                    'Los nuevos usuarios se crearán activos',
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _portController,
+                  enabled: !_isSaving,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Puerto SMTP',
+                    border: OutlineInputBorder(),
+                    hintText: '587',
                   ),
-                  value: _defaultActivo,
-                  onChanged: (value) {
-                    setState(() {
-                      _defaultActivo = value;
-                    });
-                  },
                 ),
-                // Acceso por defecto
-                SwitchListTile(
-                  title: const Text('Permitir acceso por defecto'),
-                  subtitle: const Text(
-                    'Los nuevos usuarios tendrán acceso habilitado',
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _userController,
+                  enabled: !_isSaving,
+                  decoration: const InputDecoration(
+                    labelText: 'Usuario SMTP',
+                    border: OutlineInputBorder(),
+                    hintText: 'noreply@dominio.com',
                   ),
-                  value: _defaultAcceso,
-                  onChanged: (value) {
-                    setState(() {
-                      _defaultAcceso = value;
-                    });
-                  },
+                ),
+                const SizedBox(height: 12),
+                if (_hasStoredPassword)
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Mantener contraseña SMTP actual'),
+                    value: _keepCurrentPassword,
+                    onChanged: _isSaving
+                        ? null
+                        : (value) {
+                            setState(() {
+                              _keepCurrentPassword = value;
+                              if (value) {
+                                _passwordController.clear();
+                              }
+                            });
+                          },
+                  ),
+                if (!_keepCurrentPassword || !_hasStoredPassword)
+                  TextField(
+                    controller: _passwordController,
+                    enabled: !_isSaving,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Contraseña SMTP',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _isSaving ? null : _saveSmtpSettings,
+                    icon: _isSaving
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.save),
+                    label: Text(_isSaving ? 'Guardando...' : 'Guardar SMTP'),
+                  ),
                 ),
               ],
             ),
           ),
         ),
-        const SizedBox(height: 24),
-        // Botón guardar
-        ElevatedButton.icon(
-          onPressed: _saveConfig,
-          icon: const Icon(Icons.save),
-          label: const Text('Guardar configuración'),
-          style: ElevatedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-          ),
-        ),
-        const SizedBox(height: 60),
       ],
     );
   }

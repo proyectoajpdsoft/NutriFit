@@ -1,15 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'dart:convert';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../services/config_service.dart';
 import '../models/entrenamiento.dart';
+import '../models/entrenamiento_ejercicio.dart';
 import '../widgets/app_drawer.dart';
 import '../widgets/entrenamiento_stats_chart.dart';
 import 'entrenamiento_edit_screen.dart' as edit;
 import 'entrenamiento_view_screen.dart';
 import 'entrenamientos_pacientes_plan_fit_screen.dart';
 import 'entrenamiento_sensaciones_pendientes_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class EntrenamientosScreen extends StatefulWidget {
   const EntrenamientosScreen({super.key});
@@ -22,13 +26,43 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
     with SingleTickerProviderStateMixin {
   List<Entrenamiento> _entrenamientos = [];
   bool _isLoading = true;
-  String _filtroActual = 'semana'; // 'semana', 'mes', 'ano', 'todos'
+  String _periodoFiltro = 'semana_actual';
   late TabController _tabController;
+  bool _mostrarFiltroPeriodo = false;
+  int _ultimosDiasFiltro = 30;
   final Map<int, int> _ejerciciosCountCache = {};
+  final Map<int, List<EntrenamientoEjercicio>> _ejerciciosCache = {};
   final Map<String, String> _customActivityIcons = {};
-  final ScrollController _tabsScrollController = ScrollController();
   late bool _isNutri;
   int _sensacionesPendientes = 0;
+
+  static const String _prefsFiltroVisibleKey = 'entrenamientos_filtro_visible';
+  static const String _prefsFiltroPeriodoKey = 'entrenamientos_filtro_periodo';
+  static const String _prefsFiltroUltimosDiasKey =
+      'entrenamientos_filtro_ultimos_dias';
+
+  static const List<int> _ultimosDiasSugeridos = [
+    15,
+    30,
+    60,
+    90,
+    120,
+    160,
+    180,
+    365,
+  ];
+
+  static const Map<String, String> _periodosFiltro = {
+    'semana_actual': 'Semana',
+    'mes_actual': 'Mes',
+    'mes_anterior': 'Mes anterior',
+    'trimestre': 'Trimestre',
+    'semestre': 'Semestre',
+    'anio_actual': 'Año actual',
+    'anio_anterior': 'Año anterior',
+    'siempre': 'Siempre',
+    'ultimos_dias': 'Últimos .. días',
+  };
 
   @override
   void initState() {
@@ -36,13 +70,13 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
     final authService = Provider.of<AuthService>(context, listen: false);
     _isNutri = authService.userType == 'Nutricionista' ||
         authService.userType == 'Administrador';
-    _tabController = TabController(length: _isNutri ? 6 : 5, vsync: this);
+    _tabController = TabController(length: _isNutri ? 3 : 2, vsync: this);
     _tabController.addListener(() {
-      if (!_tabController.indexIsChanging) {
-        _cambiarPeriodo();
-      }
+      if (!mounted) return;
+      setState(() {});
     });
     _loadCustomActivityIcons();
+    _loadFiltroPreferences();
     if (_isNutri) {
       _loadSensacionesPendientes();
     }
@@ -91,8 +125,15 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
   @override
   void dispose() {
     _tabController.dispose();
-    _tabsScrollController.dispose();
     super.dispose();
+  }
+
+  bool _shouldShowSharedFilterCard() {
+    if (!_mostrarFiltroPeriodo) return false;
+    if (!_isNutri) return true;
+    // En modo nutricionista, solo mostrar en pestañas de actividades
+    // (Listado y Estadísticas), no en Pacientes.
+    return _tabController.index != 0;
   }
 
   void _showGuestDialog() {
@@ -102,22 +143,22 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
       builder: (context) => AlertDialog(
         title: const Text('Registro requerido'),
         content: const Text(
-          'Para agregar actividades necesitas registrarte. '
-          '¿Deseas crear una cuenta ahora? Es gratis y rápido.',
+          'Para poder añadir actividades, debes registrarte (es gratis).',
         ),
         actions: [
           TextButton(
             onPressed: () {
               Navigator.pop(context);
             },
-            child: const Text('Cancelar'),
+            child: const Text('Cerrar'),
           ),
-          ElevatedButton(
+          ElevatedButton.icon(
             onPressed: () {
               Navigator.pop(context);
               Navigator.pushNamed(context, '/register');
             },
-            child: const Text('Registrarse'),
+            icon: const Icon(Icons.app_registration),
+            label: const Text('Iniciar registro'),
           ),
         ],
       ),
@@ -135,18 +176,6 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
           builder: (context) => const edit.EntrenamientoEditScreen(),
         ),
       ).then((_) => _loadEntrenamientos());
-    }
-  }
-
-  void _cambiarPeriodo() {
-    final periodos = ['semana', 'mes', 'ano', 'todos'];
-    final adjustedIndex =
-        _isNutri ? _tabController.index - 1 : _tabController.index;
-    if (adjustedIndex >= 0 && adjustedIndex < periodos.length) {
-      setState(() {
-        _filtroActual = periodos[adjustedIndex];
-      });
-      _loadEntrenamientos();
     }
   }
 
@@ -175,6 +204,8 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
+        _ejerciciosCountCache.clear();
+        _ejerciciosCache.clear();
         setState(() {
           _entrenamientos =
               data.map((item) => Entrenamiento.fromJson(item)).toList();
@@ -222,22 +253,268 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
     }
   }
 
-  List<Entrenamiento> _filtrarEntrenamientos() {
-    final ahora = DateTime.now();
+  Future<void> _loadFiltroPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    final visible = prefs.getBool(_prefsFiltroVisibleKey);
+    final periodo = prefs.getString(_prefsFiltroPeriodoKey);
+    final ultimosDias = prefs.getInt(_prefsFiltroUltimosDiasKey);
 
-    if (_filtroActual == 'semana') {
-      final hace7Dias = ahora.subtract(const Duration(days: 7));
-      return _entrenamientos.where((e) => e.fecha.isAfter(hace7Dias)).toList();
-    } else if (_filtroActual == 'mes') {
-      final hace365Dias = ahora.subtract(const Duration(days: 365));
-      return _entrenamientos
-          .where((e) => e.fecha.isAfter(hace365Dias))
-          .toList();
-      final hace30Dias = ahora.subtract(const Duration(days: 30));
-      return _entrenamientos.where((e) => e.fecha.isAfter(hace30Dias)).toList();
+    if (!mounted) return;
+    setState(() {
+      if (visible != null) {
+        _mostrarFiltroPeriodo = visible;
+      }
+      if (periodo != null && _periodosFiltro.containsKey(periodo)) {
+        _periodoFiltro = periodo;
+      }
+      if (ultimosDias != null && ultimosDias > 0) {
+        _ultimosDiasFiltro = ultimosDias;
+      }
+    });
+  }
+
+  Future<void> _saveFiltroPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_prefsFiltroVisibleKey, _mostrarFiltroPeriodo);
+    await prefs.setString(_prefsFiltroPeriodoKey, _periodoFiltro);
+    await prefs.setInt(_prefsFiltroUltimosDiasKey, _ultimosDiasFiltro);
+  }
+
+  String _getPeriodoLabel(String key) {
+    if (key == 'ultimos_dias') {
+      return 'Últimos $_ultimosDiasFiltro días';
+    }
+    return _periodosFiltro[key] ?? key;
+  }
+
+  Future<int?> _showUltimosDiasDialog() async {
+    int? selectedSuggestion = _ultimosDiasSugeridos.contains(_ultimosDiasFiltro)
+        ? _ultimosDiasFiltro
+        : null;
+    final controller =
+        TextEditingController(text: _ultimosDiasFiltro.toString());
+
+    final result = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) => AlertDialog(
+            title: const Text('Últimos días'),
+            content: SingleChildScrollView(
+              child: SizedBox(
+                width: double.maxFinite,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    DropdownButtonFormField<int>(
+                      initialValue: selectedSuggestion,
+                      decoration: const InputDecoration(
+                        labelText: 'Sugerencias',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: _ultimosDiasSugeridos
+                          .map(
+                            (day) => DropdownMenuItem<int>(
+                              value: day,
+                              child: Text('$day días'),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        setStateDialog(() {
+                          selectedSuggestion = value;
+                          if (value != null) {
+                            controller.text = value.toString();
+                          }
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: controller,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                      ],
+                      decoration: const InputDecoration(
+                        labelText: 'Número de días personalizado',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancelar'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  final dias = int.tryParse(controller.text.trim());
+                  if (dias == null || dias <= 0) {
+                    ScaffoldMessenger.of(this.context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Introduce un número de días válido.'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                    return;
+                  }
+                  Navigator.pop(dialogContext, dias);
+                },
+                child: const Text('Aplicar'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    return result;
+  }
+
+  Future<void> _onPeriodoSelected(
+    String periodoKey, {
+    bool editarUltimosDias = false,
+  }) async {
+    if (periodoKey == 'ultimos_dias' && editarUltimosDias) {
+      final dias = await _showUltimosDiasDialog();
+      if (dias == null) return;
+      setState(() {
+        _ultimosDiasFiltro = dias;
+        _periodoFiltro = periodoKey;
+      });
+      await _saveFiltroPreferences();
+      return;
     }
 
-    return _entrenamientos;
+    setState(() {
+      _periodoFiltro = periodoKey;
+    });
+    await _saveFiltroPreferences();
+  }
+
+  List<Entrenamiento> _filtrarEntrenamientos() {
+    DateTime? desde;
+    DateTime? hasta;
+    final ahora = DateTime.now();
+    final hoy = DateTime(ahora.year, ahora.month, ahora.day);
+
+    switch (_periodoFiltro) {
+      case 'semana_actual':
+        final startOfWeek = hoy.subtract(Duration(days: hoy.weekday - 1));
+        final endOfWeek = startOfWeek.add(const Duration(days: 6));
+        desde = startOfWeek;
+        hasta = DateTime(endOfWeek.year, endOfWeek.month, endOfWeek.day);
+        break;
+      case 'mes_actual':
+        desde = DateTime(ahora.year, ahora.month, 1);
+        hasta = DateTime(ahora.year, ahora.month + 1, 0);
+        break;
+      case 'mes_anterior':
+        final anterior = DateTime(ahora.year, ahora.month - 1, 1);
+        desde = anterior;
+        hasta = DateTime(anterior.year, anterior.month + 1, 0);
+        break;
+      case 'trimestre':
+        final quarterStartMonth = ((ahora.month - 1) ~/ 3) * 3 + 1;
+        desde = DateTime(ahora.year, quarterStartMonth, 1);
+        hasta = DateTime(ahora.year, quarterStartMonth + 3, 0);
+        break;
+      case 'semestre':
+        final semestreInicio = ahora.month <= 6 ? 1 : 7;
+        desde = DateTime(ahora.year, semestreInicio, 1);
+        hasta = DateTime(ahora.year, semestreInicio + 6, 0);
+        break;
+      case 'anio_actual':
+        desde = DateTime(ahora.year, 1, 1);
+        hasta = DateTime(ahora.year, 12, 31);
+        break;
+      case 'anio_anterior':
+        desde = DateTime(ahora.year - 1, 1, 1);
+        hasta = DateTime(ahora.year - 1, 12, 31);
+        break;
+      case 'ultimos_dias':
+        desde = hoy.subtract(Duration(days: _ultimosDiasFiltro - 1));
+        break;
+      case 'siempre':
+      default:
+        break;
+    }
+
+    return _entrenamientos.where((entrenamiento) {
+      final fecha = DateTime(
+        entrenamiento.fecha.year,
+        entrenamiento.fecha.month,
+        entrenamiento.fecha.day,
+      );
+
+      if (desde != null && fecha.isBefore(desde)) {
+        return false;
+      }
+      if (hasta != null && fecha.isAfter(hasta)) {
+        return false;
+      }
+      return true;
+    }).toList();
+  }
+
+  Widget _buildFiltroPeriodo() {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 220),
+      child: !_mostrarFiltroPeriodo
+          ? const SizedBox.shrink()
+          : Container(
+              key: const ValueKey('filtro_periodo_entrenamientos'),
+              margin: const EdgeInsets.fromLTRB(0, 0, 0, 12),
+              padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
+              decoration: BoxDecoration(
+                color: Colors.purple.shade50,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.purple.shade100),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Filtrar periodo',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: Colors.purple.shade700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: _periodosFiltro.entries.map((entry) {
+                        final selected = _periodoFiltro == entry.key;
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: GestureDetector(
+                            onLongPress: entry.key == 'ultimos_dias'
+                                ? () => _onPeriodoSelected(
+                                      entry.key,
+                                      editarUltimosDias: true,
+                                    )
+                                : null,
+                            child: ChoiceChip(
+                              label: Text(_getPeriodoLabel(entry.key)),
+                              selected: selected,
+                              onSelected: (_) => _onPeriodoSelected(entry.key),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+    );
   }
 
   int _getTotalMinutos(List<Entrenamiento> entrenamientos) {
@@ -259,18 +536,33 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
   }
 
   Future<int> _getEjerciciosCountForEntrenamiento(int codigo) async {
-    final cached = _ejerciciosCountCache[codigo];
+    final ejercicios = await _getEjerciciosForEntrenamiento(codigo);
+    _ejerciciosCountCache[codigo] = ejercicios.length;
+    return ejercicios.length;
+  }
+
+  Future<List<EntrenamientoEjercicio>> _getEjerciciosForEntrenamiento(
+      int codigo) async {
+    final cached = _ejerciciosCache[codigo];
     if (cached != null) {
       return cached;
     }
+
+    final cachedCount = _ejerciciosCountCache[codigo];
+    if (cachedCount != null && cachedCount == 0) {
+      _ejerciciosCache[codigo] = const <EntrenamientoEjercicio>[];
+      return _ejerciciosCache[codigo]!;
+    }
+
     try {
       final apiService = Provider.of<ApiService>(context, listen: false);
       final ejercicios = await apiService.getEntrenamientoEjercicios(codigo);
-      _ejerciciosCountCache[codigo] = ejercicios.length;
-      return ejercicios.length;
+      _ejerciciosCache[codigo] = ejercicios;
+      return ejercicios;
     } catch (_) {
+      _ejerciciosCache[codigo] = const <EntrenamientoEjercicio>[];
       _ejerciciosCountCache[codigo] = 0;
-      return 0;
+      return _ejerciciosCache[codigo]!;
     }
   }
 
@@ -289,10 +581,147 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
     return total;
   }
 
+  Future<double> _getTotalKgLevantados(
+      List<Entrenamiento> entrenamientos) async {
+    final codigos = entrenamientos
+        .where((e) => e.codigo != null)
+        .map((e) => e.codigo!)
+        .toList();
+    if (codigos.isEmpty) {
+      return 0;
+    }
+
+    double totalKg = 0;
+    for (final codigo in codigos) {
+      final ejercicios = await _getEjerciciosForEntrenamiento(codigo);
+      for (final ejercicio in ejercicios) {
+        if (ejercicio.realizado != 'S') continue;
+        final kilos = (ejercicio.kilosPlan ?? 0).toDouble();
+        if (kilos <= 0) continue;
+        final repeticiones =
+            ejercicio.repeticionesRealizadas ?? ejercicio.repeticionesPlan ?? 0;
+        if (repeticiones <= 0) continue;
+        totalKg += kilos * repeticiones;
+      }
+    }
+    return totalKg;
+  }
+
+  String _formatRatio(double value) {
+    if (value >= 100) return value.toStringAsFixed(0);
+    if (value >= 10) return value.toStringAsFixed(1);
+    if (value >= 1) return value.toStringAsFixed(2);
+    return value.toStringAsFixed(4);
+  }
+
+  String? _buildKgEquivalentMessage(double totalKg) {
+    if (totalKg < 120) return null;
+
+    final equivalents = <Map<String, dynamic>>[
+      {
+        'kg': 6000.0,
+        'singular': 'elefante africano',
+        'plural': 'elefantes africanos',
+      },
+      {
+        'kg': 1200.0,
+        'singular': 'coche compacto',
+        'plural': 'coches compactos',
+      },
+      {
+        'kg': 350.0,
+        'singular': 'moto grande',
+        'plural': 'motos grandes',
+      },
+      {
+        'kg': 180.0,
+        'singular': 'lavadora industrial',
+        'plural': 'lavadoras industriales',
+      },
+    ];
+
+    final viable = equivalents.where((item) {
+      final ratio = totalKg / (item['kg'] as double);
+      return ratio >= 0.2 && ratio <= 300;
+    }).toList();
+
+    if (viable.isEmpty) return null;
+    final idx = totalKg.round() % viable.length;
+    final selected = viable[idx];
+    final ratio = totalKg / (selected['kg'] as double);
+    final label = ratio >= 1.5 ? selected['plural'] : selected['singular'];
+    return 'Has levantado el equivalente a ${_formatRatio(ratio)} $label.';
+  }
+
+  String? _buildKmEquivalentMessage(double totalKm) {
+    if (totalKm < 2) return null;
+
+    final equivalents = <Map<String, dynamic>>[
+      {
+        'km': 505.0,
+        'singular': 'viaje Madrid-Barcelona',
+        'plural': 'viajes Madrid-Barcelona',
+      },
+      {
+        'km': 1365.0,
+        'singular': 'viaje Madrid-Roma',
+        'plural': 'viajes Madrid-Roma',
+      },
+      {
+        'km': 42.195,
+        'singular': 'maratón',
+        'plural': 'maratones',
+      },
+      {
+        'km': 384400.0,
+        'singular': 'distancia a la Luna',
+        'plural': 'distancias a la Luna',
+      },
+    ];
+
+    final viable = equivalents.where((item) {
+      final ratio = totalKm / (item['km'] as double);
+      return ratio >= 0.000001 && ratio <= 200;
+    }).toList();
+
+    if (viable.isEmpty) return null;
+    final idx = (totalKm * 10).round() % viable.length;
+    final selected = viable[idx];
+    final ratio = totalKm / (selected['km'] as double);
+    final label = ratio >= 1.5 ? selected['plural'] : selected['singular'];
+    return 'Has recorrido el equivalente a ${_formatRatio(ratio)} $label.';
+  }
+
+  Widget _buildEquivalenciasHumorCard({
+    required double totalKg,
+    required double totalKm,
+  }) {
+    final kgMsg = _buildKgEquivalentMessage(totalKg);
+    final kmMsg = _buildKmEquivalentMessage(totalKm);
+
+    if (kgMsg == null && kmMsg == null) {
+      return const SizedBox.shrink();
+    }
+
+    return Card(
+      color: Colors.amber.shade50,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (kgMsg != null) Text(kgMsg),
+            if (kgMsg != null && kmMsg != null) const SizedBox(height: 6),
+            if (kmMsg != null) Text(kmMsg),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final entrenamientosFiltrados = _filtrarEntrenamientos();
-
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -327,7 +756,9 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
                       top: -6,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.red.shade700,
                           borderRadius: BorderRadius.circular(10),
@@ -347,29 +778,32 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
                 ],
               ),
             ),
-        ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(kToolbarHeight),
-          child: Scrollbar(
-            controller: _tabsScrollController,
-            thumbVisibility: true,
-            child: SingleChildScrollView(
-              controller: _tabsScrollController,
-              scrollDirection: Axis.horizontal,
-              child: TabBar(
-                controller: _tabController,
-                isScrollable: true,
-                tabs: [
-                  if (_isNutri) const Tab(text: 'Pacientes'),
-                  const Tab(text: 'Semana'),
-                  const Tab(text: 'Mes'),
-                  const Tab(text: 'Año'),
-                  const Tab(text: 'Todos'),
-                  const Tab(text: 'Estadisticas'),
-                ],
-              ),
+          IconButton(
+            onPressed: () {
+              setState(() {
+                _mostrarFiltroPeriodo = !_mostrarFiltroPeriodo;
+              });
+              _saveFiltroPreferences();
+            },
+            tooltip:
+                _mostrarFiltroPeriodo ? 'Ocultar filtro' : 'Mostrar filtro',
+            icon: Icon(
+              _mostrarFiltroPeriodo ? Icons.filter_alt_off : Icons.filter_alt,
             ),
           ),
+          IconButton(
+            onPressed: _loadEntrenamientos,
+            tooltip: 'Actualizar',
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: [
+            if (_isNutri) const Tab(text: 'Pacientes'),
+            const Tab(text: 'Listado'),
+            const Tab(text: 'Estadísticas'),
+          ],
         ),
       ),
       drawer: const AppDrawer(),
@@ -380,35 +814,41 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : TabBarView(
-              controller: _tabController,
-              physics: const NeverScrollableScrollPhysics(),
+          : Column(
               children: [
-                if (_isNutri) const EntrenamientosPacientesPlanFitScreen(),
-                // Pestaña 1: Esta semana
-                _buildListView('semana'),
-                // Pestaña 2: Este mes
-                _buildListView('mes'),
-                // Pestaña 3: Este año
-                _buildListView('ano'),
-                // Pestaña 4: Todos
-                _buildListView('todos'),
-                // Pestaña 4: Estadisticas
-                EntrenamientoStatsChart(entrenamientos: _entrenamientos),
+                if (_shouldShowSharedFilterCard())
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                    child: _buildFiltroPeriodo(),
+                  ),
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabController,
+                    physics: const NeverScrollableScrollPhysics(),
+                    children: [
+                      if (_isNutri)
+                        const EntrenamientosPacientesPlanFitScreen(),
+                      _buildListView(),
+                      EntrenamientoStatsChart(
+                        entrenamientos: _filtrarEntrenamientos(),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
     );
   }
 
-  Widget _buildListView(String periodo) {
-    String filtroTemp = _filtroActual;
-    _filtroActual = periodo;
+  Widget _buildListView() {
+    final showEquivalencias =
+        context.watch<ConfigService>().showEquivalenciasActividades;
     final entrenamientosFiltrados = _filtrarEntrenamientos();
-    _filtroActual = filtroTemp;
 
     final totalMinutos = _getTotalMinutos(entrenamientosFiltrados);
     final totalKilometros = _getTotalKilometros(entrenamientosFiltrados);
     final promedioEsfuerzo = _getPromedioEsfuerzo(entrenamientosFiltrados);
+    final totalKgFuture = _getTotalKgLevantados(entrenamientosFiltrados);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.only(
@@ -422,8 +862,22 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
               totalMinutos,
               totalKilometros,
               promedioEsfuerzo,
+              totalKgFuture,
             ),
-            const SizedBox(height: 16),
+            if (showEquivalencias && entrenamientosFiltrados.length >= 5) ...[
+              const SizedBox(height: 16),
+              FutureBuilder<double>(
+                future: totalKgFuture,
+                builder: (context, snapshot) {
+                  final totalKg = snapshot.data ?? 0;
+                  return _buildEquivalenciasHumorCard(
+                    totalKg: totalKg,
+                    totalKm: totalKilometros,
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+            ],
           ],
 
           // Tarjeta motivacional
@@ -447,11 +901,11 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
     int totalMinutos,
     double totalKilometros,
     double promedioEsfuerzo,
+    Future<double> totalKgLevantadosFuture,
   ) {
     final horas = totalMinutos ~/ 60;
     final minutos = totalMinutos % 60;
     final totalEjerciciosFuture = _getTotalEjercicios(entrenamientos);
-
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -508,6 +962,18 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
                   promedioEsfuerzo.toStringAsFixed(1),
                   'Esfuerzo avg',
                   Colors.white,
+                ),
+                FutureBuilder<double>(
+                  future: totalKgLevantadosFuture,
+                  builder: (context, snapshot) {
+                    final totalKg = snapshot.data ?? 0;
+                    return _buildStatItem(
+                      '🏋️',
+                      '${totalKg.toStringAsFixed(0)} kg',
+                      'Total levantado',
+                      Colors.white,
+                    );
+                  },
                 ),
                 if (totalKilometros > 0)
                   _buildStatItem(
@@ -604,6 +1070,7 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
   Widget _buildEntrenamientoCard(Entrenamiento entrenamiento) {
     final duracion =
         '${entrenamiento.duracionHoras}h ${entrenamiento.duracionMinutos}m';
+    final titulo = (entrenamiento.titulo ?? '').trim();
     final kmText = entrenamiento.duracionKilometros != null &&
             entrenamiento.duracionKilometros! > 0
         ? ' • ${entrenamiento.duracionKilometros!.toStringAsFixed(2)} km'
@@ -639,7 +1106,7 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
             ),
           ),
           title: Text(
-            entrenamiento.actividad,
+            titulo.isNotEmpty ? titulo : entrenamiento.actividad,
             style: const TextStyle(
               fontWeight: FontWeight.bold,
               fontSize: 16,
@@ -649,6 +1116,13 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: 4),
+              if (titulo.isNotEmpty) ...[
+                Text(
+                  'Actividad: ${entrenamiento.actividad}',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                ),
+                const SizedBox(height: 4),
+              ],
               Text(
                 '📅 ${entrenamiento.fecha.day}/${entrenamiento.fecha.month}/${entrenamiento.fecha.year} ${entrenamiento.fecha.hour.toString().padLeft(2, '0')}:${entrenamiento.fecha.minute.toString().padLeft(2, '0')}',
                 style: TextStyle(fontSize: 12, color: Colors.grey[600]),

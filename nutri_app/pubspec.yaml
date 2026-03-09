@@ -45,6 +45,8 @@ dependencies:
 
   # Selector de imágenes (cámara y galería)
   image_picker: ^1.0.7
+  google_mlkit_text_recognition: ^0.14.0
+  google_mlkit_barcode_scanning: ^0.13.0
 
   # Procesamiento de imágenes (redimensionamiento)
   image: ^4.1.0
@@ -77,6 +79,10 @@ dependencies:
   super_native_extensions: ^0.8.0
   auto_size_text: ^3.0.0
   url_launcher: ^6.3.1
+  firebase_core: ^3.8.0
+  firebase_messaging: ^15.1.5
+  flutter_local_notifications: ^18.0.1
+  local_notifier: ^0.1.6
 
 
 dev_dependencies:
@@ -98,6 +104,7 @@ flutter:
   assets:
     - assets/
     - assets/sounds/
+    - assets/mediciones/
 
   # Para añadir fuentes personalizadas, descomenta esta sección:
   # fonts:

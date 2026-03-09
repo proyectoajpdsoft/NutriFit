@@ -8,8 +8,13 @@ import '../widgets/unsaved_changes_dialog.dart';
 
 class ListaCompraEditScreen extends StatefulWidget {
   final ListaCompraItem? item;
+  final bool forceNew;
 
-  const ListaCompraEditScreen({super.key, this.item});
+  const ListaCompraEditScreen({
+    super.key,
+    this.item,
+    this.forceNew = false,
+  });
 
   @override
   State<ListaCompraEditScreen> createState() => _ListaCompraEditScreenState();
@@ -55,9 +60,42 @@ class _ListaCompraEditScreenState extends State<ListaCompraEditScreen> {
   void initState() {
     super.initState();
 
-    if (widget.item != null) {
+    if (widget.item != null && !widget.forceNew) {
       _item = widget.item!;
       _isNew = false;
+      _nombreController.text = _item.nombre;
+      _descripcionController.text = _item.descripcion ?? '';
+      _cantidadController.text = _item.cantidad?.toString() ?? '';
+      _notasController.text = _item.notas ?? '';
+      _categoriaSeleccionada = _item.categoria;
+      _unidadSeleccionada = _item.unidad;
+      _fechaCaducidad = _item.fechaCaducidad;
+    } else if (widget.item != null && widget.forceNew) {
+      final template = widget.item!;
+      _item = ListaCompraItem(
+        codigoUsuario: 0,
+        nombre: template.nombre,
+        descripcion: template.descripcion,
+        categoria: template.categoria,
+        cantidad: template.cantidad,
+        unidad: template.unidad,
+        comprado: 'N',
+        fechaCaducidad: template.fechaCaducidad,
+        fechaCompra: null,
+        notas: template.notas,
+        escanerFuente: template.escanerFuente,
+        offCodigoBarras: template.offCodigoBarras,
+        offNombreProducto: template.offNombreProducto,
+        offMarca: template.offMarca,
+        offNutriScore: template.offNutriScore,
+        offNovaGroup: template.offNovaGroup,
+        offCantidad: template.offCantidad,
+        offPorcion: template.offPorcion,
+        offIngredientes: template.offIngredientes,
+        offNutrimentsJson: template.offNutrimentsJson,
+        offRawJson: template.offRawJson,
+      );
+      _isNew = true;
       _nombreController.text = _item.nombre;
       _descripcionController.text = _item.descripcion ?? '';
       _cantidadController.text = _item.cantidad?.toString() ?? '';
@@ -127,7 +165,10 @@ class _ListaCompraEditScreenState extends State<ListaCompraEditScreen> {
         if (response.statusCode == 201) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Item agregado exitosamente')),
+              const SnackBar(
+                content: Text('Producto añadido correctamente'),
+                backgroundColor: Colors.green,
+              ),
             );
             Navigator.pop(context, true);
           }
@@ -179,6 +220,107 @@ class _ListaCompraEditScreenState extends State<ListaCompraEditScreen> {
         _isLoading = false;
       });
     }
+  }
+
+  bool get _hasScannerData {
+    return (_item.offNombreProducto ?? '').trim().isNotEmpty ||
+        (_item.offCodigoBarras ?? '').trim().isNotEmpty ||
+        (_item.offNutriScore ?? '').trim().isNotEmpty ||
+        _item.offNovaGroup != null ||
+        (_item.offIngredientes ?? '').trim().isNotEmpty;
+  }
+
+  Widget _buildScannerDataCard() {
+    String shorten(String text, {int max = 220}) {
+      final value = text.trim();
+      if (value.length <= max) return value;
+      return '${value.substring(0, max)}...';
+    }
+
+    int nutrimentsCountFromJson() {
+      final raw = (_item.offNutrimentsJson ?? '').trim();
+      if (raw.isEmpty) return 0;
+      try {
+        final decoded = json.decode(raw);
+        if (decoded is Map) return decoded.length;
+      } catch (_) {}
+      return 0;
+    }
+
+    final nutrimentsCount = nutrimentsCountFromJson();
+
+    return Card(
+      child: ExpansionTile(
+        leading: const Icon(Icons.qr_code_scanner),
+        title: const Text('Datos del escáner (Open Food Facts)'),
+        subtitle: Text(
+          (_item.escanerFuente ?? '').trim().isEmpty
+              ? 'Metadatos guardados con el item'
+              : _item.escanerFuente!,
+          style: const TextStyle(fontSize: 12),
+        ),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        children: [
+          if ((_item.offNombreProducto ?? '').trim().isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Producto OFF: ${_item.offNombreProducto}'),
+            ),
+          if ((_item.offMarca ?? '').trim().isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Marca: ${_item.offMarca}'),
+            ),
+          if ((_item.offCodigoBarras ?? '').trim().isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Código de barras: ${_item.offCodigoBarras}'),
+            ),
+          if ((_item.offNutriScore ?? '').trim().isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Nutri-Score: ${_item.offNutriScore!.toUpperCase()}'),
+            ),
+          if (_item.offNovaGroup != null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('NOVA: ${_item.offNovaGroup}'),
+            ),
+          if ((_item.offCantidad ?? '').trim().isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Formato: ${_item.offCantidad}'),
+            ),
+          if ((_item.offPorcion ?? '').trim().isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Porción OFF: ${_item.offPorcion}'),
+            ),
+          if ((_item.offIngredientes ?? '').trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Ingredientes: ${shorten(_item.offIngredientes!)}',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+            ),
+          if (nutrimentsCount > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Nutrientes OFF guardados: $nutrimentsCount',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -380,6 +522,10 @@ class _ListaCompraEditScreenState extends State<ListaCompraEditScreen> {
                 ),
                 maxLines: 3,
               ),
+              if (_hasScannerData) ...[
+                const SizedBox(height: 16),
+                _buildScannerDataCard(),
+              ],
               const SizedBox(height: 24),
 
               // Botón de ayuda

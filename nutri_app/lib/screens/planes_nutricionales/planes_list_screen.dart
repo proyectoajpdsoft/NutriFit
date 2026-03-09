@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:nutri_app/models/paciente.dart';
 import 'package:nutri_app/models/plan_nutricional.dart';
 import 'package:nutri_app/screens/planes_nutricionales/plan_edit_screen.dart';
+import 'package:nutri_app/services/adherencia_service.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/config_service.dart';
 import 'package:provider/provider.dart';
@@ -24,8 +25,11 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
       MethodChannel('nutri_app/external_url');
 
   final ApiService _apiService = ApiService();
+  final AdherenciaService _adherenciaService = AdherenciaService();
   late Future<List<PlanNutricional>> _planesFuture;
   final TextEditingController _searchController = TextEditingController();
+  final Map<int, Future<AdherenciaMetricaSemanal?>> _adherenciaNutriByPaciente =
+      {};
   String _searchText = '';
   bool _showSearchField = false;
   bool _showFilterPlanes = false;
@@ -51,6 +55,7 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
 
   void _refreshPlanes() {
     setState(() {
+      _adherenciaNutriByPaciente.clear();
       if (widget.paciente != null) {
         _planesFuture = _apiService.getPlanes(widget.paciente!.codigo);
       } else {
@@ -58,6 +63,247 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
         _planesFuture = _apiService.getPlanes(null);
       }
     });
+  }
+
+  Future<AdherenciaMetricaSemanal?> _getAdherenciaNutriPaciente(
+    int codigoPaciente,
+  ) {
+    return _adherenciaNutriByPaciente.putIfAbsent(codigoPaciente, () async {
+      final resumen = await _adherenciaService.getResumenSemanal(
+        userCode: codigoPaciente.toString(),
+        incluirNutri: true,
+        incluirFit: false,
+        codigoUsuarioConsulta: codigoPaciente,
+      );
+      return resumen.nutri;
+    });
+  }
+
+  Color _adherenciaColorByPercent(int percent) {
+    if (percent >= 75) return Colors.green;
+    if (percent >= 50) return Colors.orange;
+    return Colors.red;
+  }
+
+  AdherenciaEstado? _parseEstado(dynamic raw) {
+    final normalized = raw?.toString().trim().toLowerCase();
+    if (normalized == 'cumplido') return AdherenciaEstado.cumplido;
+    if (normalized == 'parcial') return AdherenciaEstado.parcial;
+    if (normalized == 'no' || normalized == 'no_realizado') {
+      return AdherenciaEstado.noRealizado;
+    }
+    return null;
+  }
+
+  bool _isTipoNutri(dynamic raw) {
+    final value = raw?.toString().trim().toLowerCase() ?? '';
+    return value == 'nutri' || value == 'plan_nutri';
+  }
+
+  Color _estadoColor(AdherenciaEstado estado) {
+    switch (estado) {
+      case AdherenciaEstado.cumplido:
+        return Colors.green;
+      case AdherenciaEstado.parcial:
+        return Colors.amber;
+      case AdherenciaEstado.noRealizado:
+        return Colors.red;
+    }
+  }
+
+  String _estadoLabel(AdherenciaEstado estado) {
+    switch (estado) {
+      case AdherenciaEstado.cumplido:
+        return 'Completo';
+      case AdherenciaEstado.parcial:
+        return 'Parcial';
+      case AdherenciaEstado.noRealizado:
+        return 'No realizado';
+    }
+  }
+
+  Widget _buildCumplimientoCircle({
+    required int percent,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: onTap,
+      child: SizedBox(
+        width: 38,
+        height: 38,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            CircularProgressIndicator(
+              value: (percent.clamp(0, 100)) / 100,
+              strokeWidth: 4,
+              backgroundColor: Colors.grey.shade300,
+              valueColor: AlwaysStoppedAnimation<Color>(
+                _adherenciaColorByPercent(percent),
+              ),
+            ),
+            Text(
+              '$percent%',
+              style: const TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showCumplimientoDetalleNutri(int codigoPaciente) async {
+    try {
+      final records = await _apiService.getAdherenciaRegistros(
+        codigoUsuario: codigoPaciente,
+      );
+
+      final items = records
+          .where((item) => _isTipoNutri(item['tipo']))
+          .map((item) {
+            final estado = _parseEstado(item['estado']);
+            final fecha = DateTime.tryParse(item['fecha']?.toString() ?? '');
+            if (estado == null || fecha == null) {
+              return null;
+            }
+            final motivo = item['observacion']?.toString().trim();
+            return {
+              'estado': estado,
+              'fecha': fecha,
+              'motivo': (motivo == null || motivo.isEmpty) ? null : motivo,
+            };
+          })
+          .whereType<Map<String, dynamic>>()
+          .toList()
+        ..sort(
+          (a, b) => (b['fecha'] as DateTime).compareTo(a['fecha'] as DateTime),
+        );
+
+      final today = DateTime.now();
+      final cutoff = DateTime(today.year, today.month, today.day)
+          .subtract(const Duration(days: 29));
+
+      if (!mounted) return;
+
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) {
+          var showAll = false;
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              final visibleItems = showAll
+                  ? items
+                  : items
+                      .where(
+                        (entry) => (entry['fecha'] as DateTime)
+                            .isAfter(cutoff.subtract(const Duration(days: 1))),
+                      )
+                      .toList();
+
+              return AlertDialog(
+                title: const Text('Cumplimiento Plan Nutri'),
+                content: SizedBox(
+                  width: 460,
+                  child: items.isEmpty
+                      ? const Text(
+                          'No hay registros de cumplimiento para mostrar.')
+                      : visibleItems.isEmpty
+                          ? const Text(
+                              'No hay registros en los últimos 30 días.')
+                          : SingleChildScrollView(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: visibleItems.map((entry) {
+                                  final estado =
+                                      entry['estado'] as AdherenciaEstado;
+                                  final fecha = entry['fecha'] as DateTime;
+                                  final motivo = entry['motivo'] as String?;
+                                  final color = _estadoColor(estado);
+                                  return Container(
+                                    width: double.infinity,
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                          color: Colors.grey.shade300),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Container(
+                                              width: 10,
+                                              height: 10,
+                                              decoration: BoxDecoration(
+                                                color: color,
+                                                shape: BoxShape.circle,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              _estadoLabel(estado),
+                                              style: TextStyle(
+                                                color: color,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                            const Spacer(),
+                                            Text(
+                                              DateFormat('dd/MM/yyyy')
+                                                  .format(fecha),
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        if (motivo != null) ...[
+                                          const SizedBox(height: 6),
+                                          Text('Motivo: $motivo'),
+                                        ],
+                                      ],
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            ),
+                ),
+                actions: [
+                  if (items.isNotEmpty)
+                    TextButton(
+                      onPressed: () {
+                        setDialogState(() {
+                          showAll = !showAll;
+                        });
+                      },
+                      child: Text(showAll ? 'Últimos 30 días' : 'Ver todo'),
+                    ),
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('Cerrar'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo cargar el detalle de cumplimiento: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   Future<void> _loadUiState() async {
@@ -373,6 +619,55 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
                                         ?.copyWith(fontWeight: FontWeight.bold),
                                   ),
                                 ],
+                              ),
+                              const SizedBox(height: 8),
+                              Builder(
+                                builder: (context) {
+                                  final codigoPaciente = plan.codigoPaciente ??
+                                      widget.paciente?.codigo;
+                                  if (codigoPaciente == null ||
+                                      codigoPaciente <= 0) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  return FutureBuilder<
+                                      AdherenciaMetricaSemanal?>(
+                                    future: _getAdherenciaNutriPaciente(
+                                      codigoPaciente,
+                                    ),
+                                    builder: (context, adhSnapshot) {
+                                      if (adhSnapshot.connectionState ==
+                                          ConnectionState.waiting) {
+                                        return const SizedBox(
+                                          height: 18,
+                                          width: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        );
+                                      }
+                                      final pct =
+                                          adhSnapshot.data?.porcentaje ?? 0;
+                                      return Row(
+                                        children: [
+                                          const Text(
+                                            'Cumplimiento paciente:',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          _buildCumplimientoCircle(
+                                            percent: pct,
+                                            onTap: () =>
+                                                _showCumplimientoDetalleNutri(
+                                              codigoPaciente,
+                                            ),
+                                          ),
+                                        ],
+                                      );
+                                    },
+                                  );
+                                },
                               ),
                               const SizedBox(height: 12),
 

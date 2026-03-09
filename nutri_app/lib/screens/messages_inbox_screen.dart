@@ -46,7 +46,9 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
       final conversations = await apiService.getChatConversations();
       final sensaciones = await apiService.getSensacionesPendientesNutri();
 
-      _conversations = conversations;
+      _conversations = conversations
+          .where((convo) => convo.unreadCount > 0 && convo.usuarioId > 0)
+          .toList();
       _sensacionesPendientes = sensaciones;
     } else {
       final messages = await apiService.getChatMessages();
@@ -75,7 +77,7 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
             const SizedBox(height: 16),
             ElevatedButton(
               onPressed: () => Navigator.pushNamed(context, '/register'),
-              child: const Text('Registrarse'),
+              child: const Text('Iniciar registro'),
             ),
           ],
         ),
@@ -96,7 +98,7 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: accent.withOpacity(0.4)),
+        border: Border.all(color: accent.withValues(alpha: 0.4)),
       ),
       child: Row(
         children: [
@@ -104,7 +106,7 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
             width: 28,
             height: 28,
             decoration: BoxDecoration(
-              color: accent.withOpacity(0.15),
+              color: accent.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(icon, size: 16, color: accent),
@@ -138,10 +140,33 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
   }
 
   Widget _buildNutriContent() {
+    return _buildNutriUnreadTab();
+  }
+
+  Future<void> _openChatWithUser({
+    required int userId,
+    required String displayName,
+  }) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ChatScreen(
+          otherUserId: userId,
+          otherDisplayName: displayName,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    setState(() {
+      _loadFuture = _loadData();
+    });
+  }
+
+  Widget _buildNutriUnreadTab() {
     return ListView(
       children: [
         _buildSectionHeader(
-          'Chats',
+          'Chats sin leer',
           _conversations.length,
           background: const Color(0xFFE7F3FF),
           accent: const Color(0xFF1B6FD8),
@@ -173,42 +198,25 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-              trailing: convo.unreadCount > 0
-                  ? Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.red.shade700,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        convo.unreadCount > 99
-                            ? '99+'
-                            : convo.unreadCount.toString(),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    )
-                  : null,
-              onTap: () async {
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => ChatScreen(
-                      otherUserId: convo.usuarioId,
-                      otherDisplayName: nombre,
-                    ),
+              trailing: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade700,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  convo.unreadCount > 99 ? '99+' : convo.unreadCount.toString(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
                   ),
-                );
-                if (mounted) {
-                  setState(() {
-                    _loadFuture = _loadData();
-                  });
-                }
-              },
+                ),
+              ),
+              onTap: () => _openChatWithUser(
+                userId: convo.usuarioId,
+                displayName: nombre,
+              ),
             );
           }),
         _buildSectionHeader(
@@ -251,7 +259,7 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
     return ListView(
       children: [
         _buildSectionHeader(
-          'Chat',
+          'Chats con dietista sin leer',
           _unreadChatMessages.length,
           background: const Color(0xFFE7F3FF),
           accent: const Color(0xFF1B6FD8),
@@ -266,9 +274,7 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
               await Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const ChatScreen(
-                    otherDisplayName: 'Dietista',
-                  ),
+                  builder: (context) => const ChatScreen(),
                 ),
               );
               if (mounted) {
@@ -292,9 +298,7 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
                 await Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => const ChatScreen(
-                      otherDisplayName: 'Dietista',
-                    ),
+                    builder: (context) => const ChatScreen(),
                   ),
                 );
                 if (mounted) {
@@ -306,7 +310,7 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
             );
           }),
         _buildSectionHeader(
-          'Comentarios pendientes',
+          'Comentarios de entrenador sin leer',
           _comentariosPendientes.length,
           background: const Color(0xFFF1F7E8),
           accent: const Color(0xFF3E7C29),
@@ -315,7 +319,7 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
         if (_comentariosPendientes.isEmpty)
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Text('No tienes comentarios pendientes.'),
+            child: Text('No tienes comentarios de entrenador personal pendientes de leer.'),
           )
         else
           ListTile(
@@ -347,7 +351,7 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Mensajes'),
+        title: const Text('Mensajes sin leer'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),

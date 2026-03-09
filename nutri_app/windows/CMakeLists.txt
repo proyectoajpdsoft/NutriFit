@@ -10,6 +10,11 @@ set(BINARY_NAME "nutri_fit")
 # versions of CMake.
 cmake_policy(VERSION 3.14...3.25)
 
+# Keep compatibility with dependencies that still declare very old minimum
+# CMake versions (for example, Firebase C++ SDK uses 3.1).
+set(CMAKE_POLICY_VERSION_MINIMUM 3.10 CACHE STRING
+  "Minimum CMake policy compatibility for third-party subprojects" FORCE)
+
 # Define build configuration option.
 get_property(IS_MULTICONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 if(IS_MULTICONFIG)
@@ -65,9 +70,9 @@ include(flutter/generated_plugins.cmake)
 set(BUILD_BUNDLE_DIR "$<TARGET_FILE_DIR:${BINARY_NAME}>")
 # Make the "install" step default, as it's required to run.
 set(CMAKE_VS_INCLUDE_INSTALL_TO_DEFAULT_BUILD 1)
-if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-  set(CMAKE_INSTALL_PREFIX "${BUILD_BUNDLE_DIR}" CACHE PATH "..." FORCE)
-endif()
+# Force local install dir to avoid requiring admin rights (e.g. Program Files)
+# with newer VS/CMake generators.
+set(CMAKE_INSTALL_PREFIX "${BUILD_BUNDLE_DIR}" CACHE PATH "..." FORCE)
 
 set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")

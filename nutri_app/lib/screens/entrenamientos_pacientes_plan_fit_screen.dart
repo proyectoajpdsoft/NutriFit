@@ -137,6 +137,9 @@ class _EntrenamientosPacientePlanFitListScreenState
 
   @override
   Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    final listBottomPadding = bottomInset > 0 ? bottomInset + 20 : 28.0;
+
     return Scaffold(
       appBar: AppBar(
         title: Text('Actividades - ${widget.paciente.nombre}'),
@@ -190,6 +193,7 @@ class _EntrenamientosPacientePlanFitListScreenState
                   itemCount: items.length,
                   itemBuilder: (context, index) {
                     final entrenamiento = items[index];
+                    final titulo = (entrenamiento.titulo ?? '').trim();
                     final fecha = entrenamiento.fecha;
                     final fechaText =
                         '${fecha.day.toString().padLeft(2, '0')}/${fecha.month.toString().padLeft(2, '0')}/${fecha.year} '
@@ -229,11 +233,22 @@ class _EntrenamientosPacientePlanFitListScreenState
                                         CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        entrenamiento.actividad,
+                                        titulo.isNotEmpty
+                                            ? titulo
+                                            : entrenamiento.actividad,
                                         style: const TextStyle(
                                           fontWeight: FontWeight.bold,
                                         ),
                                       ),
+                                      if (titulo.isNotEmpty) ...[
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Actividad: ${entrenamiento.actividad}',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall,
+                                        ),
+                                      ],
                                       const SizedBox(height: 4),
                                       Text(
                                         'Fecha: $fechaText · Plan ${entrenamiento.codigoPlanFit ?? '-'}',
@@ -776,6 +791,9 @@ class _EntrenamientoPacientePlanFitDetailScreenState
 
   @override
   Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    final listBottomPadding = bottomInset > 0 ? bottomInset + 20 : 28.0;
+
     return Scaffold(
       appBar: AppBar(
         title: Column(
@@ -793,17 +811,20 @@ class _EntrenamientoPacientePlanFitDetailScreenState
           ],
         ),
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _ejercicios.isEmpty
-              ? const Center(child: Text('No hay ejercicios registrados.'))
-              : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
-                  itemCount: _ejercicios.length,
-                  itemBuilder: (context, index) {
-                    return _buildEjercicioCard(_ejercicios[index]);
-                  },
-                ),
+      body: SafeArea(
+        top: false,
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _ejercicios.isEmpty
+                ? const Center(child: Text('No hay ejercicios registrados.'))
+                : ListView.builder(
+                    padding: EdgeInsets.fromLTRB(16, 16, 16, listBottomPadding),
+                    itemCount: _ejercicios.length,
+                    itemBuilder: (context, index) {
+                      return _buildEjercicioCard(_ejercicios[index]);
+                    },
+                  ),
+      ),
     );
   }
 }

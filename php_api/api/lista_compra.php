@@ -113,7 +113,7 @@ function get_item($db, $codigo) {
 // Función para crear un item
 function create_item($db, $data, $codigo_usuario_auth) {
     try {
-        $query = "INSERT INTO nu_lista_compra (codigo_usuario, nombre, descripcion, categoria, cantidad, unidad, comprado, fecha_caducidad, fecha_compra, notas, codusuarioa, fechaa) VALUES (:codigo_usuario, :nombre, :descripcion, :categoria, :cantidad, :unidad, :comprado, :fecha_caducidad, :fecha_compra, :notas, :codusuarioa, NOW())";
+        $query = "INSERT INTO nu_lista_compra (codigo_usuario, nombre, descripcion, categoria, cantidad, unidad, comprado, fecha_caducidad, fecha_compra, notas, escaner_fuente, off_codigo_barras, off_nombre_producto, off_marca, off_nutri_score, off_nova_group, off_cantidad, off_porcion, off_ingredientes, off_nutriments_json, off_raw_json, codusuarioa, fechaa) VALUES (:codigo_usuario, :nombre, :descripcion, :categoria, :cantidad, :unidad, :comprado, :fecha_caducidad, :fecha_compra, :notas, :escaner_fuente, :off_codigo_barras, :off_nombre_producto, :off_marca, :off_nutri_score, :off_nova_group, :off_cantidad, :off_porcion, :off_ingredientes, :off_nutriments_json, :off_raw_json, :codusuarioa, NOW())";
         
         $stmt = $db->prepare($query);
         
@@ -128,6 +128,17 @@ function create_item($db, $data, $codigo_usuario_auth) {
         $fecha_caducidad = isset($data['fecha_caducidad']) ? $data['fecha_caducidad'] : null;
         $fecha_compra = isset($data['fecha_compra']) ? $data['fecha_compra'] : null;
         $notas = isset($data['notas']) ? $data['notas'] : null;
+        $escaner_fuente = isset($data['escaner_fuente']) ? $data['escaner_fuente'] : null;
+        $off_codigo_barras = isset($data['off_codigo_barras']) ? $data['off_codigo_barras'] : null;
+        $off_nombre_producto = isset($data['off_nombre_producto']) ? $data['off_nombre_producto'] : null;
+        $off_marca = isset($data['off_marca']) ? $data['off_marca'] : null;
+        $off_nutri_score = isset($data['off_nutri_score']) ? $data['off_nutri_score'] : null;
+        $off_nova_group = isset($data['off_nova_group']) ? $data['off_nova_group'] : null;
+        $off_cantidad = isset($data['off_cantidad']) ? $data['off_cantidad'] : null;
+        $off_porcion = isset($data['off_porcion']) ? $data['off_porcion'] : null;
+        $off_ingredientes = isset($data['off_ingredientes']) ? $data['off_ingredientes'] : null;
+        $off_nutriments_json = isset($data['off_nutriments_json']) ? $data['off_nutriments_json'] : null;
+        $off_raw_json = isset($data['off_raw_json']) ? $data['off_raw_json'] : null;
         $codusuarioa = $codigo_usuario_auth;
         
         $stmt->bindParam(':codigo_usuario', $codigo_usuario);
@@ -140,6 +151,17 @@ function create_item($db, $data, $codigo_usuario_auth) {
         $stmt->bindParam(':fecha_caducidad', $fecha_caducidad);
         $stmt->bindParam(':fecha_compra', $fecha_compra);
         $stmt->bindParam(':notas', $notas);
+        $stmt->bindParam(':escaner_fuente', $escaner_fuente);
+        $stmt->bindParam(':off_codigo_barras', $off_codigo_barras);
+        $stmt->bindParam(':off_nombre_producto', $off_nombre_producto);
+        $stmt->bindParam(':off_marca', $off_marca);
+        $stmt->bindParam(':off_nutri_score', $off_nutri_score);
+        $stmt->bindParam(':off_nova_group', $off_nova_group);
+        $stmt->bindParam(':off_cantidad', $off_cantidad);
+        $stmt->bindParam(':off_porcion', $off_porcion);
+        $stmt->bindParam(':off_ingredientes', $off_ingredientes);
+        $stmt->bindParam(':off_nutriments_json', $off_nutriments_json);
+        $stmt->bindParam(':off_raw_json', $off_raw_json);
         $stmt->bindParam(':codusuarioa', $codusuarioa);
         
         if ($stmt->execute()) {
@@ -154,7 +176,7 @@ function create_item($db, $data, $codigo_usuario_auth) {
 // Función para actualizar un item
 function update_item($db, $data) {
     try {
-        $query = "UPDATE nu_lista_compra SET nombre = :nombre, descripcion = :descripcion, categoria = :categoria, cantidad = :cantidad, unidad = :unidad, comprado = :comprado, fecha_caducidad = :fecha_caducidad, fecha_compra = :fecha_compra, notas = :notas WHERE codigo = :codigo";
+        $query = "UPDATE nu_lista_compra SET nombre = :nombre, descripcion = :descripcion, categoria = :categoria, cantidad = :cantidad, unidad = :unidad, comprado = :comprado, fecha_caducidad = :fecha_caducidad, fecha_compra = :fecha_compra, notas = :notas, escaner_fuente = :escaner_fuente, off_codigo_barras = :off_codigo_barras, off_nombre_producto = :off_nombre_producto, off_marca = :off_marca, off_nutri_score = :off_nutri_score, off_nova_group = :off_nova_group, off_cantidad = :off_cantidad, off_porcion = :off_porcion, off_ingredientes = :off_ingredientes, off_nutriments_json = :off_nutriments_json, off_raw_json = :off_raw_json WHERE codigo = :codigo";
         
         $stmt = $db->prepare($query);
         
@@ -169,6 +191,17 @@ function update_item($db, $data) {
         $fecha_caducidad = isset($data['fecha_caducidad']) ? $data['fecha_caducidad'] : null;
         $fecha_compra = isset($data['fecha_compra']) ? $data['fecha_compra'] : null;
         $notas = isset($data['notas']) ? $data['notas'] : null;
+        $escaner_fuente = isset($data['escaner_fuente']) ? $data['escaner_fuente'] : null;
+        $off_codigo_barras = isset($data['off_codigo_barras']) ? $data['off_codigo_barras'] : null;
+        $off_nombre_producto = isset($data['off_nombre_producto']) ? $data['off_nombre_producto'] : null;
+        $off_marca = isset($data['off_marca']) ? $data['off_marca'] : null;
+        $off_nutri_score = isset($data['off_nutri_score']) ? $data['off_nutri_score'] : null;
+        $off_nova_group = isset($data['off_nova_group']) ? $data['off_nova_group'] : null;
+        $off_cantidad = isset($data['off_cantidad']) ? $data['off_cantidad'] : null;
+        $off_porcion = isset($data['off_porcion']) ? $data['off_porcion'] : null;
+        $off_ingredientes = isset($data['off_ingredientes']) ? $data['off_ingredientes'] : null;
+        $off_nutriments_json = isset($data['off_nutriments_json']) ? $data['off_nutriments_json'] : null;
+        $off_raw_json = isset($data['off_raw_json']) ? $data['off_raw_json'] : null;
         
         $stmt->bindParam(':codigo', $codigo);
         $stmt->bindParam(':nombre', $nombre);
@@ -180,6 +213,17 @@ function update_item($db, $data) {
         $stmt->bindParam(':fecha_caducidad', $fecha_caducidad);
         $stmt->bindParam(':fecha_compra', $fecha_compra);
         $stmt->bindParam(':notas', $notas);
+        $stmt->bindParam(':escaner_fuente', $escaner_fuente);
+        $stmt->bindParam(':off_codigo_barras', $off_codigo_barras);
+        $stmt->bindParam(':off_nombre_producto', $off_nombre_producto);
+        $stmt->bindParam(':off_marca', $off_marca);
+        $stmt->bindParam(':off_nutri_score', $off_nutri_score);
+        $stmt->bindParam(':off_nova_group', $off_nova_group);
+        $stmt->bindParam(':off_cantidad', $off_cantidad);
+        $stmt->bindParam(':off_porcion', $off_porcion);
+        $stmt->bindParam(':off_ingredientes', $off_ingredientes);
+        $stmt->bindParam(':off_nutriments_json', $off_nutriments_json);
+        $stmt->bindParam(':off_raw_json', $off_raw_json);
         
         return $stmt->execute();
     } catch (PDOException $e) {

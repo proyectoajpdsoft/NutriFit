@@ -186,243 +186,245 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _fetchDashboardData,
-        child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildDashboardCard(
-                        title: 'Pacientes',
-                        value: _totalPatients.toString(),
-                        icon: Icons.people,
-                        color: Colors.blue,
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (context) =>
-                                    const PacientesListScreen()),
-                          );
-                        },
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: _fetchDashboardData,
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildDashboardCard(
+                          title: 'Pacientes',
+                          value: _totalPatients.toString(),
+                          icon: Icons.people,
+                          color: Colors.blue,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const PacientesListScreen()),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                    Expanded(
-                      child: _buildDashboardCard(
-                        title: 'Usuarios',
-                        value: _totalUsuarios.toString(),
-                        icon: Icons.person,
-                        color: Colors.brown,
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (context) =>
-                                    const UsuariosListScreen()),
-                          );
-                        },
+                      Expanded(
+                        child: _buildDashboardCard(
+                          title: 'Usuarios',
+                          value: _totalUsuarios.toString(),
+                          icon: Icons.person,
+                          color: Colors.brown,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const UsuariosListScreen()),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                _buildDashboardCard(
-                  title: 'Citas',
-                  value: _totalCitas.toString(),
-                  icon: Icons.calendar_today,
-                  color: Colors.purple,
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                          builder: (context) => const CitasCalendarScreen()),
-                    );
-                  },
-                ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildDashboardCard(
-                        title: 'Revisiones',
-                        value: _totalRevisiones.toString(),
-                        icon: Icons.rate_review,
-                        color: Colors.indigo,
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (context) =>
-                                    const RevisionesPacientesListScreen()),
-                          );
-                        },
+                    ],
+                  ),
+                  _buildDashboardCard(
+                    title: 'Citas',
+                    value: _totalCitas.toString(),
+                    icon: Icons.calendar_today,
+                    color: Colors.purple,
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                            builder: (context) => const CitasCalendarScreen()),
+                      );
+                    },
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildDashboardCard(
+                          title: 'Revisiones',
+                          value: _totalRevisiones.toString(),
+                          icon: Icons.rate_review,
+                          color: Colors.indigo,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const RevisionesPacientesListScreen()),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                    Expanded(
-                      child: _buildDashboardCard(
-                        title: 'Mediciones',
-                        value: _totalMediciones.toString(),
-                        icon: Icons.show_chart,
-                        color: Colors.indigo,
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (context) =>
-                                    const MedicionesPacientesListScreen()),
-                          );
-                        },
+                      Expanded(
+                        child: _buildDashboardCard(
+                          title: 'Mediciones',
+                          value: _totalMediciones.toString(),
+                          icon: Icons.show_chart,
+                          color: Colors.indigo,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const MedicionesPacientesListScreen()),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildDashboardCard(
-                        title: 'Ejercicios',
-                        value: _totalEjerciciosCatalog.toString(),
-                        icon: Icons.fitness_center,
-                        color: Colors.blueGrey,
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (context) =>
-                                    const PlanFitEjerciciosCatalogScreen()),
-                          );
-                        },
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildDashboardCard(
+                          title: 'Ejercicios',
+                          value: _totalEjerciciosCatalog.toString(),
+                          icon: Icons.fitness_center,
+                          color: Colors.blueGrey,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const PlanFitEjerciciosCatalogScreen()),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                    Expanded(
-                      child: _buildDashboardCard(
-                        title: 'Actividades con Plan',
-                        value: _totalActividades.toString(),
-                        icon: Icons.directions_run,
-                        color: Colors.teal,
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (context) =>
-                                    const ActividadesConPlanListScreen()),
-                          );
-                        },
+                      Expanded(
+                        child: _buildDashboardCard(
+                          title: 'Actividades con Plan',
+                          value: _totalActividades.toString(),
+                          icon: Icons.directions_run,
+                          color: Colors.teal,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const ActividadesConPlanListScreen()),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildDashboardCard(
-                        title: 'Planes Nutri',
-                        value: _totalPlans.toString(),
-                        icon: Icons.description,
-                        color: Colors.green,
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (context) =>
-                                    const PlanesPacientesListScreen()),
-                          );
-                        },
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildDashboardCard(
+                          title: 'Planes Nutri',
+                          value: _totalPlans.toString(),
+                          icon: Icons.description,
+                          color: Colors.green,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const PlanesPacientesListScreen()),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                    Expanded(
-                      child: _buildDashboardCard(
-                        title: 'Entrev. Nutri',
-                        value: _totalEntrevistas.toString(),
-                        icon: Icons.assignment,
-                        color: Colors.green,
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (context) =>
-                                    const EntrevistasPacientesListScreen()),
-                          );
-                        },
+                      Expanded(
+                        child: _buildDashboardCard(
+                          title: 'Entrev. Nutri',
+                          value: _totalEntrevistas.toString(),
+                          icon: Icons.assignment,
+                          color: Colors.green,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const EntrevistasPacientesListScreen()),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildDashboardCard(
-                        title: 'Planes Fit',
-                        value: _totalPlanesFit.toString(),
-                        icon: Icons.fitness_center,
-                        color: Colors.teal,
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (context) =>
-                                    const PlanesFitPacientesListScreen()),
-                          );
-                        },
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildDashboardCard(
+                          title: 'Planes Fit',
+                          value: _totalPlanesFit.toString(),
+                          icon: Icons.fitness_center,
+                          color: Colors.teal,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const PlanesFitPacientesListScreen()),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                    Expanded(
-                      child: _buildDashboardCard(
-                        title: 'Entrev. Fit',
-                        value: _totalEntrevistasFit.toString(),
-                        icon: Icons.sports,
-                        color: Colors.teal,
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (context) =>
-                                    const EntrevistasFitPacientesListScreen()),
-                          );
-                        },
+                      Expanded(
+                        child: _buildDashboardCard(
+                          title: 'Entrev. Fit',
+                          value: _totalEntrevistasFit.toString(),
+                          icon: Icons.sports,
+                          color: Colors.teal,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const EntrevistasFitPacientesListScreen()),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                _buildDashboardCard(
-                  title: 'Cobros',
-                  value: '${_totalCobrado.toStringAsFixed(2)} €',
-                  icon: Icons.payments,
-                  color: Colors.pink,
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                          builder: (context) => const CobrosListScreen()),
-                    );
-                  },
-                ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildDashboardCard(
-                        title: 'Recetas',
-                        value: _totalRecetas.toString(),
-                        icon: Icons.restaurant_menu,
-                        color: Colors.deepPurpleAccent,
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (context) =>
-                                    const RecetasListScreen()),
-                          );
-                        },
+                    ],
+                  ),
+                  _buildDashboardCard(
+                    title: 'Cobros',
+                    value: '${_totalCobrado.toStringAsFixed(2)} €',
+                    icon: Icons.payments,
+                    color: Colors.pink,
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                            builder: (context) => const CobrosListScreen()),
+                      );
+                    },
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildDashboardCard(
+                          title: 'Recetas',
+                          value: _totalRecetas.toString(),
+                          icon: Icons.restaurant_menu,
+                          color: Colors.deepPurpleAccent,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const RecetasListScreen()),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                    Expanded(
-                      child: _buildDashboardCard(
-                        title: 'Consejos',
-                        value: _totalConsejos.toString(),
-                        icon: Icons.lightbulb,
-                        color: Colors.purpleAccent,
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (context) =>
-                                    const ConsejosListScreen()),
-                          );
-                        },
+                      Expanded(
+                        child: _buildDashboardCard(
+                          title: 'Consejos',
+                          value: _totalConsejos.toString(),
+                          icon: Icons.lightbulb,
+                          color: Colors.purpleAccent,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const ConsejosListScreen()),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-              ],
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                ],
+              ),
             ),
           ),
         ),

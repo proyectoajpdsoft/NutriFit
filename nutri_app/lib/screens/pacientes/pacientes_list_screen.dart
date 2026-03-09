@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:nutri_app/models/paciente.dart';
+import 'package:nutri_app/models/usuario.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/pacientes_pdf_service.dart';
 // import 'package:url_launcher/url_launcher.dart' as url_launcher;
@@ -15,6 +16,7 @@ import 'package:nutri_app/screens/planes_fit/planes_fit_list_screen.dart';
 import 'package:nutri_app/screens/entrevistas/entrevistas_list_screen.dart';
 import 'package:nutri_app/screens/entrevistas_fit/entrevistas_fit_list_screen.dart';
 import 'package:nutri_app/screens/cobros/cobros_list_screen.dart';
+import 'package:nutri_app/screens/chat_screen.dart';
 import 'package:nutri_app/screens/pacientes/paciente_edit_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -33,6 +35,8 @@ class _PacientesListScreenState extends State<PacientesListScreen> {
   bool _showSearchField = false;
   bool _showFilterPacientes = false;
   final Map<int, Map<String, int>> _contadores = {};
+  Map<int, int> _chatNoLeidosPorPaciente = {};
+  Map<int, int> _chatUsuarioIdPorPaciente = {};
   final Set<int> _expandedPacientes = {};
   bool _expandAllMode = false;
 
@@ -126,6 +130,103 @@ class _PacientesListScreenState extends State<PacientesListScreen> {
       _pacientesFuture = ApiService().getPacientes(
           activo: _filtroActivo == "Todos" ? null : _filtroActivo);
     });
+    _loadChatNoLeidosPorPaciente();
+  }
+
+  Future<void> _loadChatNoLeidosPorPaciente() async {
+    try {
+      final apiService = ApiService();
+      final conversations = await apiService.getChatConversations();
+      final usuarios = await apiService.getUsuarios();
+      if (!mounted) return;
+
+      final usuariosById = <int, Usuario>{
+        for (final u in usuarios) u.codigo: u
+      };
+      final chatUsuarioIdPorPaciente = <int, int>{};
+      final chatNoLeidosPorPaciente = <int, int>{};
+
+      for (final usuario in usuarios) {
+        final codigoPaciente = usuario.codigoPaciente ?? 0;
+        if (usuario.activo == 'S' && codigoPaciente > 0) {
+          chatUsuarioIdPorPaciente.putIfAbsent(
+              codigoPaciente, () => usuario.codigo);
+        }
+      }
+
+      for (final convo in conversations) {
+        if (convo.usuarioId <= 0) continue;
+        final usuario = usuariosById[convo.usuarioId];
+        final codigoPaciente = usuario?.codigoPaciente ?? 0;
+        if (codigoPaciente > 0) {
+          chatUsuarioIdPorPaciente[codigoPaciente] = convo.usuarioId;
+          chatNoLeidosPorPaciente[codigoPaciente] = convo.unreadCount;
+        }
+      }
+
+      setState(() {
+        _chatUsuarioIdPorPaciente = chatUsuarioIdPorPaciente;
+        _chatNoLeidosPorPaciente = chatNoLeidosPorPaciente;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _chatUsuarioIdPorPaciente = {};
+        _chatNoLeidosPorPaciente = {};
+      });
+    }
+  }
+
+  Widget _buildChatPacienteButton(Paciente paciente) {
+    final unread = _chatNoLeidosPorPaciente[paciente.codigo] ?? 0;
+    final chatUsuarioId = _chatUsuarioIdPorPaciente[paciente.codigo];
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        IconButton(
+          icon: const Icon(Icons.mark_chat_unread_outlined),
+          color: Colors.teal,
+          iconSize: 28,
+          tooltip: 'Chat',
+          onPressed: chatUsuarioId == null
+              ? null
+              : () async {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => ChatScreen(
+                        otherUserId: chatUsuarioId,
+                        otherDisplayName: paciente.nombre,
+                      ),
+                    ),
+                  );
+                  _loadChatNoLeidosPorPaciente();
+                },
+        ),
+        if (unread > 0)
+          Positioned(
+            right: 2,
+            top: 2,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(
+                color: Colors.red.shade700,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              constraints: const BoxConstraints(minWidth: 16, minHeight: 14),
+              child: Text(
+                unread > 99 ? '99+' : '$unread',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
   }
 
   List<Paciente> _filterPacientes(List<Paciente> pacientes) {
@@ -311,7 +412,7 @@ class _PacientesListScreenState extends State<PacientesListScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
@@ -367,9 +468,9 @@ class _PacientesListScreenState extends State<PacientesListScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
-                color: bmiColor.withOpacity(0.15),
+                color: bmiColor.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: bmiColor.withOpacity(0.6)),
+                border: Border.all(color: bmiColor.withValues(alpha: 0.6)),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -904,7 +1005,7 @@ class _PacientesListScreenState extends State<PacientesListScreen> {
                                       // Sección de botones organizados
                                       Padding(
                                         padding: const EdgeInsets.fromLTRB(
-                                            12.0, 0, 12.0, 4.0),
+                                            12.0, 0, 12.0, 10.0),
                                         child: Column(
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
@@ -912,7 +1013,7 @@ class _PacientesListScreenState extends State<PacientesListScreen> {
                                             // Primera fila: comunicación y edición
                                             Wrap(
                                               spacing: 4.0,
-                                              runSpacing: 2.0,
+                                              runSpacing: 4.0,
                                               children: [
                                                 if (paciente.telefono != null &&
                                                     paciente
@@ -937,6 +1038,8 @@ class _PacientesListScreenState extends State<PacientesListScreen> {
                                                     onPressed:
                                                         () {}, // Email disabled
                                                   ),
+                                                _buildChatPacienteButton(
+                                                    paciente),
                                                 const SizedBox(width: 4),
                                                 IconButton(
                                                   icon: const Icon(Icons.edit),

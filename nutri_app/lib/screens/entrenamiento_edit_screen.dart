@@ -14,12 +14,14 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import '../services/api_service.dart';
+import '../services/adherencia_service.dart';
 import '../services/auth_service.dart';
 import '../services/auth_error_handler.dart';
 import '../exceptions/auth_exceptions.dart';
 import '../models/entrenamiento.dart';
 import '../models/plan_fit.dart';
 import '../models/plan_fit_dia.dart';
+import '../models/plan_fit_ejercicio.dart';
 import '../models/entrenamiento_ejercicio.dart';
 import '../models/entrenamiento_actividad_custom.dart';
 import '../widgets/esfuerzo_slider.dart';
@@ -63,6 +65,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   late Entrenamiento _entrenamiento;
   late TextEditingController _actividadController;
+  late TextEditingController _tituloController;
   late TextEditingController _descripcionController;
   late TextEditingController _notasController;
   late TextEditingController _actividadCustomController;
@@ -83,6 +86,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
   List<Map<String, dynamic>> _fotosBaseDatos = [];
   bool _isLoading = false;
   bool _hasChanges = false;
+  bool _tituloEditadoManual = false;
   bool _mostrarFormularioCustom = false;
   Timer? _timer;
   final Stopwatch _stopwatch = Stopwatch();
@@ -119,6 +123,119 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
   final List<TextEditingController> _ejercicioTiempoControllers = [];
   final List<TextEditingController> _ejercicioRondasControllers = [];
   final List<TextEditingController> _ejercicioKilosControllers = [];
+  final AdherenciaService _adherenciaService = AdherenciaService();
+
+  AdherenciaEstado _mapFitEstadoByRatio(double ratio) {
+    if (ratio >= 0.8) return AdherenciaEstado.cumplido;
+    if (ratio >= 0.3) return AdherenciaEstado.parcial;
+    return AdherenciaEstado.noRealizado;
+  }
+
+  Future<void> _registrarAdherenciaFitAutomatica({
+    required String localUserKey,
+    required int? codigoUsuarioObjetivo,
+    required int? codigoPacienteObjetivo,
+    required int? codigoUsuarioActor,
+    required DateTime fecha,
+  }) async {
+    if (localUserKey.isEmpty || _planFitSeleccionado == null) {
+      return;
+    }
+    if (_entrenamientoEjercicios.isEmpty) {
+      return;
+    }
+
+    final apiService = Provider.of<ApiService>(context, listen: false);
+    final ejerciciosDelPlan = await apiService.getPlanFitEjercicios(
+      _planFitSeleccionado!,
+    );
+    if (ejerciciosDelPlan.isEmpty) {
+      return;
+    }
+
+    final ejerciciosPlanById = <int, PlanFitEjercicio>{
+      for (final ejercicio in ejerciciosDelPlan) ejercicio.codigo: ejercicio,
+    };
+
+    final ejerciciosActividad = _entrenamientoEjercicios
+        .where((ejercicio) => (ejercicio.codigoPlanFitEjercicio ?? 0) > 0)
+        .toList(growable: false);
+    if (ejerciciosActividad.isEmpty) {
+      return;
+    }
+
+    final diasTocados = <int>{};
+    for (final ejercicioActividad in ejerciciosActividad) {
+      final planId = ejercicioActividad.codigoPlanFitEjercicio;
+      if (planId == null) continue;
+      final ejercicioPlan = ejerciciosPlanById[planId];
+      final codigoDia = ejercicioPlan?.codigoDia;
+      if (codigoDia != null && codigoDia > 0) {
+        diasTocados.add(codigoDia);
+      }
+    }
+
+    if (diasTocados.isEmpty) {
+      final total = ejerciciosActividad.length;
+      final realizados = ejerciciosActividad
+          .where(
+            (ejercicio) => (ejercicio.realizado ?? '').toUpperCase() == 'S',
+          )
+          .length;
+      final ratioFallback = total <= 0 ? 0.0 : (realizados / total);
+      final estadoFallback = _mapFitEstadoByRatio(ratioFallback);
+      await _adherenciaService.registrarEstadoDia(
+        userCode: localUserKey,
+        tipo: AdherenciaTipo.fit,
+        estado: estadoFallback,
+        fecha: fecha,
+        codigoUsuarioObjetivo: codigoUsuarioObjetivo,
+        codigoPacienteObjetivo: codigoPacienteObjetivo,
+        codigoUsuarioActor: codigoUsuarioActor,
+      );
+      return;
+    }
+
+    final ratiosPorDia = <double>[];
+    for (final codigoDia in diasTocados) {
+      final idsEjerciciosDia = ejerciciosDelPlan
+          .where((ejercicio) => ejercicio.codigoDia == codigoDia)
+          .map((ejercicio) => ejercicio.codigo)
+          .toSet();
+
+      if (idsEjerciciosDia.isEmpty) {
+        continue;
+      }
+
+      final realizadosDia = ejerciciosActividad.where((ejercicioActividad) {
+        final planId = ejercicioActividad.codigoPlanFitEjercicio;
+        if (planId == null || !idsEjerciciosDia.contains(planId)) {
+          return false;
+        }
+        return (ejercicioActividad.realizado ?? '').toUpperCase() == 'S';
+      }).length;
+
+      final ratioDia = realizadosDia / idsEjerciciosDia.length;
+      ratiosPorDia.add(ratioDia.clamp(0.0, 1.0));
+    }
+
+    if (ratiosPorDia.isEmpty) {
+      return;
+    }
+
+    final ratio = ratiosPorDia.reduce((a, b) => a + b) / ratiosPorDia.length;
+    final estado = _mapFitEstadoByRatio(ratio);
+
+    await _adherenciaService.registrarEstadoDia(
+      userCode: localUserKey,
+      tipo: AdherenciaTipo.fit,
+      estado: estado,
+      fecha: fecha,
+      codigoUsuarioObjetivo: codigoUsuarioObjetivo,
+      codigoPacienteObjetivo: codigoPacienteObjetivo,
+      codigoUsuarioActor: codigoUsuarioActor,
+    );
+  }
 
   void _syncEjercicioControllers() {
     final total = _entrenamientoEjercicios.length;
@@ -173,6 +290,10 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
       _entrenamiento = widget.entrenamiento!;
       _actividadController =
           TextEditingController(text: _entrenamiento.actividad);
+      _tituloController = TextEditingController(
+        text: (_entrenamiento.titulo ?? '').trim(),
+      );
+      _tituloEditadoManual = (_entrenamiento.titulo ?? '').trim().isNotEmpty;
       _descripcionController = TextEditingController(
           text: _entrenamiento.descripcionActividad ?? '');
       _duracionHoras = _entrenamiento.duracionHoras;
@@ -188,6 +309,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         hour: _entrenamiento.fecha.hour,
         minute: _entrenamiento.fecha.minute,
       );
+      _aplicarTituloPorDefectoSiProcede();
       _loadImagenesEntrenamiento(_entrenamiento.codigo!);
     } else {
       _entrenamiento = Entrenamiento(
@@ -201,12 +323,14 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         codUsuario: '',
       );
       _actividadController = TextEditingController();
+      _tituloController = TextEditingController();
       _descripcionController = TextEditingController();
       _duracionHoras = 0;
       _duracionMinutos = 0;
       _duracionKilometros = 0.0;
       _notasController = TextEditingController();
       _planFitSeleccionado = widget.planFitId;
+      _aplicarTituloPorDefectoSiProcede(force: true);
       _loadLastActivity();
     }
 
@@ -457,11 +581,8 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
             itemBuilder: (context, index) {
               final dia = dias[index];
               final titulo = (dia.titulo ?? '').trim();
-              final total = dia.totalEjercicios ?? 0;
               return ListTile(
-                title: Text('Día ${dia.numeroDia}'),
-                subtitle: Text(
-                    '${titulo.isNotEmpty ? titulo : 'Sin título'} · $total ejercicios'),
+                title: Text(titulo.isNotEmpty ? titulo : 'Sin descripción'),
                 onTap: () => Navigator.pop(context, dia),
               );
             },
@@ -588,6 +709,76 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     );
   }
 
+  PlanFit? _getSelectedPlanFit() {
+    final selectedCode = _planFitSeleccionado;
+    if (selectedCode == null) return null;
+    for (final plan in _planesFitDisponibles) {
+      if (plan.codigo == selectedCode) return plan;
+    }
+    return null;
+  }
+
+  String _buildPlanFitDateRange(PlanFit plan) {
+    final desde =
+        plan.desde != null ? DateFormat('dd/MM/yyyy').format(plan.desde!) : '';
+    final hasta =
+        plan.hasta != null ? DateFormat('dd/MM/yyyy').format(plan.hasta!) : '';
+    if (desde.isEmpty && hasta.isEmpty) return 'Sin fechas';
+    return '$desde - $hasta';
+  }
+
+  Widget _buildPlanFitSelector() {
+    final selectedPlan = _getSelectedPlanFit();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ChoiceChip(
+                label: const Text('Sin plan'),
+                selected: _planFitSeleccionado == null,
+                onSelected: (selected) {
+                  if (selected) {
+                    _handlePlanFitSelection(null);
+                  }
+                },
+              ),
+              ..._planesFitDisponibles.map(
+                (plan) => ChoiceChip(
+                  label: Text('Plan ${plan.codigo}'),
+                  selected: _planFitSeleccionado == plan.codigo,
+                  onSelected: (selected) {
+                    if (selected) {
+                      _handlePlanFitSelection(plan.codigo);
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            selectedPlan == null
+                ? 'No asociada a ningún plan fit.'
+                : 'Seleccionado: Plan ${selectedPlan.codigo} (${_buildPlanFitDateRange(selectedPlan)})',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _loadImagenesEntrenamiento(int codigoEntrenamiento) async {
     try {
       final apiService = Provider.of<ApiService>(context, listen: false);
@@ -607,8 +798,33 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     if (lastActivity != null && lastActivity.isNotEmpty) {
       setState(() {
         _actividadController.text = lastActivity;
+        _aplicarTituloPorDefectoSiProcede();
       });
     }
+  }
+
+  String _momentoDelDiaLabel(TimeOfDay hora) {
+    if (hora.hour < 12) return 'mañana';
+    if (hora.hour < 20) return 'tarde';
+    return 'noche';
+  }
+
+  String _buildTituloPorDefecto() {
+    final actividad = _actividadController.text.trim();
+    if (actividad.isEmpty) return '';
+    return '$actividad por la ${_momentoDelDiaLabel(_horaSeleccionada)}';
+  }
+
+  void _aplicarTituloPorDefectoSiProcede({bool force = false}) {
+    final current = _tituloController.text.trim();
+    if (!force && _tituloEditadoManual && current.isNotEmpty) {
+      return;
+    }
+    final titulo = _buildTituloPorDefecto();
+    _tituloController.text = titulo;
+    _tituloController.selection = TextSelection.fromPosition(
+      TextPosition(offset: _tituloController.text.length),
+    );
   }
 
   Future<void> _saveLastActivity(String activity) async {
@@ -839,6 +1055,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     int max = 9999,
     bool showButtons = true,
     double fieldWidth = 70,
+    double buttonGap = 6,
     double labelSpacing = 2,
     Color? labelColor,
     Color? textColor,
@@ -931,7 +1148,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
               ),
             ),
             if (showButtons) ...[
-              const SizedBox(width: 6),
+              SizedBox(width: buttonGap),
               Column(
                 children: [
                   GestureDetector(
@@ -1403,7 +1620,8 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                             controller: tiempoController,
                             min: 0,
                             max: 3600,
-                            fieldWidth: 92,
+                            fieldWidth: 84,
+                            buttonGap: 3,
                             labelSpacing: 0,
                             prefixIcon: Icons.schedule,
                             contentPadding: const EdgeInsets.symmetric(
@@ -1421,7 +1639,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                             },
                           ),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: _buildMiniIntInput(
                             label: '',
@@ -1809,92 +2027,106 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                                       ),
                                       const SizedBox(height: 6),
                                       if (showInputs)
-                                        Row(
-                                          children: [
-                                            Focus(
-                                              onFocusChange: (hasFocus) {
-                                                if (!hasFocus) {
-                                                  _recalculateActividadFromEjercicios();
-                                                }
-                                              },
-                                              child: _buildMiniIntInput(
-                                                label: 'Tiempo',
-                                                value: tiempo,
-                                                controller:
-                                                    _ejercicioTiempoControllers[
-                                                        index],
-                                                min: 0,
-                                                max: 3600,
-                                                fieldWidth: 42,
-                                                showButtons: false,
-                                                labelSpacing: 1,
-                                                labelColor: Colors.white70,
-                                                textColor: Colors.white,
-                                                borderColor: Colors.white70,
-                                                onChanged: (value) {
-                                                  ejercicio.tiempoRealizado =
-                                                      value;
-                                                  _markDirty();
-                                                },
-                                              ),
-                                            ),
-                                            const SizedBox(width: 6),
-                                            Focus(
-                                              onFocusChange: (hasFocus) {
-                                                if (!hasFocus) {
-                                                  _recalculateActividadFromEjercicios();
-                                                }
-                                              },
-                                              child: _buildMiniIntInput(
-                                                label: 'Repet.',
-                                                value: rondas,
-                                                controller:
-                                                    _ejercicioRondasControllers[
-                                                        index],
-                                                min: 0,
-                                                max: 500,
-                                                fieldWidth: 42,
-                                                showButtons: false,
-                                                labelSpacing: 1,
-                                                labelColor: Colors.white70,
-                                                textColor: Colors.white,
-                                                borderColor: Colors.white70,
-                                                onChanged: (value) {
-                                                  ejercicio
-                                                          .repeticionesRealizadas =
-                                                      value;
-                                                  _markDirty();
-                                                },
-                                              ),
-                                            ),
-                                            const SizedBox(width: 6),
-                                            Focus(
-                                              onFocusChange: (hasFocus) {
-                                                if (!hasFocus) {
-                                                  _recalculateActividadFromEjercicios();
-                                                }
-                                              },
-                                              child: _buildMiniIntInput(
-                                                label: 'Kg',
-                                                value: kilos,
-                                                controller:
-                                                    _ejercicioKilosControllers[
-                                                        index],
-                                                min: 0,
-                                                max: 500,
-                                                fieldWidth: 42,
-                                                showButtons: false,
-                                                labelSpacing: 1,
-                                                labelColor: Colors.white70,
-                                                textColor: Colors.white,
-                                                borderColor: Colors.white70,
-                                                onChanged: (value) {
-                                                  ejercicio.kilosPlan = value;
-                                                  _markDirty();
-                                                },
-                                              ),
-                                            ),
-                                          ],
+                                        LayoutBuilder(
+                                          builder: (context, constraints) {
+                                            const spacing = 6.0;
+                                            final miniFieldWidth =
+                                                ((constraints.maxWidth -
+                                                            (spacing * 2)) /
+                                                        3)
+                                                    .clamp(30.0, 42.0)
+                                                    .toDouble();
+
+                                            return Row(
+                                              children: [
+                                                Focus(
+                                                  onFocusChange: (hasFocus) {
+                                                    if (!hasFocus) {
+                                                      _recalculateActividadFromEjercicios();
+                                                    }
+                                                  },
+                                                  child: _buildMiniIntInput(
+                                                    label: 'T',
+                                                    value: tiempo,
+                                                    controller:
+                                                        _ejercicioTiempoControllers[
+                                                            index],
+                                                    min: 0,
+                                                    max: 3600,
+                                                    fieldWidth: miniFieldWidth,
+                                                    showButtons: false,
+                                                    labelSpacing: 1,
+                                                    labelColor: Colors.white70,
+                                                    textColor: Colors.white,
+                                                    borderColor: Colors.white70,
+                                                    onChanged: (value) {
+                                                      ejercicio
+                                                              .tiempoRealizado =
+                                                          value;
+                                                      _markDirty();
+                                                    },
+                                                  ),
+                                                ),
+                                                const SizedBox(width: spacing),
+                                                Focus(
+                                                  onFocusChange: (hasFocus) {
+                                                    if (!hasFocus) {
+                                                      _recalculateActividadFromEjercicios();
+                                                    }
+                                                  },
+                                                  child: _buildMiniIntInput(
+                                                    label: 'R',
+                                                    value: rondas,
+                                                    controller:
+                                                        _ejercicioRondasControllers[
+                                                            index],
+                                                    min: 0,
+                                                    max: 500,
+                                                    fieldWidth: miniFieldWidth,
+                                                    showButtons: false,
+                                                    labelSpacing: 1,
+                                                    labelColor: Colors.white70,
+                                                    textColor: Colors.white,
+                                                    borderColor: Colors.white70,
+                                                    onChanged: (value) {
+                                                      ejercicio
+                                                              .repeticionesRealizadas =
+                                                          value;
+                                                      _markDirty();
+                                                    },
+                                                  ),
+                                                ),
+                                                const SizedBox(width: spacing),
+                                                Focus(
+                                                  onFocusChange: (hasFocus) {
+                                                    if (!hasFocus) {
+                                                      _recalculateActividadFromEjercicios();
+                                                    }
+                                                  },
+                                                  child: _buildMiniIntInput(
+                                                    label: 'Kg',
+                                                    value: kilos,
+                                                    controller:
+                                                        _ejercicioKilosControllers[
+                                                            index],
+                                                    min: 0,
+                                                    max: 500,
+                                                    fieldWidth: miniFieldWidth,
+                                                    showButtons: false,
+                                                    labelSpacing: 1,
+                                                    labelColor: Colors.white70,
+                                                    textColor: Colors.white,
+                                                    borderColor: Colors.white70,
+                                                    onChanged: (value) {
+                                                      ejercicio.kilosPlan =
+                                                          value;
+                                                      _markDirty();
+                                                    },
+                                                  ),
+                                                ),
+                                              ],
+                                            );
+                                          },
                                         ),
                                     ],
                                   ),
@@ -1925,6 +2157,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     _timerTabController.dispose();
     _audioPlayer.dispose();
     _actividadController.dispose();
+    _tituloController.dispose();
     _descripcionController.dispose();
     _notasController.dispose();
     _actividadCustomController.dispose();
@@ -2006,6 +2239,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     if (picked != null) {
       setState(() {
         _horaSeleccionada = picked;
+        _aplicarTituloPorDefectoSiProcede();
       });
       _markDirty();
     }
@@ -2935,6 +3169,17 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
       final apiService = Provider.of<ApiService>(context, listen: false);
       final codigoPaciente =
           authService.patientCode ?? authService.userCode ?? '';
+      final isNutriOrAdmin = authService.userType == 'Nutricionista' ||
+          authService.userType == 'Administrador';
+      final adherenciaUserCode = isNutriOrAdmin
+          ? codigoPaciente
+          : (authService.userCode ?? codigoPaciente);
+      final codigoUsuarioObjetivo = isNutriOrAdmin
+          ? null
+          : int.tryParse((authService.userCode ?? '').trim());
+      final codigoPacienteObjetivo = int.tryParse((codigoPaciente).trim());
+      final codigoUsuarioActor =
+          int.tryParse((authService.userCode ?? '').trim());
 
       // Crear fecha completa
       final fechaCompleta = DateTime(
@@ -2966,6 +3211,9 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
       final data = {
         'codigo_paciente': codigoPaciente,
         'actividad': _actividadController.text,
+        'titulo': _tituloController.text.trim().isEmpty
+            ? null
+            : _tituloController.text.trim(),
         'descripcion_actividad': _descripcionController.text.isEmpty
             ? null
             : _descripcionController.text,
@@ -3004,6 +3252,18 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
             }
             await apiService.saveEntrenamientoEjercicios(
                 codigo, _entrenamientoEjercicios);
+          }
+          if (_planFitSeleccionado != null &&
+              _entrenamientoEjercicios.isNotEmpty) {
+            try {
+              await _registrarAdherenciaFitAutomatica(
+                localUserKey: adherenciaUserCode,
+                codigoUsuarioObjetivo: codigoUsuarioObjetivo,
+                codigoPacienteObjetivo: codigoPacienteObjetivo,
+                codigoUsuarioActor: codigoUsuarioActor,
+                fecha: fechaCompleta,
+              );
+            } catch (_) {}
           }
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -3050,6 +3310,18 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
             }
             await apiService.saveEntrenamientoEjercicios(
                 codigoCreado, _entrenamientoEjercicios);
+          }
+          if (_planFitSeleccionado != null &&
+              _entrenamientoEjercicios.isNotEmpty) {
+            try {
+              await _registrarAdherenciaFitAutomatica(
+                localUserKey: adherenciaUserCode,
+                codigoUsuarioObjetivo: codigoUsuarioObjetivo,
+                codigoPacienteObjetivo: codigoPacienteObjetivo,
+                codigoUsuarioActor: codigoUsuarioActor,
+                fecha: fechaCompleta,
+              );
+            } catch (_) {}
           }
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -3425,6 +3697,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     int extraSeconds = 0;
 
     Timer? ticker;
+    Timer? adjustTimer;
     DateTime? runningSince;
     Duration accumulatedDuration = Duration.zero;
 
@@ -3455,6 +3728,11 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     void stopTicker() {
       ticker?.cancel();
       ticker = null;
+    }
+
+    void stopAdjustTimer() {
+      adjustTimer?.cancel();
+      adjustTimer = null;
     }
 
     void startTicker(StateSetter setDialogState) {
@@ -3522,7 +3800,27 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                 setDialogState(() {});
               }
 
+              void startAdjustHold(int delta) {
+                if (running) return;
+                stopAdjustTimer();
+                adjustTimer = Timer.periodic(
+                  const Duration(milliseconds: 80),
+                  (_) {
+                    if (running) {
+                      stopAdjustTimer();
+                      return;
+                    }
+                    final before = baseSeconds;
+                    adjustBaseSeconds(delta);
+                    if (before == baseSeconds) {
+                      stopAdjustTimer();
+                    }
+                  },
+                );
+              }
+
               void saveAndClose() {
+                stopAdjustTimer();
                 if (running && runningSince != null) {
                   accumulatedDuration +=
                       DateTime.now().difference(runningSince!);
@@ -3544,6 +3842,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
               }
 
               void closeWithoutSave() async {
+                stopAdjustTimer();
                 // Si el contador está corriendo, mostrar diálogo de confirmación
                 if (running) {
                   final action = await showDialog<String>(
@@ -3752,23 +4051,38 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                                     SizedBox(
                                       width: 96,
                                       height: 54,
-                                      child: ElevatedButton(
-                                        onPressed: running
-                                            ? null
-                                            : () => adjustBaseSeconds(-1),
-                                        child:
-                                            const Icon(Icons.remove, size: 30),
+                                      child: GestureDetector(
+                                        onLongPressStart: (_) =>
+                                            startAdjustHold(-1),
+                                        onLongPressEnd: (_) =>
+                                            stopAdjustTimer(),
+                                        onLongPressCancel: stopAdjustTimer,
+                                        child: ElevatedButton(
+                                          onPressed: running
+                                              ? null
+                                              : () => adjustBaseSeconds(-1),
+                                          child: const Icon(Icons.remove,
+                                              size: 30),
+                                        ),
                                       ),
                                     ),
                                     const SizedBox(width: 16),
                                     SizedBox(
                                       width: 96,
                                       height: 54,
-                                      child: ElevatedButton(
-                                        onPressed: running
-                                            ? null
-                                            : () => adjustBaseSeconds(1),
-                                        child: const Icon(Icons.add, size: 30),
+                                      child: GestureDetector(
+                                        onLongPressStart: (_) =>
+                                            startAdjustHold(1),
+                                        onLongPressEnd: (_) =>
+                                            stopAdjustTimer(),
+                                        onLongPressCancel: stopAdjustTimer,
+                                        child: ElevatedButton(
+                                          onPressed: running
+                                              ? null
+                                              : () => adjustBaseSeconds(1),
+                                          child:
+                                              const Icon(Icons.add, size: 30),
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -3843,6 +4157,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
       );
     } finally {
       ticker?.cancel();
+      adjustTimer?.cancel();
       try {
         await WakelockPlus.disable();
       } catch (e) {
@@ -4440,6 +4755,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                                 if (value != null) {
                                   setState(() {
                                     _actividadController.text = value;
+                                    _aplicarTituloPorDefectoSiProcede();
                                   });
                                   _saveLastActivity(value);
                                 }
@@ -4563,6 +4879,32 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                       ],
 
                       const SizedBox(height: 20),
+
+                      Text(
+                        'Titulo (opcional)',
+                        style:
+                            Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextFormField(
+                        controller: _tituloController,
+                        maxLength: 250,
+                        textCapitalization: TextCapitalization.sentences,
+                        decoration: InputDecoration(
+                          hintText: 'Ej: Gimnasia por la manana',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          contentPadding: const EdgeInsets.all(12),
+                        ),
+                        onChanged: (value) {
+                          _tituloEditadoManual = value.trim().isNotEmpty;
+                        },
+                      ),
+
+                      const SizedBox(height: 8),
 
                       // Fecha y hora
                       Text(
@@ -4827,38 +5169,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                                   ),
                         ),
                         const SizedBox(height: 8),
-                        DropdownButtonFormField<int?>(
-                          initialValue: _planFitSeleccionado,
-                          items: [
-                            const DropdownMenuItem(
-                              value: null,
-                              child: Text('No asociar a ningún plan'),
-                            ),
-                            ..._planesFitDisponibles.map((plan) {
-                              final desde = plan.desde != null
-                                  ? DateFormat('dd/MM/yyyy').format(plan.desde!)
-                                  : '';
-                              final hasta = plan.hasta != null
-                                  ? DateFormat('dd/MM/yyyy').format(plan.hasta!)
-                                  : '';
-                              return DropdownMenuItem(
-                                value: plan.codigo,
-                                child: Text(
-                                  'Plan ${plan.codigo} ($desde - $hasta)',
-                                ),
-                              );
-                            }).toList(),
-                          ],
-                          onChanged: _handlePlanFitSelection,
-                          decoration: InputDecoration(
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 16),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            hintText: 'Selecciona un plan fit',
-                          ),
-                        ),
+                        _buildPlanFitSelector(),
                         if (_planFitSeleccionado != null &&
                             _planFitDias.isNotEmpty) ...[
                           const SizedBox(height: 12),

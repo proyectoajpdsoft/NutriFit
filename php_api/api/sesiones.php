@@ -24,10 +24,28 @@ PermissionManager::checkPermission($user, 'sesiones');
 // GET: Obtener sesiones del usuario
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $codigo_usuario = isset($_GET['codigo_usuario']) ? $_GET['codigo_usuario'] : null;
+    $codigo_usuario_auth = intval($user['codigo'] ?? 0);
+    $is_admin = (($user['administrador'] ?? 'N') === 'S');
+    $is_nutri = strtolower(trim((string)($user['tipo'] ?? ''))) === 'nutricionista';
 
     if (empty($codigo_usuario)) {
         http_response_code(400);
         echo json_encode(array("message" => "Falta codigo_usuario."));
+        exit();
+    }
+
+    $codigo_usuario = intval($codigo_usuario);
+
+    if ($codigo_usuario_auth <= 0) {
+        http_response_code(401);
+        echo json_encode(array("message" => "Usuario inválido."));
+        exit();
+    }
+
+    // LOPDGDD/RGPD: usuario normal solo puede consultar sus propias sesiones.
+    if (!$is_admin && !$is_nutri && $codigo_usuario !== $codigo_usuario_auth) {
+        http_response_code(403);
+        echo json_encode(array("message" => "No tienes permiso para consultar sesiones de otro usuario."));
         exit();
     }
 

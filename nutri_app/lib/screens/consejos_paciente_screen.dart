@@ -844,6 +844,49 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
     );
   }
 
+  Widget _buildGuestFavoritosEmptyCard({required String tipo}) {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 20),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.purple.shade50,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.purple.shade100),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.bookmark_outline,
+              size: 34,
+              color: Colors.purple.shade600,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Para poder marcar $tipo como favoritos, debes registrarte (es gratis).',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: Colors.purple.shade800,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pushNamed(context, '/register'),
+              icon: const Icon(Icons.app_registration),
+              label: const Text('Iniciar registro'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.purple,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final listBottomPadding = 88.0 + MediaQuery.of(context).padding.bottom;
@@ -1071,7 +1114,12 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
                       return const Center(child: CircularProgressIndicator());
                     }
                     final items = _applySearchAndSort(_consejosFavoritos);
+                    final isWithoutCredentials =
+                        _isGuestMode || (_userCode ?? '').isEmpty;
                     if (items.isEmpty) {
+                      if (isWithoutCredentials) {
+                        return _buildGuestFavoritosEmptyCard(tipo: 'consejos');
+                      }
                       return const Center(
                         child: Text('No tienes consejos favoritos'),
                       );

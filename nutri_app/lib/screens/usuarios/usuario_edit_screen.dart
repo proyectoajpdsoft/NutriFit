@@ -24,6 +24,7 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
   late Future<List<Paciente>> _pacientesFuture;
   bool _isLoadingDefaults = true;
   bool _hasChanges = false;
+  bool _isDisablingTwoFactor = false;
   int _maxImageWidth = 400;
   int _maxImageHeight = 400;
 
@@ -34,6 +35,8 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
   String? _email;
   String? _tipo;
   int? _codigoPaciente;
+  int? _edad;
+  int? _altura;
   bool _activo = true;
   bool _accesoWeb = true;
   String? _imageBase64;
@@ -53,6 +56,8 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
       _email = u.email;
       _tipo = u.tipo;
       _codigoPaciente = u.codigoPaciente;
+      _edad = u.edad;
+      _altura = u.altura;
       _activo = u.activo == 'S';
       _accesoWeb = u.accesoweb == 'S';
       _imageBase64 = u.imgPerfil;
@@ -193,6 +198,8 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
         'email': _email,
         'tipo': _tipo,
         'codigo_paciente': _codigoPaciente,
+        'edad': _edad,
+        'altura': _altura,
         'activo': _activo ? 'S' : 'N',
         'accesoweb': _accesoWeb ? 'S' : 'N',
         'administrador': isAdmin,
@@ -299,6 +306,74 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
     }
   }
 
+  Future<void> _adminDisableTwoFactorForCurrentUser() async {
+    final usuario = widget.usuario;
+    if (usuario == null) {
+      return;
+    }
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Desactivar 2FA'),
+        content: Text(
+          'Se desactivará el doble factor del usuario "${usuario.nick}".\n\nEsta acción está pensada para soporte cuando el usuario no puede acceder a su app de autenticación.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Desactivar 2FA'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) {
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _isDisablingTwoFactor = true;
+    });
+
+    try {
+      await _apiService.adminDisableTwoFactorForUser(
+        codigoUsuario: usuario.codigo,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('2FA desactivado correctamente para este usuario.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      final errorMessage = e.toString().replaceFirst('Exception: ', '');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            errorMessage.isNotEmpty
+                ? errorMessage
+                : 'No se pudo desactivar el 2FA del usuario.',
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _isDisablingTwoFactor = false;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoadingDefaults) {
@@ -366,12 +441,78 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
                     keyboardType: TextInputType.emailAddress,
                     onSaved: (value) => _email = value,
                   ),
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.orange.shade200),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          color: Colors.orange.shade800,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Para habilitar cálculo de IMC, MVP y métricas de salud, indica Edad y Altura del usuario.',
+                            style: TextStyle(
+                              color: Colors.orange.shade900,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    initialValue: _edad?.toString() ?? '',
+                    decoration: const InputDecoration(labelText: 'Edad'),
+                    keyboardType: TextInputType.number,
+                    validator: (value) {
+                      if ((value ?? '').trim().isEmpty) return null;
+                      final parsed = int.tryParse(value!.trim());
+                      if (parsed == null || parsed <= 0 || parsed > 120) {
+                        return 'Edad no válida';
+                      }
+                      return null;
+                    },
+                    onSaved: (value) {
+                      final parsed = int.tryParse((value ?? '').trim());
+                      _edad = (parsed != null && parsed > 0) ? parsed : null;
+                    },
+                  ),
+                  TextFormField(
+                    initialValue: _altura?.toString() ?? '',
+                    decoration: const InputDecoration(labelText: 'Altura (cm)'),
+                    keyboardType: TextInputType.number,
+                    validator: (value) {
+                      if ((value ?? '').trim().isEmpty) return null;
+                      final parsed = int.tryParse(value!.trim());
+                      if (parsed == null || parsed < 80 || parsed > 250) {
+                        return 'Altura no válida';
+                      }
+                      return null;
+                    },
+                    onSaved: (value) {
+                      final parsed = int.tryParse((value ?? '').trim());
+                      _altura = (parsed != null && parsed > 0) ? parsed : null;
+                    },
+                  ),
                   TextFormField(
                     obscureText: true,
                     decoration: InputDecoration(
                         labelText: widget.usuario != null
                             ? 'Nueva Contraseña (dejar en blanco para no cambiar)'
-                            : 'Contraseña'),
+                            : 'Contraseña',
+                        errorMaxLines: 3),
                     validator: (value) {
                       final configService = context.read<ConfigService>();
 
@@ -440,6 +581,50 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
                     value: _accesoWeb,
                     onChanged: (value) => setState(() => _accesoWeb = value),
                   ),
+                  if (widget.usuario != null) ...[
+                    const SizedBox(height: 8),
+                    Card(
+                      color: Colors.orange.shade50,
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Soporte de acceso',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            const Text(
+                              'Si el usuario no puede entrar porque perdió la app de autenticación, puedes desactivar su 2FA desde aquí.',
+                              style: TextStyle(fontSize: 13),
+                            ),
+                            const SizedBox(height: 10),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: OutlinedButton.icon(
+                                onPressed: _isDisablingTwoFactor
+                                    ? null
+                                    : _adminDisableTwoFactorForCurrentUser,
+                                icon: _isDisablingTwoFactor
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.lock_reset),
+                                label: const Text('Desactivar 2FA de usuario'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

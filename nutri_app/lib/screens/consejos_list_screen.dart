@@ -101,8 +101,8 @@ class _ConsejosListScreenState extends State<ConsejosListScreen> {
             try {
               return Consejo.fromJson(item);
             } catch (e) {
-              debugPrint('Error al parsear consejo: $e');
-              debugPrint('Item: $item');
+              //debugPrint('Error al parsear consejo: $e');
+              //debugPrint('Item: $item');
               rethrow;
             }
           }).toList();
@@ -221,6 +221,61 @@ class _ConsejosListScreenState extends State<ConsejosListScreen> {
         );
       }
     }
+  }
+
+  Future<Consejo?> _fetchConsejoDetalle(int? codigo) async {
+    if (codigo == null) return null;
+
+    try {
+      final apiService = Provider.of<ApiService>(context, listen: false);
+      final response = await apiService.get('api/consejos.php?codigo=$codigo');
+
+      if (response.statusCode != 200) {
+        return null;
+      }
+
+      final data = json.decode(response.body);
+      if (data is Map<String, dynamic>) {
+        return Consejo.fromJson(data);
+      }
+
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _openConsejoImageViewer(Consejo consejo) async {
+    final detalle = await _fetchConsejoDetalle(consejo.codigo);
+    final imagenPortada = (detalle?.imagenPortada ?? '').trim();
+    final imagenFallback =
+        (consejo.imagenPortada ?? consejo.imagenMiniatura ?? '').trim();
+    final imagen = imagenPortada.isNotEmpty ? imagenPortada : imagenFallback;
+
+    if (!mounted || imagen.isEmpty) return;
+
+    showImageViewerDialog(
+      context: context,
+      base64Image: imagen,
+      title: consejo.titulo,
+    );
+  }
+
+  Future<void> _openConsejoPreview(Consejo consejo) async {
+    final detalle = await _fetchConsejoDetalle(consejo.codigo);
+    final consejoPreview = detalle ?? consejo;
+
+    if (!mounted) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ConsejoDetailScreen(
+          consejo: consejoPreview,
+          isPreviewMode: true,
+        ),
+      ),
+    );
   }
 
   @override
@@ -436,15 +491,9 @@ class _ConsejosListScreenState extends State<ConsejosListScreen> {
                                       // Imagen (using thumbnail for better performance)
                                       consejo.imagenMiniatura != null
                                           ? GestureDetector(
-                                              onTap: () {
-                                                final imagen = consejo
-                                                        .imagenPortada ??
-                                                    consejo.imagenMiniatura!;
-                                                showImageViewerDialog(
-                                                  context: context,
-                                                  base64Image: imagen,
-                                                  title: consejo.titulo,
-                                                );
+                                              onTap: () async {
+                                                await _openConsejoImageViewer(
+                                                    consejo);
                                               },
                                               child: ClipRRect(
                                                 borderRadius:
@@ -554,17 +603,9 @@ class _ConsejosListScreenState extends State<ConsejosListScreen> {
                                                   color: Colors.blue,
                                                   iconSize: 28,
                                                   tooltip: 'Vista previa',
-                                                  onPressed: () {
-                                                    Navigator.push(
-                                                      context,
-                                                      MaterialPageRoute(
-                                                        builder: (context) =>
-                                                            ConsejoDetailScreen(
-                                                          consejo: consejo,
-                                                          isPreviewMode: true,
-                                                        ),
-                                                      ),
-                                                    );
+                                                  onPressed: () async {
+                                                    await _openConsejoPreview(
+                                                        consejo);
                                                   },
                                                 ),
                                                 IconButton(

@@ -26,3 +26,14 @@ class UnauthorizedException implements Exception {
   @override
   String toString() => message;
 }
+
+class TwoFactorRequiredException implements Exception {
+  final String message;
+
+  TwoFactorRequiredException({
+    this.message = 'Se requiere código de autenticación de 6 dígitos.',
+  });
+
+  @override
+  String toString() => message;
+}

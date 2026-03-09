@@ -11,6 +11,17 @@ class ListaCompraItem {
   DateTime? fechaCaducidad;
   DateTime? fechaCompra;
   String? notas;
+  String? escanerFuente;
+  String? offCodigoBarras;
+  String? offNombreProducto;
+  String? offMarca;
+  String? offNutriScore;
+  int? offNovaGroup;
+  String? offCantidad;
+  String? offPorcion;
+  String? offIngredientes;
+  String? offNutrimentsJson;
+  String? offRawJson;
   int? codusuarioa;
   DateTime? fechaa;
   int? codusuariom;
@@ -28,6 +39,17 @@ class ListaCompraItem {
     this.fechaCaducidad,
     this.fechaCompra,
     this.notas,
+    this.escanerFuente,
+    this.offCodigoBarras,
+    this.offNombreProducto,
+    this.offMarca,
+    this.offNutriScore,
+    this.offNovaGroup,
+    this.offCantidad,
+    this.offPorcion,
+    this.offIngredientes,
+    this.offNutrimentsJson,
+    this.offRawJson,
     this.codusuarioa,
     this.fechaa,
     this.codusuariom,
@@ -54,6 +76,19 @@ class ListaCompraItem {
           ? DateTime.parse(json['fecha_compra'])
           : null,
       notas: json['notas'],
+      escanerFuente: json['escaner_fuente'],
+      offCodigoBarras: json['off_codigo_barras'],
+      offNombreProducto: json['off_nombre_producto'],
+      offMarca: json['off_marca'],
+      offNutriScore: json['off_nutri_score'],
+      offNovaGroup: json['off_nova_group'] != null
+          ? int.tryParse(json['off_nova_group'].toString())
+          : null,
+      offCantidad: json['off_cantidad'],
+      offPorcion: json['off_porcion'],
+      offIngredientes: json['off_ingredientes'],
+      offNutrimentsJson: json['off_nutriments_json'],
+      offRawJson: json['off_raw_json'],
       codusuarioa: json['codusuarioa'] != null
           ? int.parse(json['codusuarioa'].toString())
           : null,
@@ -79,6 +114,17 @@ class ListaCompraItem {
         'fecha_caducidad': fechaCaducidad!.toIso8601String(),
       if (fechaCompra != null) 'fecha_compra': fechaCompra!.toIso8601String(),
       if (notas != null) 'notas': notas,
+      if (escanerFuente != null) 'escaner_fuente': escanerFuente,
+      if (offCodigoBarras != null) 'off_codigo_barras': offCodigoBarras,
+      if (offNombreProducto != null) 'off_nombre_producto': offNombreProducto,
+      if (offMarca != null) 'off_marca': offMarca,
+      if (offNutriScore != null) 'off_nutri_score': offNutriScore,
+      if (offNovaGroup != null) 'off_nova_group': offNovaGroup,
+      if (offCantidad != null) 'off_cantidad': offCantidad,
+      if (offPorcion != null) 'off_porcion': offPorcion,
+      if (offIngredientes != null) 'off_ingredientes': offIngredientes,
+      if (offNutrimentsJson != null) 'off_nutriments_json': offNutrimentsJson,
+      if (offRawJson != null) 'off_raw_json': offRawJson,
       if (codusuarioa != null) 'codusuarioa': codusuarioa,
       if (fechaa != null) 'fechaa': fechaa!.toIso8601String(),
       if (codusuariom != null) 'codusuariom': codusuariom,

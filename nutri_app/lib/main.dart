@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:nutri_app/screens/home_screen.dart';
 import 'package:nutri_app/screens/login_screen.dart';
@@ -24,6 +26,9 @@ import 'package:nutri_app/screens/recetas_list_screen.dart';
 import 'package:nutri_app/screens/receta_edit_screen.dart';
 import 'package:nutri_app/screens/lista_compra_screen.dart';
 import 'package:nutri_app/screens/entrenamientos_screen.dart';
+import 'package:nutri_app/screens/todo_list_screen.dart';
+import 'package:nutri_app/screens/etiqueta_nutricional_scanner_screen.dart';
+import 'package:nutri_app/screens/user_settings_screen.dart';
 import 'package:nutri_app/services/auth_error_handler.dart';
 import 'package:nutri_app/constants/app_constants.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -35,8 +40,22 @@ const _windowXKey = 'window_x';
 const _windowYKey = 'window_y';
 const _windowMaximizedKey = 'window_maximized';
 
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  try {
+    await Firebase.initializeApp();
+  } catch (_) {}
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await Firebase.initializeApp();
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  } catch (_) {
+    // Si Firebase no está configurado todavía en el entorno local,
+    // no bloqueamos el arranque de la app.
+  }
   await _initWindowManager();
   runApp(const AppState());
 }
@@ -133,6 +152,9 @@ class MyApp extends StatelessWidget {
         '/receta_edit': (_) => const RecetaEditScreen(),
         '/lista_compra': (_) => const ListaCompraScreen(),
         '/entrenamientos': (_) => const EntrenamientosScreen(),
+        '/todo_list': (_) => const TodoListScreen(),
+        '/scanner_etiquetas': (_) => const EtiquetaNutricionalScannerScreen(),
+        '/user_settings': (_) => const UserSettingsScreen(),
       },
     );
   }
