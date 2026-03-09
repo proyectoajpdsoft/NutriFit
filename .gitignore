@@ -113,3 +113,6 @@ nutri_app/ios/Flutter/Generated.xcconfig
 # Ignore backup config
 php_api/config/database.php
 !php_api/config/database_.php
+
+# Firebase private keys
+nutri_app/Clave_Privada_Firebase/
