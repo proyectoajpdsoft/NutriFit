@@ -13,6 +13,9 @@ import 'package:nutri_app/screens/mediciones/mediciones_pacientes_list_screen.da
 import 'package:nutri_app/screens/usuarios/usuarios_list_screen.dart';
 import 'package:nutri_app/screens/recetas_list_screen.dart';
 import 'package:nutri_app/screens/consejos_list_screen.dart';
+import 'package:nutri_app/screens/suplementos_list_screen.dart';
+import 'package:nutri_app/screens/aditivos_list_screen.dart';
+import 'package:nutri_app/screens/sustituciones_saludables_list_screen.dart';
 import 'package:nutri_app/screens/actividades_con_plan_list_screen.dart';
 import 'package:nutri_app/screens/planes_fit/plan_fit_ejercicios_catalog_screen.dart';
 
@@ -37,6 +40,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _totalUsuarios = 0;
   int _totalRecetas = 0;
   int _totalConsejos = 0;
+  int _totalSuplementos = 0;
+  int _totalAditivos = 0;
+  int _totalSustituciones = 0;
   int _totalActividades = 0;
   int _totalEjerciciosCatalog = 0;
 
@@ -79,6 +85,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
           await _apiService.getTotal('recetas.php?total_recetas=true');
       final consejosCount =
           await _apiService.getTotal('consejos.php?total_consejos=true');
+      final suplementosCount =
+          await _apiService.getTotal('suplementos.php?total_suplementos=true');
+      final aditivosCount =
+          await _apiService.getTotal('aditivos.php?total_aditivos=true');
+      final sustitucionesCount =
+          await _apiService.getTotal('sustituciones_saludables.php?total');
       final actividadesCount = await _apiService
           .getTotal('entrenamientos.php?action=total_actividades_con_plan');
       final ejerciciosCatalogCount =
@@ -97,6 +109,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _totalUsuarios = usuariosCount;
         _totalRecetas = recetasCount;
         _totalConsejos = consejosCount;
+        _totalSuplementos = suplementosCount;
+        _totalAditivos = aditivosCount;
+        _totalSustituciones = sustitucionesCount;
         _totalActividades = actividadesCount;
         _totalEjerciciosCatalog = ejerciciosCatalogCount;
       });
@@ -228,17 +243,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ],
                   ),
-                  _buildDashboardCard(
-                    title: 'Citas',
-                    value: _totalCitas.toString(),
-                    icon: Icons.calendar_today,
-                    color: Colors.purple,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                            builder: (context) => const CitasCalendarScreen()),
-                      );
-                    },
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildDashboardCard(
+                          title: 'Citas',
+                          value: _totalCitas.toString(),
+                          icon: Icons.calendar_today,
+                          color: Colors.purple,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const CitasCalendarScreen()),
+                            );
+                          },
+                        ),
+                      ),
+                      Expanded(
+                        child: _buildDashboardCard(
+                          title: 'Cobros',
+                          value: '${_totalCobrado.toStringAsFixed(2)} €',
+                          icon: Icons.payments,
+                          color: Colors.pink,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const CobrosListScreen()),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                   Row(
                     children: [
@@ -376,18 +413,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ],
                   ),
-                  _buildDashboardCard(
-                    title: 'Cobros',
-                    value: '${_totalCobrado.toStringAsFixed(2)} €',
-                    icon: Icons.payments,
-                    color: Colors.pink,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                            builder: (context) => const CobrosListScreen()),
-                      );
-                    },
-                  ),
                   Row(
                     children: [
                       Expanded(
@@ -416,6 +441,60 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               MaterialPageRoute(
                                   builder: (context) =>
                                       const ConsejosListScreen()),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildDashboardCard(
+                          title: 'Suplementos',
+                          value: _totalSuplementos.toString(),
+                          icon: Icons.medication_outlined,
+                          color: Colors.teal,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const SuplementosListScreen()),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildDashboardCard(
+                          title: 'Aditivos',
+                          value: _totalAditivos.toString(),
+                          icon: Icons.science_outlined,
+                          color: Colors.deepPurple,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const AditivosListScreen()),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildDashboardCard(
+                          title: 'Sustituciones',
+                          value: _totalSustituciones.toString(),
+                          icon: Icons.swap_horiz,
+                          color: Colors.orange,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (context) =>
+                                      const SustitucionesSaludablesListScreen()),
                             );
                           },
                         ),

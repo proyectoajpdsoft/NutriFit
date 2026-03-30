@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:nutri_app/exceptions/auth_exceptions.dart';
 import 'package:nutri_app/services/api_service.dart';
+import 'package:nutri_app/services/push_notifications_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthService with ChangeNotifier {
@@ -14,6 +15,8 @@ class AuthService with ChangeNotifier {
   String? _patientCode;
   String? _userCode; // Código del usuario logueado
   String? _userNick;
+  String? _premiumExpiryDateIso;
+  int? _premiumPeriodMonths;
   bool _isGuestMode = false;
 
   String? get token => _token;
@@ -23,6 +26,48 @@ class AuthService with ChangeNotifier {
   String? get userNick => _userNick;
   bool get isLoggedIn => _token != null;
   bool get isGuestMode => _isGuestMode;
+  DateTime? get premiumExpiryDate {
+    final raw = (_premiumExpiryDateIso ?? '').trim();
+    if (raw.isEmpty) return null;
+    return DateTime.tryParse(raw);
+  }
+
+  int? get premiumPeriodMonths => _premiumPeriodMonths;
+
+  int? get premiumDaysUntilExpiry {
+    final expiry = premiumExpiryDate;
+    if (expiry == null) return null;
+    final today = DateUtils.dateOnly(DateTime.now());
+    final expiryDay = DateUtils.dateOnly(expiry);
+    return expiryDay.difference(today).inDays;
+  }
+
+  bool get isPremiumExpired {
+    final days = premiumDaysUntilExpiry;
+    if (days == null) return false;
+    return days < 0;
+  }
+
+  bool get isPremium =>
+      (_userType ?? '').toLowerCase() == 'premium' && !isPremiumExpired;
+  bool get hasAssociatedPaciente =>
+      (_patientCode ?? '').trim().isNotEmpty && _patientCode != '0';
+  bool get isPatientAreaUser {
+    final type = (_userType ?? '').toLowerCase();
+    return type == 'paciente' ||
+        type == 'usuario' ||
+        type == 'premium' ||
+        type == 'guest';
+  }
+
+  bool get canAccessPlansAsPatient {
+    final type = (_userType ?? '').toLowerCase();
+    if (type == 'paciente') return true;
+    if (type == 'premium') return hasAssociatedPaciente;
+    return false;
+  }
+
+  bool get canAccessPremiumFeatures => isPremium;
 
   static const String _trustedDeviceIdKey = 'trusted_device_id_v1';
   static const String _trustedDeviceTokenPrefix = 'trusted_2fa_token_';
@@ -37,6 +82,9 @@ class AuthService with ChangeNotifier {
     _patientCode = await _storage.read(key: 'patientCode');
     _userCode = await _storage.read(key: 'userCode');
     _userNick = await _storage.read(key: 'userNick');
+    _premiumExpiryDateIso = await _storage.read(key: 'premiumExpiryDate');
+    _premiumPeriodMonths =
+        int.tryParse((await _storage.read(key: 'premiumPeriodMonths')) ?? '');
     final guestMode = await _storage.read(key: 'guestMode');
     _isGuestMode = guestMode == 'true';
     await _apiService.refreshRuntimeDebugAndBaseUrl(
@@ -73,6 +121,10 @@ class AuthService with ChangeNotifier {
       _userNick = userData['nick']?.toString();
       _patientCode = userData['codigo_paciente']?.toString();
       _userCode = userData['codigo']?.toString(); // Guardar código del usuario
+      _premiumExpiryDateIso =
+          userData['premium_expira_fecha']?.toString().trim();
+      _premiumPeriodMonths =
+          int.tryParse(userData['premium_periodo_meses']?.toString() ?? '');
       _isGuestMode = false;
 
       final receivedTrustedToken =
@@ -89,6 +141,23 @@ class AuthService with ChangeNotifier {
       await _storage.write(key: 'userNick', value: _userNick);
       await _storage.write(key: 'patientCode', value: _patientCode);
       await _storage.write(key: 'userCode', value: _userCode);
+      if (_premiumExpiryDateIso != null && _premiumExpiryDateIso!.isNotEmpty) {
+        await _storage.write(
+          key: 'premiumExpiryDate',
+          value: _premiumExpiryDateIso,
+        );
+      } else {
+        await _storage.delete(key: 'premiumExpiryDate');
+      }
+
+      if (_premiumPeriodMonths != null) {
+        await _storage.write(
+          key: 'premiumPeriodMonths',
+          value: _premiumPeriodMonths!.toString(),
+        );
+      } else {
+        await _storage.delete(key: 'premiumPeriodMonths');
+      }
       await _storage.write(key: 'guestMode', value: 'false');
 
       notifyListeners();
@@ -130,6 +199,7 @@ class AuthService with ChangeNotifier {
 
   Future<String> loginAsGuest() async {
     try {
+      PushNotificationsService.instance.clearUserSessionState();
       final response = await _apiService.loginAsGuest();
 
       if (response.containsKey('token') && response['token'] != null) {
@@ -137,6 +207,8 @@ class AuthService with ChangeNotifier {
         _userType = 'Guest';
         _patientCode = null;
         _userCode = null;
+        _premiumExpiryDateIso = null;
+        _premiumPeriodMonths = null;
         _isGuestMode = true;
 
         await _storage.write(key: 'authToken', value: _token);
@@ -155,11 +227,14 @@ class AuthService with ChangeNotifier {
   }
 
   Future<void> logout() async {
+    PushNotificationsService.instance.clearUserSessionState();
     _token = null;
     _userType = null;
     _patientCode = null;
     _userCode = null;
     _userNick = null;
+    _premiumExpiryDateIso = null;
+    _premiumPeriodMonths = null;
     _isGuestMode = false;
     await _storage.deleteAll();
     await _apiService.refreshRuntimeDebugAndBaseUrl(userType: null);

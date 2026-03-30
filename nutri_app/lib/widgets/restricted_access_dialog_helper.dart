@@ -10,9 +10,15 @@ class RestrictedAccessDialogHelper {
   static Future<void> show(
     BuildContext context, {
     required String title,
+    String? message,
+    String? primaryActionLabel,
+    IconData? primaryActionIcon,
+    String? primaryRouteName,
+    VoidCallback? onPrimaryAction,
   }) async {
     final apiService = ApiService();
     String email = '';
+    final rootNavigator = Navigator.of(context, rootNavigator: true);
 
     try {
       final emailParam = await apiService.getParametro('nutricionista_email');
@@ -47,16 +53,16 @@ class RestrictedAccessDialogHelper {
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: Colors.orange.shade200),
                 ),
-                child: const Row(
+                child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.info_outline,
+                    const Icon(Icons.info_outline,
                         color: Colors.deepOrange, size: 18),
-                    SizedBox(width: 8),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        _genericMessage,
-                        style: TextStyle(
+                        message ?? _genericMessage,
+                        style: const TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                         ),
@@ -66,6 +72,42 @@ class RestrictedAccessDialogHelper {
                 ),
               ),
               const SizedBox(height: 20),
+              if (primaryActionLabel != null &&
+                  (onPrimaryAction != null ||
+                      (primaryRouteName != null &&
+                          primaryRouteName.trim().isNotEmpty))) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(dialogContext);
+                      if (primaryRouteName != null &&
+                          primaryRouteName.trim().isNotEmpty) {
+                        rootNavigator.pushNamed(primaryRouteName);
+                        return;
+                      }
+                      onPrimaryAction?.call();
+                    },
+                    icon: Icon(primaryActionIcon ?? Icons.workspace_premium,
+                        size: 18),
+                    label: Text(primaryActionLabel),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.deepOrange,
+                      foregroundColor: Colors.white,
+                      elevation: 3,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      textStyle: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
               const Text(
                 'Formas de contacto:',
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
@@ -83,11 +125,10 @@ class RestrictedAccessDialogHelper {
               const SizedBox(height: 14),
               SizedBox(
                 width: double.infinity,
-                child: ElevatedButton.icon(
+                child: OutlinedButton.icon(
                   onPressed: () {
                     Navigator.pop(dialogContext);
-                    Navigator.push(
-                      context,
+                    rootNavigator.push(
                       MaterialPageRoute(
                         builder: (context) =>
                             const ContactoNutricionistaScreen(),
@@ -96,6 +137,15 @@ class RestrictedAccessDialogHelper {
                   },
                   icon: const Icon(Icons.arrow_forward, size: 18),
                   label: const Text('Más formas de contacto'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    textStyle: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
                 ),
               ),
             ],

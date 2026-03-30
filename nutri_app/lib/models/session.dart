@@ -7,6 +7,8 @@ class SessionLog {
   final String? ipLocal;
   final String? ipPublica;
   final String? tipo; // 'Android', 'iOS', 'Web'
+  final String? usuarioNick;
+  final String? usuarioNombre;
 
   SessionLog({
     required this.id,
@@ -17,6 +19,8 @@ class SessionLog {
     this.ipLocal,
     this.ipPublica,
     this.tipo,
+    this.usuarioNick,
+    this.usuarioNombre,
   });
 
   factory SessionLog.fromJson(Map<String, dynamic> json) {
@@ -29,6 +33,8 @@ class SessionLog {
       ipLocal: json['ip_local'],
       ipPublica: json['ip_publica'],
       tipo: json['tipo'],
+      usuarioNick: json['usuario_nick'],
+      usuarioNombre: json['usuario_nombre'],
     );
   }
 
@@ -42,6 +48,8 @@ class SessionLog {
       'ip_local': ipLocal,
       'ip_publica': ipPublica,
       'tipo': tipo,
+      'usuario_nick': usuarioNick,
+      'usuario_nombre': usuarioNombre,
     };
   }
 }
@@ -80,6 +88,37 @@ class SessionResponse {
               ?.map((s) => SessionLog.fromJson(s))
               .toList() ??
           [],
+    );
+  }
+}
+
+class SessionPagedResponse {
+  final List<SessionLog> sesiones;
+  final int totalFiltrado;
+  final int limit;
+  final int offset;
+  final bool hasMore;
+
+  SessionPagedResponse({
+    required this.sesiones,
+    required this.totalFiltrado,
+    required this.limit,
+    required this.offset,
+    required this.hasMore,
+  });
+
+  factory SessionPagedResponse.fromJson(Map<String, dynamic> json) {
+    final raw = (json['todas_sesiones'] as List?) ?? const [];
+    final sesiones = raw
+        .map((s) => SessionLog.fromJson(Map<String, dynamic>.from(s)))
+        .toList();
+
+    return SessionPagedResponse(
+      sesiones: sesiones,
+      totalFiltrado: json['total_sesiones'] ?? 0,
+      limit: json['limit'] ?? 20,
+      offset: json['offset'] ?? 0,
+      hasMore: json['has_more'] ?? false,
     );
   }
 }

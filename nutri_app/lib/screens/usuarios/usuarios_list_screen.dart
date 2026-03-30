@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
+import 'package:nutri_app/models/session.dart';
 import 'package:nutri_app/models/usuario.dart';
 import 'package:nutri_app/screens/usuarios/usuario_edit_screen.dart';
 import 'package:nutri_app/services/api_service.dart';
@@ -20,7 +21,17 @@ class UsuariosListScreen extends StatefulWidget {
 class _UsuariosListScreenState extends State<UsuariosListScreen>
     with AuthErrorHandlerMixin {
   final ApiService _apiService = ApiService();
+  final ScrollController _sesionesScrollController = ScrollController();
+  static const int _sesionesPageSize = 20;
   late Future<List<Usuario>> _usuariosFuture;
+  List<SessionLog> _sesionesItems = [];
+  bool _sesionesLoading = false;
+  bool _sesionesLoadingMore = false;
+  bool _sesionesHasMore = true;
+  int _sesionesOffset = 0;
+  int _sesionesTotalFiltrado = 0;
+  String? _sesionesError;
+  List<Usuario> _usuariosCatalogo = [];
   String _searchQuery = '';
   bool _filterTodos = true;
   bool _filterActivos = false;
@@ -29,6 +40,9 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
   bool _filterNutricionista = false;
   bool _filterUsuarioSinPaciente = false;
   bool _showFilters = false;
+  int? _sesionesUsuarioFiltro;
+  DateTime? _sesionesDesde;
+  DateTime? _sesionesHasta;
   final TextEditingController _searchController = TextEditingController();
 
   Widget _buildTag(String text, Color backgroundColor,
@@ -108,7 +122,16 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
   @override
   void initState() {
     super.initState();
+    _usuariosFuture = Future.value(const <Usuario>[]);
     _loadUiState();
+    _sesionesScrollController.addListener(() {
+      if (!_sesionesScrollController.hasClients) return;
+      final pos = _sesionesScrollController.position;
+      if (pos.pixels >= (pos.maxScrollExtent - 240)) {
+        _loadMoreSesiones();
+      }
+    });
+    _resetAndLoadSesiones();
     _searchController.addListener(() {
       setState(() {
         _searchQuery = _searchController.text;
@@ -119,6 +142,7 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
   @override
   void dispose() {
     _searchController.dispose();
+    _sesionesScrollController.dispose();
     super.dispose();
   }
 
@@ -162,9 +186,72 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
   }
 
   void _refreshUsuarios() {
+    final future = _apiService.getUsuarios();
     setState(() {
-      _usuariosFuture = _apiService.getUsuarios();
+      _usuariosFuture = future;
     });
+    future.then((list) {
+      if (!mounted) return;
+      setState(() {
+        _usuariosCatalogo = list;
+      });
+    }).catchError((_) {});
+  }
+
+  Future<void> _resetAndLoadSesiones() async {
+    setState(() {
+      _sesionesItems = [];
+      _sesionesOffset = 0;
+      _sesionesHasMore = true;
+      _sesionesError = null;
+      _sesionesTotalFiltrado = 0;
+    });
+    await _loadMoreSesiones(reset: true);
+  }
+
+  Future<void> _loadMoreSesiones({bool reset = false}) async {
+    if (_sesionesLoading || _sesionesLoadingMore || !_sesionesHasMore) {
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      if (reset || _sesionesOffset == 0) {
+        _sesionesLoading = true;
+      } else {
+        _sesionesLoadingMore = true;
+      }
+      _sesionesError = null;
+    });
+
+    try {
+      final page = await _apiService.getAllSessionLogsPaged(
+        limit: _sesionesPageSize,
+        offset: _sesionesOffset,
+        codigoUsuario: _sesionesUsuarioFiltro,
+        desde: _sesionesDesde,
+        hasta: _sesionesHasta,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _sesionesItems = [..._sesionesItems, ...page.sesiones];
+        _sesionesOffset = _sesionesItems.length;
+        _sesionesTotalFiltrado = page.totalFiltrado;
+        _sesionesHasMore = page.hasMore;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _sesionesError = e.toString();
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _sesionesLoading = false;
+        _sesionesLoadingMore = false;
+      });
+    }
   }
 
   void _navigateToEditScreen([Usuario? usuario]) {
@@ -661,6 +748,199 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
     }
   }
 
+  String _sessionUserLabel(SessionLog s) {
+    final nombre = (s.usuarioNombre ?? '').trim();
+    final nick = (s.usuarioNick ?? '').trim();
+    if (nombre.isNotEmpty && nick.isNotEmpty) {
+      return '$nombre ($nick)';
+    }
+    if (nombre.isNotEmpty) return nombre;
+    if (nick.isNotEmpty) return nick;
+    return 'Usuario ${s.codigousuario}';
+  }
+
+  Future<void> _pickSessionDateTime({required bool isDesde}) async {
+    final initial = isDesde
+        ? (_sesionesDesde ?? DateTime.now())
+        : (_sesionesHasta ?? DateTime.now());
+    final pickedDate = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (pickedDate == null || !mounted) return;
+
+    final pickedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (pickedTime == null || !mounted) return;
+
+    final combined = DateTime(
+      pickedDate.year,
+      pickedDate.month,
+      pickedDate.day,
+      pickedTime.hour,
+      pickedTime.minute,
+    );
+
+    setState(() {
+      if (isDesde) {
+        _sesionesDesde = combined;
+      } else {
+        _sesionesHasta = combined;
+      }
+    });
+    await _resetAndLoadSesiones();
+  }
+
+  Widget _buildSesionesTab() {
+    final usuariosFiltro = <DropdownMenuItem<int?>>[
+      const DropdownMenuItem<int?>(
+        value: null,
+        child: Text('Todos los usuarios'),
+      ),
+      ..._usuariosCatalogo
+          .map(
+            (u) => DropdownMenuItem<int?>(
+              value: u.codigo,
+              child: Text(
+                (u.nombre ?? '').trim().isNotEmpty
+                    ? '${u.nombre} (${u.nick})'
+                    : u.nick,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          )
+          .toList(),
+    ];
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          child: DropdownButtonFormField<int?>(
+            initialValue: _sesionesUsuarioFiltro,
+            decoration: const InputDecoration(
+              labelText: 'Filtrar por usuario',
+              border: OutlineInputBorder(),
+            ),
+            items: usuariosFiltro,
+            onChanged: (value) async {
+              setState(() {
+                _sesionesUsuarioFiltro = value;
+              });
+              await _resetAndLoadSesiones();
+            },
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => _pickSessionDateTime(isDesde: true),
+                icon: const Icon(Icons.event_available),
+                label: Text(
+                  _sesionesDesde == null
+                      ? 'Desde'
+                      : 'Desde: ${_sesionesDesde!.toLocal()}'.split('.').first,
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _pickSessionDateTime(isDesde: false),
+                icon: const Icon(Icons.event_busy),
+                label: Text(
+                  _sesionesHasta == null
+                      ? 'Hasta'
+                      : 'Hasta: ${_sesionesHasta!.toLocal()}'.split('.').first,
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () async {
+                  setState(() {
+                    _sesionesDesde = null;
+                    _sesionesHasta = null;
+                  });
+                  await _resetAndLoadSesiones();
+                },
+                icon: const Icon(Icons.filter_alt_off),
+                label: const Text('Limpiar fechas'),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: _sesionesLoading && _sesionesItems.isEmpty
+              ? const Center(child: CircularProgressIndicator())
+              : _sesionesError != null && _sesionesItems.isEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child:
+                            Text('Error al cargar sesiones: $_sesionesError'),
+                      ),
+                    )
+                  : _sesionesItems.isEmpty
+                      ? const Center(
+                          child: Text(
+                            'No hay sesiones para los filtros seleccionados.',
+                          ),
+                        )
+                      : RefreshIndicator(
+                          onRefresh: _resetAndLoadSesiones,
+                          child: ListView.builder(
+                            controller: _sesionesScrollController,
+                            padding: const EdgeInsets.only(bottom: 80),
+                            itemCount: _sesionesItems.length +
+                                (_sesionesLoadingMore ? 1 : 0),
+                            itemBuilder: (context, index) {
+                              if (index >= _sesionesItems.length) {
+                                return const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 12),
+                                  child: Center(
+                                    child: CircularProgressIndicator(),
+                                  ),
+                                );
+                              }
+
+                              final s = _sesionesItems[index];
+                              final fechaHora =
+                                  '${s.fecha}${(s.hora ?? '').trim().isNotEmpty ? ' ${s.hora}' : ''}';
+                              final ipPublica = (s.ipPublica ?? '').trim();
+
+                              return Card(
+                                margin: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                child: ListTile(
+                                  leading: const Icon(Icons.login),
+                                  title: Text(_sessionUserLabel(s)),
+                                  subtitle: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text('Fecha/Hora: $fechaHora'),
+                                      Text(
+                                        'IP pública: ${ipPublica.isEmpty ? '-' : ipPublica}',
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final configService =
@@ -668,6 +948,288 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
     final authService = context.watch<AuthService>();
     final isAdminUser = authService.userType == 'Nutricionista' ||
         authService.userType == 'Administrador';
+    final isNutricionista =
+        (authService.userType ?? '').trim().toLowerCase() == 'nutricionista';
+
+    final usuariosBody = FutureBuilder<List<Usuario>>(
+      future: _usuariosFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        } else if (snapshot.hasError) {
+          // --- LÓGICA DE ERROR DUAL (DEBUG/NORMAL) ---
+          final errorMessage = snapshot.error.toString();
+          if (configService.appMode == AppMode.debug) {
+            // MODO DEBUG: Muestra el error técnico completo.
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: SelectableText(errorMessage),
+              ),
+            );
+          } else {
+            // MODO NORMAL: Muestra un mensaje genérico.
+            return const Center(
+                child:
+                    Text("Error al cargar los usuarios. Revise su conexión."));
+          }
+        } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
+          return const Center(child: Text("No se encontraron usuarios."));
+        }
+
+        final usuarios = snapshot.data!;
+        final query = _searchQuery.trim().toLowerCase();
+        final filteredUsuarios = usuarios.where((usuario) {
+          final matchesSearch = query.isEmpty ||
+              usuario.nick.toLowerCase().contains(query) ||
+              (usuario.nombre ?? '').toLowerCase().contains(query) ||
+              (usuario.email ?? '').toLowerCase().contains(query) ||
+              (usuario.tipo ?? '').toLowerCase().contains(query);
+
+          if (_filterTodos) {
+            return matchesSearch;
+          }
+
+          final matchesActivos =
+              !_filterActivos || usuario.activo.toUpperCase() == 'S';
+          final matchesAcceso =
+              !_filterAccesoWeb || usuario.accesoweb.toUpperCase() == 'S';
+          final tipoLower = (usuario.tipo ?? '').toLowerCase();
+          final matchesNutricionista =
+              !_filterNutricionista || tipoLower.contains('nutricionista');
+
+          final hasPacienteAsignado = (usuario.codigoPaciente ?? 0) > 0;
+          final matchesPaciente = !_filterPaciente || hasPacienteAsignado;
+          final matchesUsuarioSinPaciente =
+              !_filterUsuarioSinPaciente || !hasPacienteAsignado;
+
+          final bothPacienteFiltersSelected =
+              _filterPaciente && _filterUsuarioSinPaciente;
+          final matchesPacienteDimension = bothPacienteFiltersSelected
+              ? true
+              : (matchesPaciente && matchesUsuarioSinPaciente);
+
+          return matchesSearch &&
+              matchesActivos &&
+              matchesAcceso &&
+              matchesNutricionista &&
+              matchesPacienteDimension;
+        }).toList();
+
+        return Column(
+          children: [
+            if (_showFilters) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    labelText: 'Buscar usuario',
+                    prefixIcon: const Icon(Icons.search),
+                    border: const OutlineInputBorder(),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              _searchController.clear();
+                            },
+                          )
+                        : null,
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      FilterChip(
+                        label: const Text('Todos'),
+                        selected: _filterTodos,
+                        onSelected: (_) {
+                          setState(() {
+                            _filterTodos = true;
+                            _filterActivos = false;
+                            _filterAccesoWeb = false;
+                            _filterPaciente = false;
+                            _filterNutricionista = false;
+                            _filterUsuarioSinPaciente = false;
+                          });
+                          _saveUiState();
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      FilterChip(
+                        label: const Text('Activos'),
+                        selected: _filterActivos,
+                        onSelected: (selected) {
+                          setState(() {
+                            _filterActivos = selected;
+                            _filterTodos = false;
+                            if (!_filterActivos &&
+                                !_filterAccesoWeb &&
+                                !_filterPaciente &&
+                                !_filterNutricionista &&
+                                !_filterUsuarioSinPaciente) {
+                              _filterTodos = true;
+                            }
+                          });
+                          _saveUiState();
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      FilterChip(
+                        label: const Text('Acceso web'),
+                        selected: _filterAccesoWeb,
+                        onSelected: (selected) {
+                          setState(() {
+                            _filterAccesoWeb = selected;
+                            _filterTodos = false;
+                            if (!_filterActivos &&
+                                !_filterAccesoWeb &&
+                                !_filterPaciente &&
+                                !_filterNutricionista &&
+                                !_filterUsuarioSinPaciente) {
+                              _filterTodos = true;
+                            }
+                          });
+                          _saveUiState();
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      FilterChip(
+                        label: const Text('Paciente'),
+                        selected: _filterPaciente,
+                        onSelected: (selected) {
+                          setState(() {
+                            _filterPaciente = selected;
+                            _filterTodos = false;
+                            if (!_filterActivos &&
+                                !_filterAccesoWeb &&
+                                !_filterPaciente &&
+                                !_filterNutricionista &&
+                                !_filterUsuarioSinPaciente) {
+                              _filterTodos = true;
+                            }
+                          });
+                          _saveUiState();
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      FilterChip(
+                        label: const Text('Nutricionista'),
+                        selected: _filterNutricionista,
+                        onSelected: (selected) {
+                          setState(() {
+                            _filterNutricionista = selected;
+                            _filterTodos = false;
+                            if (!_filterActivos &&
+                                !_filterAccesoWeb &&
+                                !_filterPaciente &&
+                                !_filterNutricionista &&
+                                !_filterUsuarioSinPaciente) {
+                              _filterTodos = true;
+                            }
+                          });
+                          _saveUiState();
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      FilterChip(
+                        label: const Text('Usuario'),
+                        selected: _filterUsuarioSinPaciente,
+                        onSelected: (selected) {
+                          setState(() {
+                            _filterUsuarioSinPaciente = selected;
+                            _filterTodos = false;
+                            if (!_filterActivos &&
+                                !_filterAccesoWeb &&
+                                !_filterPaciente &&
+                                !_filterNutricionista &&
+                                !_filterUsuarioSinPaciente) {
+                              _filterTodos = true;
+                            }
+                          });
+                          _saveUiState();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const Divider(height: 1),
+            ],
+            Expanded(
+              child: filteredUsuarios.isEmpty
+                  ? const Center(child: Text('No se encontraron usuarios.'))
+                  : ListView.builder(
+                      padding: const EdgeInsets.only(bottom: 80),
+                      itemCount: filteredUsuarios.length,
+                      itemBuilder: (context, index) {
+                        final usuario = filteredUsuarios[index];
+                        final actionsRow = Wrap(
+                          spacing: 4,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.logout,
+                                  color: Colors.orange),
+                              tooltip: 'Revocar token',
+                              onPressed: () =>
+                                  _showRevokeTokenConfirmation(usuario),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.block, color: Colors.red),
+                              tooltip: 'Desactivar usuario',
+                              onPressed: () =>
+                                  _showDeactivateConfirmation(usuario),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.edit, color: Colors.blue),
+                              tooltip: 'Editar usuario',
+                              onPressed: () => _navigateToEditScreen(usuario),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete, color: Colors.red),
+                              tooltip: 'Eliminar usuario',
+                              onPressed: () => _showDeleteConfirmation(usuario),
+                            ),
+                          ],
+                        );
+
+                        return Card(
+                          margin: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          elevation: 2,
+                          child: ListTile(
+                            leading: _buildUserAvatar(usuario),
+                            title: Text(usuario.nick),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _buildUserTags(usuario),
+                                if (isAdminUser) ...[
+                                  const SizedBox(height: 4),
+                                  actionsRow,
+                                ],
+                              ],
+                            ),
+                            trailing: isAdminUser
+                                ? null
+                                : Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: actionsRow.children,
+                                  ),
+                            onTap: () => _navigateToEditScreen(usuario),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        );
+      },
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -690,293 +1252,77 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _refreshUsuarios,
+            onPressed: () {
+              _refreshUsuarios();
+              if (isNutricionista) {
+                _resetAndLoadSesiones();
+              }
+            },
           ),
         ],
       ),
       drawer: const AppDrawer(),
-      body: FutureBuilder<List<Usuario>>(
-        future: _usuariosFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          } else if (snapshot.hasError) {
-            // --- LÓGICA DE ERROR DUAL (DEBUG/NORMAL) ---
-            final errorMessage = snapshot.error.toString();
-            if (configService.appMode == AppMode.debug) {
-              // MODO DEBUG: Muestra el error técnico completo.
-              return Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: SelectableText(errorMessage),
-                ),
-              );
-            } else {
-              // MODO NORMAL: Muestra un mensaje genérico.
-              return const Center(
-                  child: Text(
-                      "Error al cargar los usuarios. Revise su conexión."));
-            }
-          } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            return const Center(child: Text("No se encontraron usuarios."));
-          }
-
-          final usuarios = snapshot.data!;
-          final query = _searchQuery.trim().toLowerCase();
-          final filteredUsuarios = usuarios.where((usuario) {
-            final matchesSearch = query.isEmpty ||
-                usuario.nick.toLowerCase().contains(query) ||
-                (usuario.nombre ?? '').toLowerCase().contains(query) ||
-                (usuario.email ?? '').toLowerCase().contains(query) ||
-                (usuario.tipo ?? '').toLowerCase().contains(query);
-
-            if (_filterTodos) {
-              return matchesSearch;
-            }
-
-            final matchesActivos =
-                !_filterActivos || usuario.activo.toUpperCase() == 'S';
-            final matchesAcceso =
-                !_filterAccesoWeb || usuario.accesoweb.toUpperCase() == 'S';
-            final tipoLower = (usuario.tipo ?? '').toLowerCase();
-            final matchesNutricionista =
-                !_filterNutricionista || tipoLower.contains('nutricionista');
-
-            final hasPacienteAsignado = (usuario.codigoPaciente ?? 0) > 0;
-            final matchesPaciente = !_filterPaciente || hasPacienteAsignado;
-            final matchesUsuarioSinPaciente =
-                !_filterUsuarioSinPaciente || !hasPacienteAsignado;
-
-            final bothPacienteFiltersSelected =
-                _filterPaciente && _filterUsuarioSinPaciente;
-            final matchesPacienteDimension = bothPacienteFiltersSelected
-                ? true
-                : (matchesPaciente && matchesUsuarioSinPaciente);
-
-            return matchesSearch &&
-                matchesActivos &&
-                matchesAcceso &&
-                matchesNutricionista &&
-                matchesPacienteDimension;
-          }).toList();
-
-          return Column(
-            children: [
-              if (_showFilters) ...[
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      labelText: 'Buscar usuario',
-                      prefixIcon: const Icon(Icons.search),
-                      border: const OutlineInputBorder(),
-                      suffixIcon: _searchQuery.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.clear),
-                              onPressed: () {
-                                _searchController.clear();
-                              },
-                            )
-                          : null,
-                    ),
+      body: isNutricionista
+          ? DefaultTabController(
+              length: 2,
+              child: Column(
+                children: [
+                  TabBar(
+                    tabs: [
+                      const Tab(icon: Icon(Icons.people), text: 'Usuarios'),
+                      Tab(
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.history),
+                                    SizedBox(width: 6),
+                                    Text('Sesiones'),
+                                  ],
+                                ),
+                                const SizedBox(height: 3),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.indigo,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Text(
+                                    '$_sesionesTotalFiltrado',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
+                  Expanded(
+                    child: TabBarView(
                       children: [
-                        FilterChip(
-                          label: const Text('Todos'),
-                          selected: _filterTodos,
-                          onSelected: (_) {
-                            setState(() {
-                              _filterTodos = true;
-                              _filterActivos = false;
-                              _filterAccesoWeb = false;
-                              _filterPaciente = false;
-                              _filterNutricionista = false;
-                              _filterUsuarioSinPaciente = false;
-                            });
-                            _saveUiState();
-                          },
-                        ),
-                        const SizedBox(width: 8),
-                        FilterChip(
-                          label: const Text('Activos'),
-                          selected: _filterActivos,
-                          onSelected: (selected) {
-                            setState(() {
-                              _filterActivos = selected;
-                              _filterTodos = false;
-                              if (!_filterActivos &&
-                                  !_filterAccesoWeb &&
-                                  !_filterPaciente &&
-                                  !_filterNutricionista &&
-                                  !_filterUsuarioSinPaciente) {
-                                _filterTodos = true;
-                              }
-                            });
-                            _saveUiState();
-                          },
-                        ),
-                        const SizedBox(width: 8),
-                        FilterChip(
-                          label: const Text('Acceso web'),
-                          selected: _filterAccesoWeb,
-                          onSelected: (selected) {
-                            setState(() {
-                              _filterAccesoWeb = selected;
-                              _filterTodos = false;
-                              if (!_filterActivos &&
-                                  !_filterAccesoWeb &&
-                                  !_filterPaciente &&
-                                  !_filterNutricionista &&
-                                  !_filterUsuarioSinPaciente) {
-                                _filterTodos = true;
-                              }
-                            });
-                            _saveUiState();
-                          },
-                        ),
-                        const SizedBox(width: 8),
-                        FilterChip(
-                          label: const Text('Paciente'),
-                          selected: _filterPaciente,
-                          onSelected: (selected) {
-                            setState(() {
-                              _filterPaciente = selected;
-                              _filterTodos = false;
-                              if (!_filterActivos &&
-                                  !_filterAccesoWeb &&
-                                  !_filterPaciente &&
-                                  !_filterNutricionista &&
-                                  !_filterUsuarioSinPaciente) {
-                                _filterTodos = true;
-                              }
-                            });
-                            _saveUiState();
-                          },
-                        ),
-                        const SizedBox(width: 8),
-                        FilterChip(
-                          label: const Text('Nutricionista'),
-                          selected: _filterNutricionista,
-                          onSelected: (selected) {
-                            setState(() {
-                              _filterNutricionista = selected;
-                              _filterTodos = false;
-                              if (!_filterActivos &&
-                                  !_filterAccesoWeb &&
-                                  !_filterPaciente &&
-                                  !_filterNutricionista &&
-                                  !_filterUsuarioSinPaciente) {
-                                _filterTodos = true;
-                              }
-                            });
-                            _saveUiState();
-                          },
-                        ),
-                        const SizedBox(width: 8),
-                        FilterChip(
-                          label: const Text('Usuario'),
-                          selected: _filterUsuarioSinPaciente,
-                          onSelected: (selected) {
-                            setState(() {
-                              _filterUsuarioSinPaciente = selected;
-                              _filterTodos = false;
-                              if (!_filterActivos &&
-                                  !_filterAccesoWeb &&
-                                  !_filterPaciente &&
-                                  !_filterNutricionista &&
-                                  !_filterUsuarioSinPaciente) {
-                                _filterTodos = true;
-                              }
-                            });
-                            _saveUiState();
-                          },
-                        ),
+                        usuariosBody,
+                        _buildSesionesTab(),
                       ],
                     ),
                   ),
-                ),
-                const Divider(height: 1),
-              ],
-              Expanded(
-                child: filteredUsuarios.isEmpty
-                    ? const Center(child: Text('No se encontraron usuarios.'))
-                    : ListView.builder(
-                        itemCount: filteredUsuarios.length,
-                        itemBuilder: (context, index) {
-                          final usuario = filteredUsuarios[index];
-                          final actionsRow = Wrap(
-                            spacing: 4,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.logout,
-                                    color: Colors.orange),
-                                tooltip: 'Revocar token',
-                                onPressed: () =>
-                                    _showRevokeTokenConfirmation(usuario),
-                              ),
-                              IconButton(
-                                icon:
-                                    const Icon(Icons.block, color: Colors.red),
-                                tooltip: 'Desactivar usuario',
-                                onPressed: () =>
-                                    _showDeactivateConfirmation(usuario),
-                              ),
-                              IconButton(
-                                icon:
-                                    const Icon(Icons.edit, color: Colors.blue),
-                                tooltip: 'Editar usuario',
-                                onPressed: () => _navigateToEditScreen(usuario),
-                              ),
-                              IconButton(
-                                icon:
-                                    const Icon(Icons.delete, color: Colors.red),
-                                tooltip: 'Eliminar usuario',
-                                onPressed: () =>
-                                    _showDeleteConfirmation(usuario),
-                              ),
-                            ],
-                          );
-
-                          return Card(
-                            margin: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
-                            elevation: 2,
-                            child: ListTile(
-                              leading: _buildUserAvatar(usuario),
-                              title: Text(usuario.nick),
-                              subtitle: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  _buildUserTags(usuario),
-                                  if (isAdminUser) ...[
-                                    const SizedBox(height: 4),
-                                    actionsRow,
-                                  ],
-                                ],
-                              ),
-                              trailing: isAdminUser
-                                  ? null
-                                  : Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: actionsRow.children,
-                                    ),
-                              onTap: () => _navigateToEditScreen(usuario),
-                            ),
-                          );
-                        },
-                      ),
+                ],
               ),
-            ],
-          );
-        },
-      ),
+            )
+          : usuariosBody,
       floatingActionButton: FloatingActionButton(
         onPressed: () => _navigateToEditScreen(),
         tooltip: 'Añadir Usuario',

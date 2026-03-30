@@ -109,13 +109,15 @@ class _PlanesFitPacientesListScreenState
         actions: [
           IconButton(
             icon: const Icon(Icons.list),
-            onPressed: () {
-              Navigator.of(context).push(
+            onPressed: () async {
+              await Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (context) =>
                       const PlanesFitListScreen(paciente: null),
                 ),
               );
+              if (!mounted) return;
+              _refreshPacientes();
             },
             tooltip: 'Ver todos los planes fit',
           ),
@@ -300,14 +302,16 @@ class _PlanesFitPacientesListScreenState
                                 const Icon(Icons.arrow_forward_ios, size: 16),
                               ],
                             ),
-                            onTap: () {
-                              Navigator.of(context).push(
+                            onTap: () async {
+                              await Navigator.of(context).push(
                                 MaterialPageRoute(
                                   builder: (context) => PlanesFitListScreen(
                                     paciente: paciente,
                                   ),
                                 ),
                               );
+                              if (!mounted) return;
+                              _refreshPacientes();
                             },
                           ),
                         );

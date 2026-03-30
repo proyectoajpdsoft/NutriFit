@@ -1,12 +1,17 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:convert';
+import 'package:camera/camera.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:http/http.dart' as http;
+import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../services/user_settings_service.dart';
 import '../models/lista_compra_item.dart';
+import '../models/usuario.dart';
 import '../widgets/app_drawer.dart';
 import 'lista_compra_edit_screen.dart';
 
@@ -66,7 +71,7 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
       'pendientes',
       'comprados',
       'por_caducar',
-      'caducados'
+      'caducados',
     ];
     setState(() {
       _filtroActual = filtros[_tabController.index];
@@ -125,7 +130,8 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
         final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('Error al cargar lista de compra. $errorMessage')),
+            content: Text('Error al cargar lista de compra. $errorMessage'),
+          ),
         );
       }
     }
@@ -181,13 +187,14 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
     if (confirmed == true) {
       try {
         final apiService = Provider.of<ApiService>(context, listen: false);
-        final response = await apiService
-            .delete('api/lista_compra.php?codigo=${item.codigo}');
+        final response = await apiService.delete(
+          'api/lista_compra.php?codigo=${item.codigo}',
+        );
 
         if (response.statusCode == 200) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Item eliminado')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Item eliminado')));
           _loadItems();
         }
       } catch (e) {
@@ -229,9 +236,7 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
           throw Exception('Usuario no identificado');
         }
 
-        final data = {
-          'codigo_usuario': int.parse(ownerCode),
-        };
+        final data = {'codigo_usuario': int.parse(ownerCode)};
 
         final response = await apiService.post(
           'api/lista_compra.php?delete_comprados=1',
@@ -239,9 +244,9 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
         );
 
         if (response.statusCode == 200) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Items eliminados')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Items eliminados')));
           _loadItems();
         }
       } catch (e) {
@@ -257,8 +262,9 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
     await _abrirAltaManualConPrefill();
   }
 
-  Future<void> _abrirAltaManualConPrefill(
-      {ListaCompraItem? prefillItem}) async {
+  Future<void> _abrirAltaManualConPrefill({
+    ListaCompraItem? prefillItem,
+  }) async {
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
@@ -266,6 +272,19 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
           item: prefillItem,
           forceNew: prefillItem != null,
         ),
+      ),
+    );
+    if (!mounted) return;
+    if (result == true) {
+      _loadItems();
+    }
+  }
+
+  Future<void> _abrirEdicionItemExistente(ListaCompraItem item) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ListaCompraEditScreen(item: item),
       ),
     );
     if (!mounted) return;
@@ -423,7 +442,12 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
     final source = await _seleccionarFuenteEscaneo();
     if (source == null) return;
 
-    final picked = await _picker.pickImage(source: source);
+    XFile? picked;
+    if (source == ImageSource.camera) {
+      picked = await _capturarImagenBarcodeConRecuadro();
+    } else {
+      picked = await _picker.pickImage(source: source);
+    }
     if (picked == null) {
       return;
     }
@@ -471,16 +495,237 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
     }
 
     final prefill = _buildPrefillFromOff(product);
+
+    final existingItem = _findExistingItemForScanner(prefill);
+    if (existingItem != null) {
+      final updated = _mergeScannerDataIntoExistingItem(
+        existingItem: existingItem,
+        scannerPrefill: prefill,
+      );
+      final ok = await _actualizarItemDesdeEscaner(updated);
+      if (!mounted) return;
+      if (ok) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'El producto ya existia en la lista. Se han actualizado sus datos y se abrira su edicion.',
+            ),
+            backgroundColor: Colors.green,
+          ),
+        );
+        await _loadItems();
+        if (!mounted) return;
+        await _abrirEdicionItemExistente(updated);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'El producto ya existia, pero no se pudo actualizar automaticamente. Se abrira su edicion para completarlo.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        await _abrirEdicionItemExistente(updated);
+      }
+      return;
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Producto encontrado en Open Food Facts'),
+        content: Text(
+            'Producto encontrado en Open Food Facts. Se abrira para editar antes de guardar.'),
         backgroundColor: Colors.green,
       ),
     );
     await _abrirAltaManualConPrefill(prefillItem: prefill);
   }
 
+  ListaCompraItem? _findExistingItemForScanner(ListaCompraItem scannerPrefill) {
+    final barcode = (scannerPrefill.offCodigoBarras ?? '').trim();
+    if (barcode.isNotEmpty) {
+      for (final item in _items) {
+        if ((item.offCodigoBarras ?? '').trim() == barcode) {
+          return item;
+        }
+      }
+    }
+
+    final offName =
+        (scannerPrefill.offNombreProducto ?? '').trim().toLowerCase();
+    final brand = (scannerPrefill.offMarca ?? '').trim().toLowerCase();
+    if (offName.isNotEmpty) {
+      for (final item in _items) {
+        final itemOffName = (item.offNombreProducto ?? '').trim().toLowerCase();
+        final itemBrand = (item.offMarca ?? '').trim().toLowerCase();
+        if (itemOffName == offName && (brand.isEmpty || itemBrand == brand)) {
+          return item;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  ListaCompraItem _mergeScannerDataIntoExistingItem({
+    required ListaCompraItem existingItem,
+    required ListaCompraItem scannerPrefill,
+  }) {
+    return ListaCompraItem(
+      codigo: existingItem.codigo,
+      codigoUsuario: existingItem.codigoUsuario,
+      nombre: scannerPrefill.nombre,
+      descripcion: scannerPrefill.descripcion,
+      categoria: scannerPrefill.categoria,
+      cantidad: existingItem.cantidad,
+      unidad: existingItem.unidad,
+      comprado: existingItem.comprado,
+      fechaCaducidad: existingItem.fechaCaducidad,
+      fechaCompra: existingItem.fechaCompra,
+      notas: existingItem.notas,
+      escanerFuente: scannerPrefill.escanerFuente,
+      offCodigoBarras: scannerPrefill.offCodigoBarras,
+      offNombreProducto: scannerPrefill.offNombreProducto,
+      offMarca: scannerPrefill.offMarca,
+      offNutriScore: scannerPrefill.offNutriScore,
+      offNovaGroup: scannerPrefill.offNovaGroup,
+      offCantidad: scannerPrefill.offCantidad,
+      offPorcion: scannerPrefill.offPorcion,
+      offIngredientes: scannerPrefill.offIngredientes,
+      offNutrimentsJson: scannerPrefill.offNutrimentsJson,
+      offRawJson: scannerPrefill.offRawJson,
+      codusuarioa: existingItem.codusuarioa,
+      fechaa: existingItem.fechaa,
+      codusuariom: existingItem.codusuariom,
+      fecham: existingItem.fecham,
+    );
+  }
+
+  Future<bool> _actualizarItemDesdeEscaner(ListaCompraItem item) async {
+    try {
+      final apiService = Provider.of<ApiService>(context, listen: false);
+      final response = await apiService.put(
+        'api/lista_compra.php',
+        body: json.encode(item.toJson()),
+      );
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<XFile?> _capturarImagenBarcodeConRecuadro() async {
+    final frameRect = await _getBarcodeFrameRect();
+
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      return _picker.pickImage(source: ImageSource.camera, imageQuality: 85);
+    }
+
+    final capturedPath = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
+        builder: (_) => _ListaCompraBarcodeCameraCaptureScreen(
+          frameRectNormalized: frameRect,
+        ),
+      ),
+    );
+
+    if (capturedPath == null || capturedPath.trim().isEmpty) {
+      return null;
+    }
+
+    try {
+      final cropped = await _cropImageWithNormalizedRect(
+        filePath: capturedPath,
+        normalizedRect: frameRect,
+      );
+      return XFile(cropped ?? capturedPath);
+    } catch (_) {
+      return XFile(capturedPath);
+    }
+  }
+
+  Future<Rect> _getBarcodeFrameRect() async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final scope = UserSettingsService.buildScopeKey(
+      isGuestMode: authService.isGuestMode,
+      userCode: authService.userCode,
+      patientCode: authService.patientCode,
+      userType: authService.userType,
+    );
+    final width = await UserSettingsService.getBarcodeFrameWidthNormalized(
+      scope,
+    );
+    final height = await UserSettingsService.getBarcodeFrameHeightNormalized(
+      scope,
+    );
+
+    return _buildCenteredFrameRect(width: width, height: height, top: 0.32);
+  }
+
+  Rect _buildCenteredFrameRect({
+    required double width,
+    required double height,
+    required double top,
+  }) {
+    final safeWidth = width.clamp(0.1, 1.0);
+    final safeHeight = height.clamp(0.1, 1.0);
+    final left = ((1.0 - safeWidth) / 2).clamp(0.0, 1.0 - safeWidth);
+    final topClamped = top.clamp(0.0, 1.0 - safeHeight);
+    return Rect.fromLTWH(left, topClamped, safeWidth, safeHeight);
+  }
+
+  Future<String?> _cropImageWithNormalizedRect({
+    required String filePath,
+    required Rect normalizedRect,
+  }) async {
+    final sourceFile = File(filePath);
+    if (!await sourceFile.exists()) {
+      return null;
+    }
+
+    final bytes = await sourceFile.readAsBytes();
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) {
+      return null;
+    }
+
+    final left = (decoded.width * normalizedRect.left).round().clamp(
+          0,
+          decoded.width - 1,
+        );
+    final top = (decoded.height * normalizedRect.top).round().clamp(
+          0,
+          decoded.height - 1,
+        );
+
+    final maxCropWidth = decoded.width - left;
+    final maxCropHeight = decoded.height - top;
+
+    final cropWidth =
+        (decoded.width * normalizedRect.width).round().clamp(1, maxCropWidth);
+    final cropHeight = (decoded.height * normalizedRect.height)
+        .round()
+        .clamp(1, maxCropHeight);
+
+    final cropped = img.copyCrop(
+      decoded,
+      x: left,
+      y: top,
+      width: cropWidth,
+      height: cropHeight,
+    );
+
+    final outputPath =
+        '${Directory.systemTemp.path}${Platform.pathSeparator}nutrifit_lista_compra_barcode_crop_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    final outputFile = File(outputPath);
+    await outputFile.writeAsBytes(img.encodeJpg(cropped, quality: 92));
+    return outputFile.path;
+  }
+
   Future<void> _mostrarOpcionesAlta() async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final isNutricionista =
+        (authService.userType ?? '').toLowerCase() == 'nutricionista';
+
     final option = await showModalBottomSheet<String>(
       context: context,
       builder: (context) {
@@ -490,7 +735,7 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
             children: [
               ListTile(
                 leading: const Icon(Icons.add_circle_outline),
-                title: const Text('Añadir manualmente'),
+                title: const Text('Añadir a mi lista'),
                 onTap: () => Navigator.pop(context, 'manual'),
               ),
               ListTile(
@@ -498,6 +743,17 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
                 title: const Text('Escanear etiqueta y añadir'),
                 onTap: () => Navigator.pop(context, 'scanner'),
               ),
+              if (isNutricionista) ...[
+                const Divider(height: 1),
+                ListTile(
+                  leading: Icon(Icons.person_add_alt_1,
+                      color: Theme.of(context).colorScheme.primary),
+                  title: const Text('Recomendar alimento a un usuario'),
+                  subtitle: const Text(
+                      'Añade un item a la lista de compra de otro usuario'),
+                  onTap: () => Navigator.pop(context, 'recomendar'),
+                ),
+              ],
             ],
           ),
         );
@@ -509,6 +765,209 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
       await _abrirAltaManual();
     } else if (option == 'scanner') {
       await _escanearEtiquetaYAbrirAlta();
+    } else if (option == 'recomendar') {
+      await _recomendarItemAUsuario();
+    }
+  }
+
+  /// Muestra un diálogo de selección de usuario destino para que el
+  /// nutricionista pueda añadir un alimento a la lista de compra de ese usuario.
+  Future<({int codigo, String nombre})?> _seleccionarUsuarioDestino() async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final apiService = Provider.of<ApiService>(context, listen: false);
+
+    // Cargar usuarios con feedback de carga
+    List<Usuario> usuarios = [];
+    String? errorCarga;
+
+    try {
+      usuarios = await apiService.getUsuarios();
+    } catch (e) {
+      errorCarga = e.toString().replaceFirst('Exception: ', '');
+    }
+    if (!mounted) return null;
+
+    if (errorCarga != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al cargar usuarios: $errorCarga')),
+      );
+      return null;
+    }
+
+    // Filtrar activos y excluir al propio nutricionista
+    final myCode = authService.userCode;
+    final activos = usuarios
+        .where((u) => u.activo == 'S' && u.codigo.toString() != myCode)
+        .toList();
+
+    // Pacientes primero, luego el resto
+    activos.sort((a, b) {
+      final aPaciente = (a.tipo ?? '').toLowerCase() == 'paciente' ? 0 : 1;
+      final bPaciente = (b.tipo ?? '').toLowerCase() == 'paciente' ? 0 : 1;
+      if (aPaciente != bPaciente) return aPaciente - bPaciente;
+      return (a.nombre ?? a.nick).compareTo(b.nombre ?? b.nick);
+    });
+
+    if (!mounted) return null;
+
+    return showDialog<({int codigo, String nombre})>(
+      context: context,
+      builder: (dialogContext) {
+        String busqueda = '';
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final filtrados = busqueda.trim().isEmpty
+                ? activos
+                : activos.where((u) {
+                    final q = busqueda.trim().toLowerCase();
+                    return (u.nombre ?? '').toLowerCase().contains(q) ||
+                        u.nick.toLowerCase().contains(q);
+                  }).toList();
+
+            return AlertDialog(
+              title: const Text('Seleccionar usuario destino'),
+              contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Opción "para mí mismo"
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: CircleAvatar(
+                        backgroundColor: Theme.of(
+                          context,
+                        ).colorScheme.primary.withValues(alpha: 0.15),
+                        child: Icon(
+                          Icons.person,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                      title: const Text('Para mí mismo'),
+                      subtitle: const Text('Añadir a mi propia lista'),
+                      onTap: () {
+                        final me = usuarios.firstWhere(
+                          (u) => u.codigo.toString() == myCode,
+                          orElse: () => Usuario(
+                            codigo: int.tryParse(myCode ?? '0') ?? 0,
+                            nick: 'Yo',
+                          ),
+                        );
+                        Navigator.of(dialogContext).pop((
+                          codigo: me.codigo,
+                          nombre: me.nombre ?? me.nick,
+                        ));
+                      },
+                    ),
+                    const Divider(height: 8),
+                    // Buscador
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: TextField(
+                        autofocus: false,
+                        decoration: const InputDecoration(
+                          hintText: 'Buscar usuario…',
+                          prefixIcon: Icon(Icons.search, size: 20),
+                          isDense: true,
+                          border: OutlineInputBorder(),
+                          contentPadding:
+                              EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+                        ),
+                        onChanged: (v) => setDialogState(() => busqueda = v),
+                      ),
+                    ),
+                    // Lista de usuarios
+                    Flexible(
+                      child: filtrados.isEmpty
+                          ? const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(16),
+                                child: Text('Sin resultados'),
+                              ),
+                            )
+                          : ListView.builder(
+                              shrinkWrap: true,
+                              itemCount: filtrados.length,
+                              itemBuilder: (_, i) {
+                                final u = filtrados[i];
+                                final isPaciente =
+                                    (u.tipo ?? '').toLowerCase() == 'paciente';
+                                return ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: CircleAvatar(
+                                    backgroundColor: isPaciente
+                                        ? Colors.teal.shade50
+                                        : Colors.grey.shade200,
+                                    child: Icon(
+                                      isPaciente
+                                          ? Icons.person_outline
+                                          : Icons.manage_accounts_outlined,
+                                      color: isPaciente
+                                          ? Colors.teal
+                                          : Colors.grey.shade600,
+                                      size: 20,
+                                    ),
+                                  ),
+                                  title: Text(
+                                    u.nombre ?? u.nick,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  subtitle: Text(
+                                    isPaciente
+                                        ? 'Paciente · @${u.nick}'
+                                        : u.tipo ?? 'Usuario',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                  onTap: () => Navigator.of(dialogContext).pop(
+                                    (
+                                      codigo: u.codigo,
+                                      nombre: u.nombre ?? u.nick
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancelar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// Orquesta la selección de usuario y apertura del formulario de alta
+  /// para que el nutricionista recomiende un alimento.
+  Future<void> _recomendarItemAUsuario() async {
+    final target = await _seleccionarUsuarioDestino();
+    if (!mounted || target == null) return;
+
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ListaCompraEditScreen(
+          targetUserCode: target.codigo.toString(),
+          targetUserName: target.nombre,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (result == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Alimento añadido a la lista de ${target.nombre}'),
+          backgroundColor: Colors.green,
+        ),
+      );
     }
   }
 
@@ -547,6 +1006,18 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
       default:
         return Colors.grey;
     }
+  }
+
+  String? _normalizedNutriScore(String? score) {
+    final normalized = (score ?? '').trim().toLowerCase();
+    const validScores = <String>{'a', 'b', 'c', 'd', 'e'};
+    return validScores.contains(normalized) ? normalized : null;
+  }
+
+  bool _isScannerAutoNote(String? note) {
+    final normalized = (note ?? '').trim().toLowerCase();
+    return normalized == 'anadido desde escaner nutricional' ||
+        normalized == 'añadido desde escáner nutricional';
   }
 
   Color _novaColor(int? group) {
@@ -659,16 +1130,13 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
               width: 128,
               child: Text(
                 '$label:',
-                style:
-                    const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
               ),
             ),
-            Expanded(
-              child: Text(
-                value,
-                style: const TextStyle(fontSize: 12),
-              ),
-            ),
+            Expanded(child: Text(value, style: const TextStyle(fontSize: 12))),
           ],
         ),
       );
@@ -690,12 +1158,16 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
                 ),
                 const SizedBox(height: 8),
                 dataRow('Nombre', _valorTexto(item.nombre)),
-                dataRow('Categoría',
-                    ListaCompraItem.getCategoriaNombre(item.categoria)),
+                dataRow(
+                  'Categoría',
+                  ListaCompraItem.getCategoriaNombre(item.categoria),
+                ),
                 dataRow('Cantidad', _formatearCantidad(item)),
                 dataRow('Descripción', _valorTexto(item.descripcion)),
                 dataRow(
-                    'Estado', item.comprado == 'S' ? 'Comprado' : 'Pendiente'),
+                  'Estado',
+                  item.comprado == 'S' ? 'Comprado' : 'Pendiente',
+                ),
                 dataRow('Caducidad', _formatearFecha(item.fechaCaducidad)),
                 dataRow('Fecha compra', _formatearFecha(item.fechaCompra)),
                 dataRow('Notas', _valorTexto(item.notas)),
@@ -731,8 +1203,10 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
                     const SizedBox(height: 8),
                     const Text(
                       'Información nutricional',
-                      style:
-                          TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
                     ),
                     const SizedBox(height: 6),
                     dataRow('Energía', energia ?? '-'),
@@ -827,17 +1301,21 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
                       child: Text('Todas las categorías'),
                     ),
                     const PopupMenuDivider(),
-                    ...ListaCompraItem.categorias.map((cat) => PopupMenuItem(
-                          value: cat,
-                          child: Row(
-                            children: [
-                              Text(ListaCompraItem.getCategoriaIcon(cat),
-                                  style: const TextStyle(fontSize: 20)),
-                              const SizedBox(width: 8),
-                              Text(ListaCompraItem.getCategoriaNombre(cat)),
-                            ],
-                          ),
-                        )),
+                    ...ListaCompraItem.categorias.map(
+                      (cat) => PopupMenuItem(
+                        value: cat,
+                        child: Row(
+                          children: [
+                            Text(
+                              ListaCompraItem.getCategoriaIcon(cat),
+                              style: const TextStyle(fontSize: 20),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(ListaCompraItem.getCategoriaNombre(cat)),
+                          ],
+                        ),
+                      ),
+                    ),
                   ],
                   icon: const Icon(Icons.filter_list),
                   tooltip: 'Filtrar por categoría',
@@ -870,9 +1348,7 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
                                 ? 'No hay items en tu lista'
                                 : 'No hay items ${_getFiltroTexto()}',
                             style: TextStyle(
-                              fontSize: 18,
-                              color: Colors.grey[600],
-                            ),
+                                fontSize: 18, color: Colors.grey[600]),
                           ),
                           const SizedBox(height: 8),
                           const Text(
@@ -897,7 +1373,9 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
                               children: [
                                 Padding(
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 12),
+                                    horizontal: 8,
+                                    vertical: 12,
+                                  ),
                                   child: Row(
                                     children: [
                                       Text(
@@ -1045,10 +1523,7 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
             color: color,
           ),
         ),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 12, color: Colors.grey),
-        ),
+        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
       ],
     );
   }
@@ -1058,6 +1533,7 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
     final bool mostrarBotonAnadir =
         (_filtroActual == 'todos' || _filtroActual == 'comprados') &&
             item.comprado == 'S';
+    final nutriScore = _normalizedNutriScore(item.offNutriScore);
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -1096,55 +1572,53 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if ((item.offNutriScore ?? '').trim().isNotEmpty ||
-                item.offNovaGroup != null ||
-                (item.offCodigoBarras ?? '').trim().isNotEmpty)
+            if (nutriScore != null || item.offNovaGroup != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Wrap(
                   spacing: 6,
                   runSpacing: 6,
                   children: [
-                    const Chip(
-                      label: Text('OFF'),
-                      visualDensity: VisualDensity.compact,
-                    ),
-                    if ((item.offNutriScore ?? '').trim().isNotEmpty)
-                      Builder(builder: (context) {
-                        final scoreColor = _nutriScoreColor(item.offNutriScore);
-                        return Chip(
-                          label: Text(
-                            'Nutri-Score ${item.offNutriScore!.toUpperCase()}',
-                            style: TextStyle(
-                              color: scoreColor,
-                              fontWeight: FontWeight.w700,
+                    if (nutriScore != null)
+                      Builder(
+                        builder: (context) {
+                          final scoreColor = _nutriScoreColor(nutriScore);
+                          return Chip(
+                            label: Text(
+                              'Nutri-Score ${nutriScore.toUpperCase()}',
+                              style: TextStyle(
+                                color: scoreColor,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
-                          ),
-                          backgroundColor: scoreColor.withOpacity(0.14),
-                          side: BorderSide(
-                            color: scoreColor.withOpacity(0.45),
-                          ),
-                          visualDensity: VisualDensity.compact,
-                        );
-                      }),
+                            backgroundColor: scoreColor.withOpacity(0.14),
+                            side: BorderSide(
+                              color: scoreColor.withOpacity(0.45),
+                            ),
+                            visualDensity: VisualDensity.compact,
+                          );
+                        },
+                      ),
                     if (item.offNovaGroup != null)
-                      Builder(builder: (context) {
-                        final novaColor = _novaColor(item.offNovaGroup);
-                        return Chip(
-                          label: Text(
-                            'NOVA ${item.offNovaGroup}',
-                            style: TextStyle(
-                              color: novaColor,
-                              fontWeight: FontWeight.w700,
+                      Builder(
+                        builder: (context) {
+                          final novaColor = _novaColor(item.offNovaGroup);
+                          return Chip(
+                            label: Text(
+                              'NOVA ${item.offNovaGroup}',
+                              style: TextStyle(
+                                color: novaColor,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
-                          ),
-                          backgroundColor: novaColor.withOpacity(0.14),
-                          side: BorderSide(
-                            color: novaColor.withOpacity(0.45),
-                          ),
-                          visualDensity: VisualDensity.compact,
-                        );
-                      }),
+                            backgroundColor: novaColor.withOpacity(0.14),
+                            side: BorderSide(
+                              color: novaColor.withOpacity(0.45),
+                            ),
+                            visualDensity: VisualDensity.compact,
+                          );
+                        },
+                      ),
                   ],
                 ),
               ),
@@ -1180,13 +1654,17 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
                   ),
                 ],
               ),
-            if (item.notas != null && item.notas!.isNotEmpty)
+            if (item.notas != null &&
+                item.notas!.isNotEmpty &&
+                !_isScannerAutoNote(item.notas))
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
                   item.notas!,
                   style: const TextStyle(
-                      fontSize: 11, fontStyle: FontStyle.italic),
+                    fontSize: 11,
+                    fontStyle: FontStyle.italic,
+                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -1202,8 +1680,10 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.green,
                     foregroundColor: Colors.white,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 4,
+                    ),
                     textStyle: const TextStyle(fontSize: 12),
                   ),
                 ),
@@ -1375,5 +1855,298 @@ class _OpenFoodFactsLookupProduct {
               : <String, dynamic>{},
       rawData: Map<String, dynamic>.from(json),
     );
+  }
+}
+
+class _ListaCompraBarcodeCameraCaptureScreen extends StatefulWidget {
+  const _ListaCompraBarcodeCameraCaptureScreen({
+    required this.frameRectNormalized,
+  });
+
+  final Rect frameRectNormalized;
+
+  @override
+  State<_ListaCompraBarcodeCameraCaptureScreen> createState() =>
+      _ListaCompraBarcodeCameraCaptureScreenState();
+}
+
+class _ListaCompraBarcodeCameraCaptureScreenState
+    extends State<_ListaCompraBarcodeCameraCaptureScreen> {
+  CameraController? _controller;
+  bool _initializing = true;
+  bool _capturing = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _initCamera();
+  }
+
+  Future<void> _initCamera() async {
+    try {
+      final cameras = await availableCameras();
+      if (cameras.isEmpty) {
+        setState(() {
+          _error = 'No se encontro camara disponible.';
+          _initializing = false;
+        });
+        return;
+      }
+
+      final camera = cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.back,
+        orElse: () => cameras.first,
+      );
+
+      final controller = CameraController(
+        camera,
+        ResolutionPreset.high,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
+
+      await controller.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+
+      await controller.setFlashMode(FlashMode.off);
+
+      setState(() {
+        _controller = controller;
+        _initializing = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'No se pudo iniciar la camara: $e';
+        _initializing = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _capture() async {
+    final controller = _controller;
+    if (controller == null || _capturing || !controller.value.isInitialized) {
+      return;
+    }
+
+    setState(() {
+      _capturing = true;
+    });
+
+    try {
+      final file = await controller.takePicture();
+      if (!mounted) return;
+      Navigator.of(context).pop(file.path);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _capturing = false;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('No se pudo tomar la foto: $e')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final topLabelRightInset =
+        screenWidth < 360 ? 102.0 : (screenWidth < 420 ? 94.0 : 86.0);
+    final captureButtonWidth =
+        screenWidth < 360 ? 264.0 : (screenWidth < 420 ? 296.0 : 320.0);
+    final captureLabelSize = screenWidth < 360 ? 21.0 : 24.0;
+    final captureIconSize = screenWidth < 360 ? 30.0 : 34.0;
+    final captureHorizontalInset = screenWidth < 360 ? 16.0 : 24.0;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (_controller != null && _controller!.value.isInitialized)
+              CameraPreview(_controller!),
+            if (_initializing) const Center(child: CircularProgressIndicator()),
+            if (_error != null)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Text(
+                    _error!,
+                    style: const TextStyle(color: Colors.white),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            if (!_initializing && _error == null)
+              CustomPaint(
+                painter: _ListaCompraBarcodeFocusFramePainter(
+                  normalizedRect: widget.frameRectNormalized,
+                ),
+              ),
+            if (!_initializing && _error == null)
+              Positioned(
+                top: 16,
+                left: 16,
+                right: topLabelRightInset,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Text(
+                    'Centra la etiqueta/codigo de barras dentro del recuadro',
+                    textAlign: TextAlign.left,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            if (!_initializing && _error == null)
+              Positioned(
+                top: 14,
+                right: 14,
+                child: Material(
+                  color: Colors.black54,
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    tooltip: 'Cancelar',
+                    onPressed:
+                        _capturing ? null : () => Navigator.of(context).pop(),
+                    icon:
+                        const Icon(Icons.close, color: Colors.white, size: 32),
+                    padding: const EdgeInsets.all(12),
+                  ),
+                ),
+              ),
+            Positioned(
+              left: captureHorizontalInset,
+              right: captureHorizontalInset,
+              bottom: 16,
+              child: Center(
+                child: SizedBox(
+                  width: captureButtonWidth,
+                  child: FilledButton.icon(
+                    onPressed: _capturing ? null : _capture,
+                    icon: _capturing
+                        ? const SizedBox(
+                            width: 28,
+                            height: 28,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 3,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Icon(Icons.camera_alt_outlined,
+                            size: captureIconSize),
+                    label: Text(
+                      'Capturar',
+                      style: TextStyle(
+                        fontSize: captureLabelSize,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.indigo,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 20),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ListaCompraBarcodeFocusFramePainter extends CustomPainter {
+  const _ListaCompraBarcodeFocusFramePainter({required this.normalizedRect});
+
+  final Rect normalizedRect;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final frame = Rect.fromLTWH(
+      size.width * normalizedRect.left,
+      size.height * normalizedRect.top,
+      size.width * normalizedRect.width,
+      size.height * normalizedRect.height,
+    );
+
+    final outer = Path()..addRect(Offset.zero & size);
+    final inner = Path()
+      ..addRRect(RRect.fromRectAndRadius(frame, const Radius.circular(14)));
+
+    final overlayPath = Path.combine(PathOperation.difference, outer, inner);
+    canvas.drawPath(overlayPath, Paint()..color = Colors.black54);
+
+    final borderPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(frame, const Radius.circular(14)),
+      borderPaint,
+    );
+
+    const corner = 22.0;
+    final cornerPaint = Paint()
+      ..color = Colors.lightGreenAccent
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4
+      ..strokeCap = StrokeCap.round;
+
+    void drawCorner(Offset p1, Offset p2, Offset p3) {
+      canvas.drawLine(p1, p2, cornerPaint);
+      canvas.drawLine(p2, p3, cornerPaint);
+    }
+
+    drawCorner(
+      Offset(frame.left, frame.top + corner),
+      Offset(frame.left, frame.top),
+      Offset(frame.left + corner, frame.top),
+    );
+    drawCorner(
+      Offset(frame.right - corner, frame.top),
+      Offset(frame.right, frame.top),
+      Offset(frame.right, frame.top + corner),
+    );
+    drawCorner(
+      Offset(frame.left, frame.bottom - corner),
+      Offset(frame.left, frame.bottom),
+      Offset(frame.left + corner, frame.bottom),
+    );
+    drawCorner(
+      Offset(frame.right - corner, frame.bottom),
+      Offset(frame.right, frame.bottom),
+      Offset(frame.right, frame.bottom - corner),
+    );
+  }
+
+  @override
+  bool shouldRepaint(
+    covariant _ListaCompraBarcodeFocusFramePainter oldDelegate,
+  ) {
+    return oldDelegate.normalizedRect != normalizedRect;
   }
 }

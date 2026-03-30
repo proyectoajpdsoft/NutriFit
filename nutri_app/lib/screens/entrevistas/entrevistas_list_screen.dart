@@ -1223,12 +1223,6 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
   Future<void> _generarPDF(Entrevista entrevista) async {
     final pdf = pw.Document();
 
-    String formatFecha(DateTime? fecha) {
-      return fecha != null
-          ? DateFormat('dd/MM/yyyy HH:mm').format(fecha)
-          : 'Sin fecha';
-    }
-
     final pacientes = await _apiService.getPacientes();
     final paciente = widget.paciente ??
         pacientes.firstWhere(

@@ -120,7 +120,10 @@ class _PacienteEditScreenState extends State<PacienteEditScreen> {
 
   Future<bool> _confirmDiscardChanges() async {
     if (!_hasChanges) return true;
-    return showUnsavedChangesDialog(context);
+    return showUnsavedChangesDialog(
+      context,
+      onSave: () => _saveForm(closeOnSuccess: false),
+    );
   }
 
   Future<void> _handleBack() async {
@@ -167,10 +170,15 @@ class _PacienteEditScreenState extends State<PacienteEditScreen> {
       setState(() {
         _fechaNacimiento = picked;
       });
+      _markDirty();
     }
   }
 
-  Future<void> _submitForm() async {
+  void _submitForm() {
+    _saveForm(closeOnSuccess: true);
+  }
+
+  Future<bool> _saveForm({required bool closeOnSuccess}) async {
     if (_formKey.currentState!.validate()) {
       _formKey.currentState!.save();
 
@@ -220,6 +228,7 @@ class _PacienteEditScreenState extends State<PacienteEditScreen> {
         }
 
         if (success) {
+          _hasChanges = false;
           // Mostrar mensaje según sea alta o modificación
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -229,7 +238,10 @@ class _PacienteEditScreenState extends State<PacienteEditScreen> {
               backgroundColor: Colors.green,
             ),
           );
-          Navigator.of(context).pop(true); // Devolver true para indicar éxito
+          if (closeOnSuccess && mounted) {
+            Navigator.of(context).pop(true); // Devolver true para indicar éxito
+          }
+          return true;
         }
       } catch (e) {
         // --- LÓGICA DE ERROR DUAL (DEBUG/NORMAL) ---
@@ -260,6 +272,7 @@ class _PacienteEditScreenState extends State<PacienteEditScreen> {
         }
       }
     }
+    return false;
   }
 
   @override
@@ -324,6 +337,7 @@ class _PacienteEditScreenState extends State<PacienteEditScreen> {
                                       _sexo = selected ? 'Hombre' : null;
                                     });
                                     state.didChange(_sexo);
+                                    _markDirty();
                                   },
                                 ),
                                 ChoiceChip(
@@ -334,6 +348,7 @@ class _PacienteEditScreenState extends State<PacienteEditScreen> {
                                       _sexo = selected ? 'Mujer' : null;
                                     });
                                     state.didChange(_sexo);
+                                    _markDirty();
                                   },
                                 ),
                               ],
@@ -512,6 +527,7 @@ class _PacienteEditScreenState extends State<PacienteEditScreen> {
                         setState(() {
                           _online = value;
                         });
+                        _markDirty();
                       },
                     ),
                     SwitchListTile(
@@ -521,6 +537,7 @@ class _PacienteEditScreenState extends State<PacienteEditScreen> {
                         setState(() {
                           _activo = value;
                         });
+                        _markDirty();
                       },
                     ),
                   ],

@@ -8,6 +8,7 @@ class Entrenamiento {
   final int duracionHoras;
   final int duracionMinutos;
   final double? duracionKilometros;
+  final double? desnivelAcumulado;
   final int nivelEsfuerzo; // 1-10
   final String? notas;
   final String? fotos; // JSON string con rutas de fotos
@@ -32,6 +33,7 @@ class Entrenamiento {
     required this.duracionHoras,
     required this.duracionMinutos,
     this.duracionKilometros,
+    this.desnivelAcumulado,
     required this.nivelEsfuerzo,
     this.notas,
     this.fotos,
@@ -69,6 +71,9 @@ class Entrenamiento {
       duracionMinutos: int.tryParse(json['duracion_minutos'].toString()) ?? 0,
       duracionKilometros: json['duracion_kilometros'] != null
           ? double.tryParse(json['duracion_kilometros'].toString())
+          : null,
+      desnivelAcumulado: json['desnivel_acumulado'] != null
+          ? double.tryParse(json['desnivel_acumulado'].toString())
           : null,
       nivelEsfuerzo: int.tryParse(json['nivel_esfuerzo'].toString()) ?? 5,
       notas: json['notas'],
@@ -112,6 +117,7 @@ class Entrenamiento {
       'duracion_horas': duracionHoras,
       'duracion_minutos': duracionMinutos,
       'duracion_kilometros': duracionKilometros,
+      'desnivel_acumulado': desnivelAcumulado,
       'nivel_esfuerzo': nivelEsfuerzo,
       'notas': notas,
       'fotos': fotos,

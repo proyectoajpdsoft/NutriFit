@@ -131,6 +131,7 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
         .then((value) => _refreshEntrevistas());
   }
 
+  // ignore: unused_element
   String _buildFechaLinea(EntrevistaFit entrevista) {
     if (entrevista.fechaPrevista != null) {
       return DateFormat('dd/MM/yyyy HH:mm').format(entrevista.fechaPrevista!);
@@ -447,13 +448,6 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
 
   Future<void> _generarPDF(EntrevistaFit entrevista) async {
     final pdf = pw.Document();
-
-    // Función auxiliar para formatear fechas
-    String formatFecha(DateTime? fecha) {
-      return fecha != null
-          ? DateFormat('dd/MM/yyyy HH:mm').format(fecha)
-          : 'Sin fecha';
-    }
 
     // Función auxiliar para mostrar Sí/No
     String siNo(String? valor) {

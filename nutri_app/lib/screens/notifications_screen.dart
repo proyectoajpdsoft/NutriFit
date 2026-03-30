@@ -747,8 +747,6 @@ class _NotificationsPendingScreenState
   ) async {
     try {
       final apiService = context.read<ApiService>();
-      final authService = context.read<AuthService>();
-      final codusuario = authService.userCode;
 
       final revisionActualizada = Revision(
         codigo: revision.codigo,
@@ -876,6 +874,7 @@ class _NotificationsPendingScreenState
     }
   }
 
+  // ignore: unused_element
   Widget _buildDetailRow({
     required IconData icon,
     required String label,

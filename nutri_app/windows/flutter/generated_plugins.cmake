@@ -11,7 +11,9 @@ list(APPEND FLUTTER_PLUGIN_LIST
   local_notifier
   permission_handler_windows
   printing
+  record_windows
   screen_retriever_windows
+  share_plus
   super_native_extensions
   url_launcher_windows
   window_manager

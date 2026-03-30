@@ -136,10 +136,6 @@ class _MedicionesListScreenState extends State<MedicionesListScreen> {
     }
   }
 
-  String _getBmiCategory(double bmi) {
-    return BmiDialogHelper.getBmiCategory(bmi);
-  }
-
   Color _getBmiColor(double bmi) {
     return BmiDialogHelper.getBmiColor(bmi);
   }
@@ -1331,6 +1327,7 @@ class _MedicionesListScreenState extends State<MedicionesListScreen> {
     }
   }
 
+  // ignore: unused_element
   Future<void> _generatePDF(Medicion medicion) async {
     try {
       showDialog(

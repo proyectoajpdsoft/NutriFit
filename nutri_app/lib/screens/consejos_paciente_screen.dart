@@ -3,6 +3,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher_string.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 // import 'package:youtube_player_flutter/youtube_player_flutter.dart'; // Deshabilitado para web
 import 'dart:convert';
 import 'dart:io';
@@ -14,6 +15,39 @@ import '../services/consejo_receta_pdf_service.dart';
 import '../models/consejo.dart';
 import '../models/consejo_documento.dart';
 import '../widgets/image_viewer_dialog.dart';
+import '../widgets/restricted_access_dialog_helper.dart';
+
+bool _canUseConsejosCopyPdf(AuthService authService) {
+  return authService.isPremium ||
+      authService.userType == 'Nutricionista' ||
+      authService.userType == 'Administrador';
+}
+
+Future<void> _showPremiumRequiredForConsejosCopyPdf(BuildContext context) {
+  return RestrictedAccessDialogHelper.show(
+    context,
+    title: 'Función Premium',
+    message:
+        'Para poder Copiar y pasar a PDF las Recetas y Consejos, debes ser usuario Premium.',
+    primaryActionLabel: 'Hazte Premium',
+    primaryActionIcon: Icons.workspace_premium,
+    primaryRouteName: '/premium_info',
+  );
+}
+
+Future<String> _buildNutriFitClipboardSignature(BuildContext context) async {
+  try {
+    final nutricionistaParam =
+        await context.read<ApiService>().getParametro('nutricionista_nombre');
+    final nutricionistaNombre =
+        (nutricionistaParam?['valor']?.toString() ?? '').trim();
+    return nutricionistaNombre.isEmpty
+        ? 'App NutriFit'
+        : 'App NutriFit $nutricionistaNombre';
+  } catch (_) {
+    return 'App NutriFit';
+  }
+}
 
 class ConsejosPacienteScreen extends StatefulWidget {
   const ConsejosPacienteScreen({super.key});
@@ -24,6 +58,8 @@ class ConsejosPacienteScreen extends StatefulWidget {
 
 class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
     with SingleTickerProviderStateMixin {
+  static const int _pageSize = 10;
+
   List<Consejo> _consejos = [];
   List<Consejo> _consejosPortada = [];
   List<Consejo> _consejosPersonalizados = [];
@@ -32,13 +68,26 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
   bool _isLoadingPortada = true;
   bool _isLoadingPersonalizados = false;
   bool _isLoadingFavoritos = true;
+  bool _isLoadingMore = false;
+  bool _isLoadingMorePortada = false;
+  bool _isLoadingMorePersonalizados = false;
+  bool _isLoadingMoreFavoritos = false;
+  bool _hasMoreConsejos = true;
+  bool _hasMorePortada = true;
+  bool _hasMorePersonalizados = true;
+  bool _hasMoreFavoritos = true;
   late TabController _tabController;
   String? _patientCode;
   String? _userCode;
   bool _isGuestMode = false;
   bool _isSearchVisible = false;
   String _searchQuery = '';
-  String _sortMode = 'fecha_desc';
+  String _sortMode = 'fecha';
+  bool _sortAscending = false;
+  int _totalPersonalizados = 0;
+  int _totalPortada = 0;
+  int _totalConsejos = 0;
+  int _totalFavoritos = 0;
   bool _categoriasLoading = false;
   List<Map<String, dynamic>> _categoriasCatalogo = [];
   List<int> _selectedCategoriaIds = [];
@@ -81,6 +130,12 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
     final hasPatient = (_patientCode ?? '').isNotEmpty;
     final tabCount = hasPatient ? 4 : 3;
     _tabController = TabController(length: tabCount, vsync: this);
+    _tabController.addListener(() {
+      if (!_tabController.indexIsChanging && mounted) {
+        _loadPreferences();
+        setState(() {});
+      }
+    });
 
     // Cargar argumentos (para abrir tab específico)
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -99,13 +154,127 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       }
     });
 
-    _loadConsejosPortada();
-    _loadConsejos();
+    _loadConsejosPortada(reset: true);
+    _loadConsejos(reset: true);
     if (hasPatient) {
-      _loadConsejosPersonalizados();
+      _loadConsejosPersonalizados(reset: true);
     }
-    _loadConsejosFavoritos();
+    _loadConsejosFavoritos(reset: true);
     _loadCategorias();
+    _loadPreferences();
+    _loadTotals();
+  }
+
+  Future<void> _loadTotals() async {
+    final hasPatient = (_patientCode ?? '').isNotEmpty;
+    final futures = <Future<void>>[
+      _loadPortadaTotal(),
+      _loadConsejosTotal(),
+      _loadFavoritosTotal(),
+    ];
+    if (hasPatient) {
+      futures.insert(0, _loadPersonalizadosTotal());
+    }
+    await Future.wait<void>(futures);
+  }
+
+  Future<void> _loadPersonalizadosTotal() async {
+    try {
+      final patientParam = (_patientCode != null && _patientCode!.isNotEmpty)
+          ? _patientCode!
+          : '0';
+      final apiService = context.read<ApiService>();
+      final url =
+          'api/consejos.php?get_consejos_personalizados=1&paciente=$patientParam&total=1';
+      final response = await apiService.get(url);
+      if (response.statusCode != 200 || !mounted) return;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final total = int.tryParse((data['total'] ?? '0').toString()) ?? 0;
+      setState(() => _totalPersonalizados = total);
+    } catch (_) {}
+  }
+
+  Future<void> _loadPortadaTotal() async {
+    try {
+      final apiService = context.read<ApiService>();
+      final url = 'api/consejos.php?get_consejos_portada=1&total=1';
+      final response = await apiService.get(url);
+      if (response.statusCode != 200 || !mounted) return;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final total = int.tryParse((data['total'] ?? '0').toString()) ?? 0;
+      setState(() => _totalPortada = total);
+    } catch (_) {}
+  }
+
+  Future<void> _loadConsejosTotal() async {
+    try {
+      final apiService = context.read<ApiService>();
+      final url =
+          'api/consejos.php?get_consejos_publicos=1&total=1&q=$_searchQuery';
+      final response = await apiService.get(url);
+      if (response.statusCode != 200 || !mounted) return;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final total = int.tryParse((data['total'] ?? '0').toString()) ?? 0;
+      setState(() => _totalConsejos = total);
+    } catch (_) {}
+  }
+
+  Future<void> _loadFavoritosTotal() async {
+    try {
+      final userCode = _userCode;
+      if (userCode == null || userCode.isEmpty || _isGuestMode) {
+        if (mounted) {
+          setState(() => _totalFavoritos = 0);
+        }
+        return;
+      }
+      final patientParam = (_patientCode != null && _patientCode!.isNotEmpty)
+          ? _patientCode!
+          : '0';
+      final apiService = context.read<ApiService>();
+      final url =
+          'api/consejos.php?get_consejos_favoritos=1&paciente=$patientParam&codigo_usuario=$userCode&total=1';
+      final response = await apiService.get(url);
+      if (response.statusCode != 200 || !mounted) return;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final total = int.tryParse((data['total'] ?? '0').toString()) ?? 0;
+      setState(() => _totalFavoritos = total);
+    } catch (_) {}
+  }
+
+  String _getPreferenceKeyPrefix() {
+    final hasPatient = (_patientCode ?? '').isNotEmpty;
+    final isPersonalizadosTab = hasPatient && _tabController.index == 0;
+    return isPersonalizadosTab ? 'consejos_personalizados' : 'consejos';
+  }
+
+  Future<void> _loadPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    final prefix = _getPreferenceKeyPrefix();
+    setState(() {
+      _sortMode = prefs.getString('${prefix}_sortMode') ?? 'fecha';
+      _sortAscending = prefs.getBool('${prefix}_sortAscending') ?? false;
+      _selectedCategoriaIds = prefs
+              .getStringList('${prefix}_categoriaIds')
+              ?.map(int.parse)
+              .toList() ??
+          <int>[];
+      _categoriaMatchAll =
+          prefs.getBool('${prefix}_categoriaMatchAll') ?? false;
+    });
+  }
+
+  Future<void> _savePreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    final prefix = _getPreferenceKeyPrefix();
+    await Future.wait([
+      prefs.setString('${prefix}_sortMode', _sortMode),
+      prefs.setBool('${prefix}_sortAscending', _sortAscending),
+      prefs.setStringList('${prefix}_categoriaIds',
+          _selectedCategoriaIds.map((e) => e.toString()).toList()),
+      prefs.setBool('${prefix}_categoriaMatchAll', _categoriaMatchAll),
+    ]);
   }
 
   Future<void> _loadCategorias() async {
@@ -154,7 +323,27 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       builder: (context) => StatefulBuilder(
         builder: (context, setStateDialog) {
           return AlertDialog(
-            title: const Text('Filtrar por categorias'),
+            titlePadding: const EdgeInsets.fromLTRB(12, 8, 8, 0),
+            title: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Filtrar por categorías',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Cerrar',
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close, size: 18),
+                  style: IconButton.styleFrom(
+                    shape: const CircleBorder(),
+                    minimumSize: const Size(32, 32),
+                    padding: EdgeInsets.zero,
+                  ),
+                ),
+              ],
+            ),
             content: SizedBox(
               width: double.maxFinite,
               child: Column(
@@ -163,28 +352,41 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
                   if (_categoriasLoading)
                     const LinearProgressIndicator(minHeight: 2)
                   else
-                    SingleChildScrollView(
-                      child: Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: _categoriasCatalogo.map((cat) {
-                          final id = int.parse(cat['codigo'].toString());
-                          final name = cat['nombre'].toString();
-                          final selected = tempSelected.contains(id);
-                          return FilterChip(
-                            label: Text(name),
-                            selected: selected,
-                            onSelected: (value) {
-                              setStateDialog(() {
-                                if (value) {
-                                  tempSelected.add(id);
-                                } else {
-                                  tempSelected.remove(id);
-                                }
-                              });
-                            },
-                          );
-                        }).toList(),
+                    Card(
+                      margin: EdgeInsets.zero,
+                      clipBehavior: Clip.antiAlias,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight: MediaQuery.of(context).size.height * 0.38,
+                        ),
+                        child: Scrollbar(
+                          thumbVisibility: _categoriasCatalogo.length > 8,
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.all(12),
+                            child: Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: _categoriasCatalogo.map((cat) {
+                                final id = int.parse(cat['codigo'].toString());
+                                final name = cat['nombre'].toString();
+                                final selected = tempSelected.contains(id);
+                                return FilterChip(
+                                  label: Text(name),
+                                  selected: selected,
+                                  onSelected: (value) {
+                                    setStateDialog(() {
+                                      if (value) {
+                                        tempSelected.add(id);
+                                      } else {
+                                        tempSelected.remove(id);
+                                      }
+                                    });
+                                  },
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   const SizedBox(height: 12),
@@ -203,15 +405,12 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancelar'),
-              ),
-              TextButton(
                 onPressed: () {
                   setState(() {
                     _selectedCategoriaIds = [];
                     _categoriaMatchAll = false;
                   });
+                  _savePreferences();
                   Navigator.pop(context);
                 },
                 child: const Text('Limpiar'),
@@ -222,9 +421,34 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
                     _selectedCategoriaIds = tempSelected;
                     _categoriaMatchAll = tempMatchAll;
                   });
+                  _savePreferences();
                   Navigator.pop(context);
                 },
-                child: const Text('Aplicar'),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Aplicar'),
+                    const SizedBox(width: 8),
+                    Container(
+                      width: 20,
+                      height: 20,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color:
+                            tempSelected.isNotEmpty ? Colors.blue : Colors.grey,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        '${tempSelected.length}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           );
@@ -275,6 +499,79 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
         DateTime.fromMillisecondsSinceEpoch(0);
   }
 
+  int _getPopularScore(Consejo consejo) {
+    final likes = consejo.totalLikes ?? 0;
+    final alcance = consejo.totalPacientes ?? 0;
+    final favoritoActual = consejo.favorito == 'S' ? 2 : 0;
+    final meGustaActual = consejo.meGusta == 'S' ? 1 : 0;
+    return (likes * 3) + (alcance * 2) + favoritoActual + meGustaActual;
+  }
+
+  List<Consejo> _currentTabSource() {
+    final hasPatient = (_patientCode ?? '').isNotEmpty;
+    final tabIndex = _tabController.index;
+
+    if (hasPatient) {
+      if (tabIndex == 0) return _consejosPersonalizados;
+      if (tabIndex == 1) {
+        final personalesCodigos = _consejosPersonalizados
+            .map((c) => c.codigo)
+            .whereType<int>()
+            .toSet();
+        return _consejosPortada
+            .where((c) =>
+                c.codigo == null || !personalesCodigos.contains(c.codigo))
+            .toList(growable: false);
+      }
+      if (tabIndex == 2) return _consejos;
+      return _consejosFavoritos;
+    }
+
+    if (tabIndex == 0) return _consejosPortada;
+    if (tabIndex == 1) return _consejos;
+    return _consejosFavoritos;
+  }
+
+  int _currentTabCount() {
+    final currentItemsCount = _applySearchAndSort(_currentTabSource()).length;
+    final hasPatient = (_patientCode ?? '').isNotEmpty;
+    final tabIndex = _tabController.index;
+    if (hasPatient) {
+      if (tabIndex == 0) {
+        return _totalPersonalizados > 0
+            ? _totalPersonalizados
+            : currentItemsCount;
+      }
+      if (tabIndex == 1) {
+        return _totalPortada > 0 ? _totalPortada : currentItemsCount;
+      }
+      if (tabIndex == 2) {
+        return _totalConsejos > 0 ? _totalConsejos : currentItemsCount;
+      }
+      return _totalFavoritos > 0 ? _totalFavoritos : currentItemsCount;
+    }
+    if (tabIndex == 0) {
+      return _totalPortada > 0 ? _totalPortada : currentItemsCount;
+    }
+    if (tabIndex == 1) {
+      return _totalConsejos > 0 ? _totalConsejos : currentItemsCount;
+    }
+    return _totalFavoritos > 0 ? _totalFavoritos : currentItemsCount;
+  }
+
+  int _getFilteredTabCount() {
+    return _applySearchAndSort(_currentTabSource()).length;
+  }
+
+  void _toggleSearchVisibility() {
+    setState(() {
+      _isSearchVisible = !_isSearchVisible;
+      if (!_isSearchVisible) {
+        _searchQuery = '';
+      }
+    });
+  }
+
   List<Consejo> _applySearchAndSort(List<Consejo> source) {
     final query = _searchQuery.trim().toLowerCase();
     var items = source
@@ -289,23 +586,66 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
 
     items.sort((a, b) {
       switch (_sortMode) {
-        case 'likes_desc':
-          return (b.totalLikes ?? 0).compareTo(a.totalLikes ?? 0);
-        case 'titulo_asc':
-          return a.titulo.toLowerCase().compareTo(b.titulo.toLowerCase());
-        case 'fecha_desc':
+        case 'popular':
+          final popularCompare = _sortAscending
+              ? _getPopularScore(a).compareTo(_getPopularScore(b))
+              : _getPopularScore(b).compareTo(_getPopularScore(a));
+          if (popularCompare != 0) return popularCompare;
+          return _sortAscending
+              ? _getConsejoDate(a).compareTo(_getConsejoDate(b))
+              : _getConsejoDate(b).compareTo(_getConsejoDate(a));
+        case 'titulo':
+          final titleCompare =
+              a.titulo.toLowerCase().compareTo(b.titulo.toLowerCase());
+          return _sortAscending ? titleCompare : -titleCompare;
+        case 'fecha':
         default:
-          return _getConsejoDate(b).compareTo(_getConsejoDate(a));
+          final dateCompare = _getConsejoDate(a).compareTo(_getConsejoDate(b));
+          if (dateCompare != 0) {
+            return _sortAscending ? dateCompare : -dateCompare;
+          }
+          final titleCompare =
+              a.titulo.toLowerCase().compareTo(b.titulo.toLowerCase());
+          return _sortAscending ? titleCompare : -titleCompare;
       }
     });
 
     return items;
   }
 
-  void _setSortMode(String mode) {
+  void _applySortSelection(String mode) {
     setState(() {
-      _sortMode = mode;
+      if (_sortMode == mode) {
+        _sortAscending = !_sortAscending;
+      } else {
+        _sortMode = mode;
+        _sortAscending = mode == 'titulo';
+      }
     });
+    _savePreferences();
+  }
+
+  Future<void> _handleAppBarMenuAction(String action) async {
+    switch (action) {
+      case 'sort_title':
+        _applySortSelection('titulo');
+        break;
+      case 'sort_recent':
+        _applySortSelection('fecha');
+        break;
+      case 'sort_popular':
+        _applySortSelection('popular');
+        break;
+      case 'refresh':
+        await _refreshCurrentTab();
+        break;
+      case 'filter':
+        await _showCategoriaFilterDialog();
+        break;
+      case 'search':
+        _toggleSearchVisibility();
+        break;
+    }
   }
 
   Future<void> _refreshCurrentTab() async {
@@ -314,29 +654,40 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
 
     if (hasPatient) {
       if (tabIndex == 0) {
-        await _loadConsejosPersonalizados();
+        await _loadConsejosPersonalizados(reset: true);
       } else if (tabIndex == 1) {
-        await _loadConsejosPortada();
+        await _loadConsejosPortada(reset: true);
       } else if (tabIndex == 2) {
-        await _loadConsejos();
+        await _loadConsejos(reset: true);
       } else {
-        await _loadConsejosFavoritos();
+        await _loadConsejosFavoritos(reset: true);
       }
       return;
     }
 
     if (tabIndex == 0) {
-      await _loadConsejosPortada();
+      await _loadConsejosPortada(reset: true);
     } else if (tabIndex == 1) {
-      await _loadConsejos();
+      await _loadConsejos(reset: true);
     } else {
-      await _loadConsejosFavoritos();
+      await _loadConsejosFavoritos(reset: true);
     }
   }
 
-  Future<void> _loadConsejos() async {
+  Future<void> _loadConsejos({bool reset = false}) async {
+    if (!reset && (_isLoading || _isLoadingMore || !_hasMoreConsejos)) {
+      return;
+    }
+
+    final offset = reset ? 0 : _consejos.length;
+
     setState(() {
-      _isLoading = true;
+      if (reset) {
+        _isLoading = true;
+        _hasMoreConsejos = true;
+      } else {
+        _isLoadingMore = true;
+      }
     });
 
     try {
@@ -351,15 +702,17 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       // Usar el endpoint correcto: consejo_pacientes.php?todos_paciente=1&paciente=X
       // Esto obtendrá tanto los consejos asignados al paciente como los visible_para_todos
       String url =
-          'api/consejo_pacientes.php?todos_paciente=1&paciente=$userParam';
+          'api/consejo_pacientes.php?todos_paciente=1&paciente=$userParam&limit=$_pageSize&offset=$offset';
 
       final response = await apiService.get(url);
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
+        final parsed = data.map((item) => Consejo.fromJson(item)).toList();
         if (mounted) {
           setState(() {
-            _consejos = data.map((item) => Consejo.fromJson(item)).toList();
+            _consejos = reset ? parsed : [..._consejos, ...parsed];
+            _hasMoreConsejos = parsed.length >= _pageSize;
           });
         }
       } else if (mounted) {
@@ -381,14 +734,27 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       if (mounted) {
         setState(() {
           _isLoading = false;
+          _isLoadingMore = false;
         });
       }
     }
   }
 
-  Future<void> _loadConsejosPortada() async {
+  Future<void> _loadConsejosPortada({bool reset = false}) async {
+    if (!reset &&
+        (_isLoadingPortada || _isLoadingMorePortada || !_hasMorePortada)) {
+      return;
+    }
+
+    final offset = reset ? 0 : _consejosPortada.length;
+
     setState(() {
-      _isLoadingPortada = true;
+      if (reset) {
+        _isLoadingPortada = true;
+        _hasMorePortada = true;
+      } else {
+        _isLoadingMorePortada = true;
+      }
     });
 
     try {
@@ -398,7 +764,8 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       final patientParam = _patientCode ?? '0';
 
       // Construir URL con codigo_usuario si está disponible (para obtener estado de favorito)
-      String url = 'api/consejos.php?portada=S&paciente_codigo=$patientParam';
+      String url =
+          'api/consejos.php?portada=S&paciente_codigo=$patientParam&limit=$_pageSize&offset=$offset';
       if (_userCode != null && !_isGuestMode) {
         url += '&codigo_usuario=$_userCode';
       }
@@ -407,10 +774,12 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
+        final parsed = data.map((item) => Consejo.fromJson(item)).toList();
         if (mounted) {
           setState(() {
             _consejosPortada =
-                data.map((item) => Consejo.fromJson(item)).toList();
+                reset ? parsed : [..._consejosPortada, ...parsed];
+            _hasMorePortada = parsed.length >= _pageSize;
           });
         }
       } else {
@@ -422,20 +791,35 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       if (mounted) {
         setState(() {
           _isLoadingPortada = false;
+          _isLoadingMorePortada = false;
         });
       }
     }
   }
 
-  Future<void> _loadConsejosPersonalizados() async {
+  Future<void> _loadConsejosPersonalizados({bool reset = false}) async {
     // Solo cargar para usuarios con paciente
     final hasPatient = (_patientCode ?? '').isNotEmpty;
     if (!hasPatient || _isGuestMode) {
       return;
     }
 
+    if (!reset &&
+        (_isLoadingPersonalizados ||
+            _isLoadingMorePersonalizados ||
+            !_hasMorePersonalizados)) {
+      return;
+    }
+
+    final offset = reset ? 0 : _consejosPersonalizados.length;
+
     setState(() {
-      _isLoadingPersonalizados = true;
+      if (reset) {
+        _isLoadingPersonalizados = true;
+        _hasMorePersonalizados = true;
+      } else {
+        _isLoadingMorePersonalizados = true;
+      }
     });
 
     try {
@@ -443,17 +827,19 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
 
       // Obtener SOLO los consejos asignados a este paciente (personalizados, sin visible_para_todos)
       String url =
-          'api/consejo_pacientes.php?personalizados_paciente=1&paciente=$_userCode';
+          'api/consejo_pacientes.php?personalizados_paciente=1&paciente=$_userCode&limit=$_pageSize&offset=$offset';
 
       final response = await apiService.get(url);
 
       if (response.statusCode == 200) {
         try {
           final List<dynamic> data = json.decode(response.body);
+          final parsed = data.map((item) => Consejo.fromJson(item)).toList();
           if (mounted) {
             setState(() {
               _consejosPersonalizados =
-                  data.map((item) => Consejo.fromJson(item)).toList();
+                  reset ? parsed : [..._consejosPersonalizados, ...parsed];
+              _hasMorePersonalizados = parsed.length >= _pageSize;
             });
           }
         } catch (parseError) {
@@ -468,17 +854,19 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       if (mounted) {
         setState(() {
           _isLoadingPersonalizados = false;
+          _isLoadingMorePersonalizados = false;
         });
       }
     }
   }
 
-  Future<void> _loadConsejosFavoritos() async {
+  Future<void> _loadConsejosFavoritos({bool reset = false}) async {
     // No cargar favoritos en modo guest
     if (_isGuestMode) {
       if (mounted) {
         setState(() {
           _isLoadingFavoritos = false;
+          _hasMoreFavoritos = false;
         });
       }
       return;
@@ -489,19 +877,34 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       if (mounted) {
         setState(() {
           _isLoadingFavoritos = false;
+          _hasMoreFavoritos = false;
         });
       }
       return;
     }
 
+    if (!reset &&
+        (_isLoadingFavoritos ||
+            _isLoadingMoreFavoritos ||
+            !_hasMoreFavoritos)) {
+      return;
+    }
+
+    final offset = reset ? 0 : _consejosFavoritos.length;
+
     setState(() {
-      _isLoadingFavoritos = true;
+      if (reset) {
+        _isLoadingFavoritos = true;
+        _hasMoreFavoritos = true;
+      } else {
+        _isLoadingMoreFavoritos = true;
+      }
     });
 
     try {
       final apiService = Provider.of<ApiService>(context, listen: false);
       final response = await apiService.get(
-        'api/consejo_usuarios.php?favoritos=1&usuario=$_userCode',
+        'api/consejo_usuarios.php?favoritos=1&usuario=$_userCode&limit=$_pageSize&offset=$offset',
       );
 
       if (response.statusCode == 200) {
@@ -514,7 +917,9 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
         }
         if (mounted) {
           setState(() {
-            _consejosFavoritos = parsed;
+            _consejosFavoritos =
+                reset ? parsed : [..._consejosFavoritos, ...parsed];
+            _hasMoreFavoritos = parsed.length >= _pageSize;
           });
         }
       }
@@ -528,6 +933,7 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       if (mounted) {
         setState(() {
           _isLoadingFavoritos = false;
+          _isLoadingMoreFavoritos = false;
         });
       }
     }
@@ -676,10 +1082,10 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       ),
     ).then((_) {
       // Reload after viewing detail
-      _loadConsejos();
-      _loadConsejosPortada();
-      _loadConsejosPersonalizados();
-      _loadConsejosFavoritos();
+      _loadConsejos(reset: true);
+      _loadConsejosPortada(reset: true);
+      _loadConsejosPersonalizados(reset: true);
+      _loadConsejosFavoritos(reset: true);
     });
   }
 
@@ -898,46 +1304,192 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: const Text('Consejos'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Flexible(
+              child: Text(
+                'Consejos',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.blue,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                '${_currentTabCount()}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
         actions: [
+          if (!_isSearchVisible)
+            IconButton(
+              tooltip: 'Buscar',
+              icon: const Icon(Icons.search),
+              onPressed: _toggleSearchVisibility,
+            ),
           IconButton(
-            tooltip: 'Buscar',
-            icon: Icon(_isSearchVisible ? Icons.close : Icons.search),
-            onPressed: () {
-              setState(() {
-                _isSearchVisible = !_isSearchVisible;
-                if (!_isSearchVisible) {
-                  _searchQuery = '';
-                }
-              });
-            },
-          ),
-          IconButton(
-            tooltip: 'Filtrar categorias',
-            icon: const Icon(Icons.filter_list),
+            tooltip: _selectedCategoriaIds.isEmpty
+                ? 'Filtrar categorias'
+                : 'Filtrar categorias (${_selectedCategoriaIds.length})',
+            icon: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                const Icon(Icons.filter_alt_outlined),
+                if (_selectedCategoriaIds.isNotEmpty)
+                  Positioned(
+                    right: -8,
+                    top: -6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 5,
+                        vertical: 1,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.blue,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        '${_selectedCategoriaIds.length}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
             onPressed: _showCategoriaFilterDialog,
           ),
-          IconButton(
-            tooltip: 'Refrescar',
-            icon: const Icon(Icons.refresh),
-            onPressed: _refreshCurrentTab,
-          ),
           PopupMenuButton<String>(
-            tooltip: 'Ordenar',
-            icon: const Icon(Icons.sort),
-            onSelected: _setSortMode,
-            itemBuilder: (context) => const [
-              PopupMenuItem(
-                value: 'fecha_desc',
-                child: Text('Fecha (desc)'),
+            tooltip: 'Más opciones',
+            icon: const Icon(Icons.more_vert),
+            onSelected: (value) {
+              _handleAppBarMenuAction(value);
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'search',
+                child: Row(
+                  children: [
+                    Icon(Icons.search, size: 18),
+                    SizedBox(width: 10),
+                    Text('Buscar'),
+                  ],
+                ),
               ),
               PopupMenuItem(
-                value: 'likes_desc',
-                child: Text('Me gustas (desc)'),
+                value: 'filter',
+                child: ListTile(
+                  leading: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      const SizedBox(width: 18, height: 18),
+                      const Icon(Icons.filter_alt, size: 18),
+                      if (_selectedCategoriaIds.isNotEmpty)
+                        Positioned(
+                          right: -2,
+                          top: -2,
+                          child: Container(
+                            constraints: const BoxConstraints(
+                              minWidth: 14,
+                              minHeight: 14,
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 3,
+                              vertical: 1,
+                            ),
+                            decoration: const BoxDecoration(
+                              color: Colors.blue,
+                              shape: BoxShape.circle,
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              '${_selectedCategoriaIds.length}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 8,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  title: const Text('Filtrar'),
+                  contentPadding: EdgeInsets.zero,
+                ),
               ),
-              PopupMenuItem(
-                value: 'titulo_asc',
-                child: Text('Titulo (A-Z)'),
+              const PopupMenuItem(
+                value: 'refresh',
+                child: Row(
+                  children: [
+                    Icon(Icons.refresh, size: 18),
+                    SizedBox(width: 10),
+                    Text('Actualizar'),
+                  ],
+                ),
+              ),
+              const PopupMenuDivider(),
+              CheckedPopupMenuItem<String>(
+                value: 'sort_title',
+                checked: _sortMode == 'titulo',
+                child: Row(
+                  children: [
+                    const Expanded(child: Text('Ordenar Título')),
+                    if (_sortMode == 'titulo')
+                      Icon(
+                        _sortAscending
+                            ? Icons.arrow_upward
+                            : Icons.arrow_downward,
+                        size: 18,
+                      ),
+                  ],
+                ),
+              ),
+              CheckedPopupMenuItem<String>(
+                value: 'sort_recent',
+                checked: _sortMode == 'fecha',
+                child: Row(
+                  children: [
+                    const Expanded(child: Text('Ordenar Recientes')),
+                    if (_sortMode == 'fecha')
+                      Icon(
+                        _sortAscending
+                            ? Icons.arrow_upward
+                            : Icons.arrow_downward,
+                        size: 18,
+                      ),
+                  ],
+                ),
+              ),
+              CheckedPopupMenuItem<String>(
+                value: 'sort_popular',
+                checked: _sortMode == 'popular',
+                child: Row(
+                  children: [
+                    const Expanded(child: Text('Ordenar Populares')),
+                    if (_sortMode == 'popular')
+                      Icon(
+                        _sortAscending
+                            ? Icons.arrow_upward
+                            : Icons.arrow_downward,
+                        size: 18,
+                      ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -965,10 +1517,15 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
               child: TextField(
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Buscar consejos',
-                  prefixIcon: Icon(Icons.search),
-                  border: OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: IconButton(
+                    tooltip: 'Ocultar búsqueda',
+                    icon: const Icon(Icons.close),
+                    onPressed: _toggleSearchVisibility,
+                  ),
+                  border: const OutlineInputBorder(),
                 ),
                 onChanged: (value) {
                   setState(() {
@@ -1029,17 +1586,36 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
                           ),
                         );
                       }
-                      return ListView.builder(
-                        padding: EdgeInsets.only(bottom: listBottomPadding),
-                        itemCount: items.length,
-                        itemBuilder: (context, index) {
-                          return _buildConsejoCard(
-                            items[index],
-                            unreadBadgeText: 'No leído',
-                            allowSocialActions: false,
-                            showUnreadBadge: true,
-                          );
+                      return NotificationListener<ScrollNotification>(
+                        onNotification: (notification) {
+                          if (_hasMorePersonalizados &&
+                              !_isLoadingMorePersonalizados &&
+                              notification.metrics.pixels >=
+                                  notification.metrics.maxScrollExtent - 300) {
+                            _loadConsejosPersonalizados();
+                          }
+                          return false;
                         },
+                        child: ListView.builder(
+                          padding: EdgeInsets.only(bottom: listBottomPadding),
+                          itemCount: items.length +
+                              (_isLoadingMorePersonalizados ? 1 : 0),
+                          itemBuilder: (context, index) {
+                            if (index >= items.length) {
+                              return const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 20),
+                                child:
+                                    Center(child: CircularProgressIndicator()),
+                              );
+                            }
+                            return _buildConsejoCard(
+                              items[index],
+                              unreadBadgeText: 'No leído',
+                              allowSocialActions: false,
+                              showUnreadBadge: true,
+                            );
+                          },
+                        ),
                       );
                     },
                   ),
@@ -1069,12 +1645,30 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
                         child: Text('No hay consejos destacados'),
                       );
                     }
-                    return ListView.builder(
-                      padding: EdgeInsets.only(bottom: listBottomPadding),
-                      itemCount: items.length,
-                      itemBuilder: (context, index) {
-                        return _buildConsejoCard(items[index]);
+                    return NotificationListener<ScrollNotification>(
+                      onNotification: (notification) {
+                        if (_hasMorePortada &&
+                            !_isLoadingMorePortada &&
+                            notification.metrics.pixels >=
+                                notification.metrics.maxScrollExtent - 300) {
+                          _loadConsejosPortada();
+                        }
+                        return false;
                       },
+                      child: ListView.builder(
+                        padding: EdgeInsets.only(bottom: listBottomPadding),
+                        itemCount:
+                            items.length + (_isLoadingMorePortada ? 1 : 0),
+                        itemBuilder: (context, index) {
+                          if (index >= items.length) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 20),
+                              child: Center(child: CircularProgressIndicator()),
+                            );
+                          }
+                          return _buildConsejoCard(items[index]);
+                        },
+                      ),
                     );
                   },
                 ),
@@ -1088,23 +1682,44 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
                               child: Text('No hay consejos disponibles'),
                             );
                           }
-                          return ListView.builder(
-                            padding: EdgeInsets.only(bottom: listBottomPadding),
-                            itemCount: items.length,
-                            itemBuilder: (context, index) {
-                              final consejo = items[index];
-                              final isPersonalNoLeido =
-                                  consejo.visibleParaTodos != 'S' &&
-                                      consejo.leido == 'N';
-                              final isPersonalizado =
-                                  consejo.visibleParaTodos != 'S';
-                              return _buildConsejoCard(
-                                consejo,
-                                unreadBadgeText: 'No leído',
-                                showUnreadBadge: isPersonalNoLeido,
-                                allowSocialActions: !isPersonalizado,
-                              );
+                          return NotificationListener<ScrollNotification>(
+                            onNotification: (notification) {
+                              if (_hasMoreConsejos &&
+                                  !_isLoadingMore &&
+                                  notification.metrics.pixels >=
+                                      notification.metrics.maxScrollExtent -
+                                          300) {
+                                _loadConsejos();
+                              }
+                              return false;
                             },
+                            child: ListView.builder(
+                              padding:
+                                  EdgeInsets.only(bottom: listBottomPadding),
+                              itemCount:
+                                  items.length + (_isLoadingMore ? 1 : 0),
+                              itemBuilder: (context, index) {
+                                if (index >= items.length) {
+                                  return const Padding(
+                                    padding: EdgeInsets.symmetric(vertical: 20),
+                                    child: Center(
+                                        child: CircularProgressIndicator()),
+                                  );
+                                }
+                                final consejo = items[index];
+                                final isPersonalNoLeido =
+                                    consejo.visibleParaTodos != 'S' &&
+                                        consejo.leido == 'N';
+                                final isPersonalizado =
+                                    consejo.visibleParaTodos != 'S';
+                                return _buildConsejoCard(
+                                  consejo,
+                                  unreadBadgeText: 'No leído',
+                                  showUnreadBadge: isPersonalNoLeido,
+                                  allowSocialActions: !isPersonalizado,
+                                );
+                              },
+                            ),
                           );
                         },
                       ),
@@ -1124,15 +1739,33 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
                         child: Text('No tienes consejos favoritos'),
                       );
                     }
-                    return ListView.builder(
-                      padding: EdgeInsets.only(bottom: listBottomPadding),
-                      itemCount: items.length,
-                      itemBuilder: (context, index) {
-                        return _buildConsejoCard(
-                          items[index],
-                          showUnreadBadge: false,
-                        );
+                    return NotificationListener<ScrollNotification>(
+                      onNotification: (notification) {
+                        if (_hasMoreFavoritos &&
+                            !_isLoadingMoreFavoritos &&
+                            notification.metrics.pixels >=
+                                notification.metrics.maxScrollExtent - 300) {
+                          _loadConsejosFavoritos();
+                        }
+                        return false;
                       },
+                      child: ListView.builder(
+                        padding: EdgeInsets.only(bottom: listBottomPadding),
+                        itemCount:
+                            items.length + (_isLoadingMoreFavoritos ? 1 : 0),
+                        itemBuilder: (context, index) {
+                          if (index >= items.length) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 20),
+                              child: Center(child: CircularProgressIndicator()),
+                            );
+                          }
+                          return _buildConsejoCard(
+                            items[index],
+                            showUnreadBadge: false,
+                          );
+                        },
+                      ),
                     );
                   },
                 ),
@@ -1145,8 +1778,15 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
   }
 
   Future<void> _copyConsejoToClipboard(Consejo consejo) async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    if (!_canUseConsejosCopyPdf(authService)) {
+      await _showPremiumRequiredForConsejosCopyPdf(context);
+      return;
+    }
+
     try {
-      final textToCopy = '${consejo.titulo}\n\n${consejo.texto}';
+      final firma = await _buildNutriFitClipboardSignature(context);
+      final textToCopy = '${consejo.titulo}\n\n${consejo.texto}\n\n$firma';
       await Clipboard.setData(ClipboardData(text: textToCopy));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1169,8 +1809,38 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
   }
 
   Future<void> _generateConsejoPdfFromCard(Consejo consejo) async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    if (!_canUseConsejosCopyPdf(authService)) {
+      await _showPremiumRequiredForConsejosCopyPdf(context);
+      return;
+    }
+
     try {
       final apiService = Provider.of<ApiService>(context, listen: false);
+
+      // Cargar documentos/imágenes inline para este consejo
+      final imagenesInlineById = <int, String>{};
+      try {
+        final codigoCons = consejo.codigo;
+        if (codigoCons != null) {
+          final docsResponse = await apiService.get(
+            'api/consejo_documentos.php?consejo=$codigoCons',
+          );
+          if (docsResponse.statusCode == 200) {
+            final List<dynamic> docsData = json.decode(docsResponse.body);
+            for (final item in docsData) {
+              if (item['tipo'] == 'imagen' && item['codigo'] != null) {
+                final id = int.tryParse(item['codigo'].toString());
+                final base64 = (item['documento'] ?? '').toString().trim();
+                if (id != null && base64.isNotEmpty) {
+                  imagenesInlineById[id] = base64;
+                }
+              }
+            }
+          }
+        }
+      } catch (_) {}
+
       await ConsejoRecetaPdfService.generatePdf(
         context: context,
         apiService: apiService,
@@ -1178,6 +1848,7 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
         contenido: consejo.texto,
         tipo: 'consejo',
         imagenPortadaBase64: consejo.imagenPortada,
+        imagenesInlineById: imagenesInlineById,
       );
     } catch (e) {
       if (mounted) {
@@ -1223,6 +1894,12 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
       MethodChannel('nutri_app/external_url');
   static final RegExp _contentTokenRegex =
       RegExp(r'\[\[(img|documento|enlace):(\d+)\]\]');
+  static final RegExp _genericTokenRegex = RegExp(r'\[\[([^\[\]]+)\]\]');
+  static final RegExp _structuredLinkTokenRegex = RegExp(
+    r'^(.*?)\s*enlace_(consejo|receta|sustitucion_saludable|aditivo|suplemento)_(\d+)\s*$',
+    caseSensitive: false,
+    unicode: true,
+  );
   static final RegExp _hashtagRegex =
       RegExp(r'#[\wáéíóúÁÉÍÓÚñÑüÜ]+', caseSensitive: false);
   static final RegExp _wordRegex =
@@ -1482,7 +2159,59 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
 
   String _buildResumenRelacionado(String text) {
     final cleaned = text
-        .replaceAll(_contentTokenRegex, ' ')
+        .replaceAllMapped(_genericTokenRegex, (match) {
+          final raw = (match.group(1) ?? '').trim();
+          final tokenMatch = RegExp(
+            r'^(img|documento|enlace):(\d+)$',
+            caseSensitive: false,
+          ).firstMatch(raw);
+          if (tokenMatch != null) {
+            final tokenType = (tokenMatch.group(1) ?? '').toLowerCase();
+            final tokenId = int.tryParse(tokenMatch.group(2) ?? '');
+            if (tokenType == 'enlace' && tokenId != null) {
+              final link = _documentos
+                  .where(
+                    (item) => item.tipo == 'enlace' && item.codigo == tokenId,
+                  )
+                  .cast<ConsejoDocumento?>()
+                  .firstWhere((item) => item != null, orElse: () => null);
+              final label = (link?.nombre ?? link?.url ?? '').trim();
+              return label.isNotEmpty ? label : 'enlace';
+            }
+            return '';
+          }
+
+          final structured = _structuredLinkTokenRegex.firstMatch(raw);
+          if (structured != null) {
+            final prefix = (structured.group(1) ?? '').trim();
+            final type = (structured.group(2) ?? '').toLowerCase();
+            final article = type == 'sustitucion_saludable' ? 'la' : 'el';
+            String typeLabel;
+            switch (type) {
+              case 'consejo':
+                typeLabel = 'consejo';
+                break;
+              case 'receta':
+                typeLabel = 'receta';
+                break;
+              case 'sustitucion_saludable':
+                typeLabel = 'sustitución saludable';
+                break;
+              case 'aditivo':
+                typeLabel = 'aditivo';
+                break;
+              case 'suplemento':
+                typeLabel = 'suplemento';
+                break;
+              default:
+                typeLabel = type;
+            }
+            final start = prefix.isEmpty ? 'Véase' : prefix;
+            return '$start enlace a $article $typeLabel';
+          }
+
+          return raw;
+        })
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
     if (cleaned.length <= 100) return cleaned;
@@ -2348,13 +3077,20 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
   }
 
   Future<void> _copyToClipboard() async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    if (!_canUseConsejosCopyPdf(authService)) {
+      await _showPremiumRequiredForConsejosCopyPdf(context);
+      return;
+    }
+
     try {
       final cleanedBody = _consejo.texto
           .replaceAll(_contentTokenRegex, '')
           .replaceAll(RegExp(r'[ \t]+\n'), '\n')
           .replaceAll(RegExp(r'\n{3,}'), '\n\n')
           .trim();
-      final textToCopy = '${_consejo.titulo}\n\n$cleanedBody';
+      final firma = await _buildNutriFitClipboardSignature(context);
+      final textToCopy = '${_consejo.titulo}\n\n$cleanedBody\n\n$firma';
       await Clipboard.setData(ClipboardData(text: textToCopy));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2377,12 +3113,22 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
   }
 
   Future<void> _generateConsejoPdf() async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    if (!_canUseConsejosCopyPdf(authService)) {
+      await _showPremiumRequiredForConsejosCopyPdf(context);
+      return;
+    }
+
     try {
       final apiService = Provider.of<ApiService>(context, listen: false);
       final imagenesInlineById = <int, String>{};
       for (final doc in _documentos) {
         if (doc.tipo == 'imagen' && doc.codigo != null) {
-          final base64Image = (doc.documento ?? '').trim();
+          var base64Image = (doc.documento ?? '').trim();
+          // Fallback: si la lista no trajo el binario, pedirlo individualmente
+          if (base64Image.isEmpty) {
+            base64Image = await _getImagenDocumentoBase64(doc) ?? '';
+          }
           if (base64Image.isNotEmpty) {
             imagenesInlineById[doc.codigo!] = base64Image;
           }
@@ -2412,8 +3158,6 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final imagenesAdjuntas =
-        _documentos.where((doc) => doc.tipo == 'imagen').toList();
     final documentosYEnlaces =
         _documentos.where((doc) => doc.tipo != 'imagen').toList();
     final hasPortada = (_consejo.imagenPortada ?? '').trim().isNotEmpty;
@@ -2703,12 +3447,22 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
                   // Sección de relacionados (solo si hay contenido)
                   if (!_isLoadingRelacionados && _relacionados.isNotEmpty) ...[
                     const SizedBox(height: 24),
-                    const Text(
-                      'También te puede interesar...',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.lightbulb_outline,
+                          size: 20,
+                          color: Colors.amber.shade600,
+                        ),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'También te puede interesar...',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 12),
                     SizedBox(

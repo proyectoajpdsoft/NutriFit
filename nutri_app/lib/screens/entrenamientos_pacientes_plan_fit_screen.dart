@@ -137,9 +137,6 @@ class _EntrenamientosPacientePlanFitListScreenState
 
   @override
   Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.of(context).padding.bottom;
-    final listBottomPadding = bottomInset > 0 ? bottomInset + 20 : 28.0;
-
     return Scaffold(
       appBar: AppBar(
         title: Text('Actividades - ${widget.paciente.nombre}'),
@@ -455,7 +452,7 @@ class _EntrenamientoPacientePlanFitDetailScreenState
     try {
       final apiService = context.read<ApiService>();
       await apiService.updateComentarioNutricionista(
-        codigoEjercicio: ejercicio.codigo ?? 0,
+        codigoEjercicio: ejercicio.codigo,
         comentario: result,
       );
 

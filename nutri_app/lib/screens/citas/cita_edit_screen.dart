@@ -224,9 +224,14 @@ class _CitaEditScreenState extends State<CitaEditScreen> {
         _fin = newDateTime;
       }
     });
+    _markDirty();
   }
 
-  Future<void> _submitForm() async {
+  void _submitForm() {
+    _saveForm(closeOnSuccess: true);
+  }
+
+  Future<bool> _saveForm({required bool closeOnSuccess}) async {
     if (_formKey.currentState!.validate()) {
       final citaData = Cita(
         codigo: widget.cita?.codigo ?? 0,
@@ -250,6 +255,7 @@ class _CitaEditScreenState extends State<CitaEditScreen> {
         }
 
         if (success) {
+          _hasChanges = false;
           // Mostrar mensaje según sea alta o modificación
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -259,7 +265,10 @@ class _CitaEditScreenState extends State<CitaEditScreen> {
               backgroundColor: Colors.green,
             ),
           );
-          Navigator.of(context).pop(true); // Volver al calendario
+          if (closeOnSuccess && mounted) {
+            Navigator.of(context).pop(true); // Volver al calendario
+          }
+          return true;
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -275,6 +284,7 @@ class _CitaEditScreenState extends State<CitaEditScreen> {
         );
       }
     }
+    return false;
   }
 
   void _markDirty() {
@@ -286,7 +296,10 @@ class _CitaEditScreenState extends State<CitaEditScreen> {
 
   Future<bool> _confirmDiscardChanges() async {
     if (!_hasChanges) return true;
-    return showUnsavedChangesDialog(context);
+    return showUnsavedChangesDialog(
+      context,
+      onSave: () => _saveForm(closeOnSuccess: false),
+    );
   }
 
   Future<void> _handleBack() async {
@@ -350,6 +363,7 @@ class _CitaEditScreenState extends State<CitaEditScreen> {
                               setState(() {
                                 _selectedPacienteId = value;
                               });
+                              _markDirty();
                             },
                             validator: (value) =>
                                 value == null ? 'Selecciona un paciente' : null,
@@ -384,15 +398,20 @@ class _CitaEditScreenState extends State<CitaEditScreen> {
                               .toList(),
                           onChanged: _isLoadingTipos
                               ? null
-                              : (value) => setState(() => _tipo = value),
+                              : (value) {
+                                  setState(() => _tipo = value);
+                                  _markDirty();
+                                },
                           validator: (value) =>
                               value == null ? 'Selecciona un tipo' : null,
                         ),
                         SwitchListTile(
                           title: const Text('Online'),
                           value: _isOnline,
-                          onChanged: (value) =>
-                              setState(() => _isOnline = value),
+                          onChanged: (value) {
+                            setState(() => _isOnline = value);
+                            _markDirty();
+                          },
                         ),
                         DropdownButtonFormField<String>(
                           initialValue: _estado,
@@ -402,7 +421,10 @@ class _CitaEditScreenState extends State<CitaEditScreen> {
                               .map((estado) => DropdownMenuItem(
                                   value: estado, child: Text(estado)))
                               .toList(),
-                          onChanged: (value) => setState(() => _estado = value),
+                          onChanged: (value) {
+                            setState(() => _estado = value);
+                            _markDirty();
+                          },
                           validator: (value) =>
                               value == null ? 'Selecciona un estado' : null,
                         ),

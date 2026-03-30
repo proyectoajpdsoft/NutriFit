@@ -5,6 +5,7 @@ import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/services/config_service.dart';
 import 'package:nutri_app/constants/app_constants.dart';
+import 'package:nutri_app/widgets/password_requirements_checklist.dart';
 import 'package:provider/provider.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -70,6 +71,14 @@ class _LoginScreenState extends State<LoginScreen> {
     return 'No se pudo acceder como invitado. Inténtalo de nuevo.';
   }
 
+  bool _isNutricionistaTypeValue(dynamic raw) {
+    final value = (raw ?? '').toString().trim().toLowerCase();
+    return value == 'nutricionista' ||
+        value == 'administrador' ||
+        value == 'admin' ||
+        value == 'nutritionist';
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -87,7 +96,7 @@ class _LoginScreenState extends State<LoginScreen> {
         if (!mounted) return;
         final otpResult = await _showTwoFactorDialog();
         if (otpResult == null || otpResult.code.isEmpty) {
-          throw Exception('Inicio de sesión cancelado por el usuario.');
+          return;
         }
         userType = await authService.login(
           _nickController.text,
@@ -105,10 +114,12 @@ class _LoginScreenState extends State<LoginScreen> {
         _passwordController.clear();
 
         // Navega a la pantalla correcta según el tipo de usuario
-        if (userType == 'Paciente' || userType == 'Usuario') {
+        if (authService.isPatientAreaUser && userType != 'Guest') {
           Navigator.of(context).pushReplacementNamed('paciente_home');
         } else if (userType == 'Nutricionista' || userType == 'Administrador') {
           Navigator.of(context).pushReplacementNamed('home');
+        } else if (userType == 'Guest') {
+          Navigator.of(context).pushReplacementNamed('paciente_home');
         } else {
           // Tipo de usuario desconocido - logout y mostrar error
           await authService.logout();
@@ -291,6 +302,18 @@ class _LoginScreenState extends State<LoginScreen> {
     };
   }
 
+  int _normalizeRecoveryCodeLength(dynamic rawLength) {
+    final parsed = int.tryParse(rawLength?.toString() ?? '') ?? 12;
+    if (parsed < 4) return 4;
+    if (parsed > 32) return 32;
+    return parsed;
+  }
+
+  bool _normalizeRecoveryCodeAllowAlnum(dynamic rawAllowAlnum) {
+    final normalized = rawAllowAlnum?.toString().trim().toUpperCase() ?? 'S';
+    return normalized == 'S';
+  }
+
   String? _validateRecoveryPassword(
     String password,
     Map<String, dynamic> policy,
@@ -322,22 +345,6 @@ class _LoginScreenState extends State<LoginScreen> {
     return null;
   }
 
-  String _buildRecoveryPasswordHint(Map<String, dynamic> policy) {
-    final parts = <String>[
-      'Mínimo ${policy['min_length']} caracteres',
-    ];
-    if (policy['require_upper_lower'] == true) {
-      parts.add('mayúsculas y minúsculas');
-    }
-    if (policy['require_numbers'] == true) {
-      parts.add('números');
-    }
-    if (policy['require_special_chars'] == true) {
-      parts.add('carácter especial');
-    }
-    return 'Requisitos: ${parts.join(', ')}.';
-  }
-
   Future<void> _startRecoveryFlow() async {
     final identifierController = TextEditingController(
       text: _nickController.text.trim(),
@@ -345,38 +352,93 @@ class _LoginScreenState extends State<LoginScreen> {
 
     final identifier = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Recuperar acceso'),
-        content: TextField(
-          controller: identifierController,
-          decoration: const InputDecoration(
-            labelText: 'Usuario o email',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(null),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final value = identifierController.text.trim();
-              if (value.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Introduce usuario o email.'),
-                    backgroundColor: Colors.orange,
+      builder: (dialogContext) {
+        String? inlineError;
+
+        return StatefulBuilder(
+          builder: (dialogCtx, setDialogState) => AlertDialog(
+            title: const Text('Recuperar acceso'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Card(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Row(
+                      children: [
+                        Icon(Icons.info_outline,
+                            color: Theme.of(context).colorScheme.primary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Introduce tu usuario (nick) o tu cuenta de email para recuperar el acceso.',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                );
-                return;
-              }
-              Navigator.of(dialogContext).pop(value);
-            },
-            child: const Text('Continuar'),
+                ),
+                TextField(
+                  controller: identifierController,
+                  decoration: const InputDecoration(
+                    labelText: 'Usuario o email',
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (_) {
+                    if (inlineError != null) {
+                      setDialogState(() {
+                        inlineError = null;
+                      });
+                    }
+                  },
+                ),
+                if (inlineError != null) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.orange),
+                    ),
+                    child: Text(
+                      inlineError!,
+                      style: const TextStyle(
+                        color: Colors.orange,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(null),
+                child: const Text('Cancelar'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  final value = identifierController.text.trim();
+                  if (value.isEmpty) {
+                    setDialogState(() {
+                      inlineError = 'Introduce usuario o email.';
+                    });
+                    return;
+                  }
+                  Navigator.of(dialogContext).pop(value);
+                },
+                child: const Text('Continuar'),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
 
     identifierController.dispose();
@@ -389,6 +451,14 @@ class _LoginScreenState extends State<LoginScreen> {
           await _apiService.getPasswordRecoveryOptions(identifier: identifier);
       final passwordPolicy =
           _normalizeRecoveryPasswordPolicy(options['password_policy']);
+      final recoveryCodeLength =
+          _normalizeRecoveryCodeLength(options['recovery_code_length']);
+      final recoveryCodeAllowAlnum = _normalizeRecoveryCodeAllowAlnum(
+          options['recovery_code_allow_alnum']);
+      final isNutricionista =
+          _isNutricionistaTypeValue(options['is_nutricionista']) ||
+              _isNutricionistaTypeValue(options['user_type']) ||
+              _isNutricionistaTypeValue(options['tipo']);
       final methods = (options['methods'] as List<dynamic>? ?? [])
           .map((e) => e.toString())
           .toList();
@@ -418,7 +488,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 if (methods.contains('email'))
                   ListTile(
                     leading: const Icon(Icons.email_outlined),
-                    title: const Text('Codigo por email'),
+                    title: const Text('Mediante tu email'),
                     subtitle: Text(
                       (options['email_masked'] ?? '').toString(),
                     ),
@@ -427,7 +497,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 if (methods.contains('2fa'))
                   ListTile(
                     leading: const Icon(Icons.shield_outlined),
-                    title: const Text('Codigo 2FA (app autenticador)'),
+                    title: const Text('Mediante doble factor (2FA)'),
                     onTap: () => Navigator.of(dialogContext).pop('2fa'),
                   ),
               ],
@@ -440,7 +510,13 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       if (selectedMethod == 'email') {
-        await _recoverWithEmail(identifier, passwordPolicy);
+        await _recoverWithEmail(
+          identifier,
+          passwordPolicy,
+          recoveryCodeLength: recoveryCodeLength,
+          recoveryCodeAllowAlnum: recoveryCodeAllowAlnum,
+          isNutricionista: isNutricionista,
+        );
       } else {
         await _recoverWithTwoFactor(identifier, passwordPolicy);
       }
@@ -457,131 +533,411 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _recoverWithEmail(
     String identifier,
-    Map<String, dynamic> passwordPolicy,
-  ) async {
-    final request = await _apiService.requestPasswordRecoveryByEmail(
-      identifier: identifier,
-    );
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-            (request['message'] ?? 'Codigo enviado por email.').toString()),
-        backgroundColor: Colors.green,
-      ),
-    );
-
+    Map<String, dynamic> passwordPolicy, {
+    required int recoveryCodeLength,
+    required bool recoveryCodeAllowAlnum,
+    required bool isNutricionista,
+  }) async {
     final codeController = TextEditingController();
     final passwordController = TextEditingController();
     final repeatController = TextEditingController();
+    final checklistPolicy =
+        PasswordPolicyRequirements.fromRecoveryPolicy(passwordPolicy);
+    String passwordPreview = '';
+
+    // No enviamos email automáticamente. El usuario lo hará pulsando botón.
 
     final result = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Restablecer contraseña por email'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: codeController,
-                decoration: const InputDecoration(
-                  labelText: 'Código de recuperación',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: passwordController,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Nueva contraseña',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: repeatController,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Repetir nueva contraseña',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                _buildRecoveryPasswordHint(passwordPolicy),
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final code = codeController.text.trim();
-              final pwd = passwordController.text;
-              final repeat = repeatController.text;
-              if (code.isEmpty || pwd.isEmpty || repeat.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Completa todos los campos.'),
-                    backgroundColor: Colors.orange,
-                  ),
-                );
-                return;
-              }
-              if (pwd != repeat) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Las contraseñas no coinciden.'),
-                    backgroundColor: Colors.orange,
-                  ),
-                );
-                return;
-              }
+      builder: (dialogContext) {
+        bool codeSent = false;
+        bool codeValidated = false;
+        String? inlineMessage;
+        Color inlineMessageColor = Colors.orange;
 
-              final passwordValidationError =
-                  _validateRecoveryPassword(pwd, passwordPolicy);
-              if (passwordValidationError != null) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(passwordValidationError),
-                    backgroundColor: Colors.orange,
-                  ),
-                );
-                return;
-              }
-
-              try {
-                await _apiService.resetPasswordWithEmailCode(
-                  identifier: identifier,
-                  code: code,
-                  newPassword: pwd,
-                );
-                if (!mounted) return;
-                Navigator.of(dialogContext).pop(true);
-              } catch (e) {
-                if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      e.toString().replaceFirst('Exception: ', ''),
+        return StatefulBuilder(
+          builder: (dialogCtx, setDialogState) {
+            return AlertDialog(
+              titlePadding: const EdgeInsets.fromLTRB(20, 16, 12, 0),
+              title: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Recuperar acceso',
+                      style: TextStyle(fontSize: 18),
                     ),
-                    backgroundColor: Colors.red,
                   ),
-                );
-              }
-            },
-            child: const Text('Actualizar contraseña'),
-          ),
-        ],
-      ),
+                  IconButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(false),
+                    tooltip: 'Cancelar',
+                    style: IconButton.styleFrom(
+                      shape: const CircleBorder(),
+                    ),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 520,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(dialogCtx).size.height * 0.72,
+                  ),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Info introductoria
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.blue),
+                          ),
+                          child: const Text(
+                            'Te enviaremos un código de recuperación por email. Introduzcalo aquí junto con tu nueva contraseña.',
+                            style: TextStyle(color: Colors.blue, fontSize: 13),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        // Paso 1: Enviar código
+                        if (!codeSent)
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF00897B)
+                                  .withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(8),
+                              border:
+                                  Border.all(color: const Color(0xFF00897B)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Row(
+                                  children: [
+                                    Icon(Icons.info,
+                                        size: 16, color: Color(0xFF00897B)),
+                                    SizedBox(width: 8),
+                                    Text(
+                                      'Paso 1: Enviar código',
+                                      style: TextStyle(
+                                        color: Color(0xFF00897B),
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'Pulsa en "Enviar código" para recibir un código de recuperación en tu email.',
+                                  style: TextStyle(fontSize: 13),
+                                ),
+                                const SizedBox(height: 12),
+                                ElevatedButton.icon(
+                                  icon:
+                                      const Icon(Icons.mail_outline, size: 18),
+                                  label: const Text('Enviar código'),
+                                  onPressed: () async {
+                                    try {
+                                      await _apiService
+                                          .requestPasswordRecoveryByEmail(
+                                        identifier: identifier,
+                                      );
+                                      if (!dialogContext.mounted) return;
+                                      setDialogState(() {
+                                        codeSent = true;
+                                        inlineMessage = null;
+                                      });
+                                    } catch (e) {
+                                      if (!dialogContext.mounted) return;
+                                      setDialogState(() {
+                                        final detailed = e
+                                            .toString()
+                                            .replaceFirst('Exception: ', '');
+                                        inlineMessage = isNutricionista
+                                            ? detailed
+                                            : 'No se ha podido enviar el email de recuperación en este momento, inténtelo más tarde.';
+                                        inlineMessageColor = Colors.red;
+                                      });
+                                    }
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        // Paso 2: Introducir código (condicional)
+                        if (codeSent && !codeValidated) ...[
+                          const SizedBox(height: 12),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF00897B)
+                                  .withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(8),
+                              border:
+                                  Border.all(color: const Color(0xFF00897B)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Row(
+                                  children: [
+                                    Icon(Icons.info,
+                                        size: 16, color: Color(0xFF00897B)),
+                                    SizedBox(width: 8),
+                                    Text(
+                                      'Paso 2: Verificar código',
+                                      style: TextStyle(
+                                        color: Color(0xFF00897B),
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'Introduce el código que recibiste en tu email.',
+                                  style: TextStyle(fontSize: 13),
+                                ),
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: codeController,
+                                  keyboardType: recoveryCodeAllowAlnum
+                                      ? TextInputType.text
+                                      : TextInputType.number,
+                                  textCapitalization: TextCapitalization.none,
+                                  maxLength: recoveryCodeLength,
+                                  inputFormatters: recoveryCodeAllowAlnum
+                                      ? <TextInputFormatter>[
+                                          FilteringTextInputFormatter.allow(
+                                            RegExp(r'[A-Za-z0-9]'),
+                                          ),
+                                        ]
+                                      : <TextInputFormatter>[
+                                          FilteringTextInputFormatter
+                                              .digitsOnly,
+                                        ],
+                                  decoration: InputDecoration(
+                                    labelText: 'Código de recuperación',
+                                    hintText: recoveryCodeAllowAlnum
+                                        ? 'Ej. 1a3B'
+                                        : 'Ej. 1234',
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  onChanged: (_) {
+                                    if (inlineMessage != null) {
+                                      setDialogState(() {
+                                        inlineMessage = null;
+                                      });
+                                    }
+                                  },
+                                ),
+                                const SizedBox(height: 12),
+                                ElevatedButton(
+                                  onPressed: () async {
+                                    final code = codeController.text.trim();
+                                    if (code.isEmpty) {
+                                      setDialogState(() {
+                                        inlineMessage = 'Introduce el código.';
+                                        inlineMessageColor = Colors.orange;
+                                      });
+                                      return;
+                                    }
+                                    try {
+                                      await _apiService
+                                          .validateEmailRecoveryCode(
+                                        identifier: identifier,
+                                        code: code,
+                                      );
+                                      if (!dialogContext.mounted) return;
+                                      setDialogState(() {
+                                        codeValidated = true;
+                                        codeSent = true;
+                                        inlineMessage = null;
+                                      });
+                                    } catch (e) {
+                                      if (!dialogContext.mounted) return;
+                                      setDialogState(() {
+                                        inlineMessage = e
+                                            .toString()
+                                            .replaceFirst('Exception: ', '');
+                                        inlineMessageColor = Colors.red;
+                                      });
+                                    }
+                                  },
+                                  child: const Text('Verificar código'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        // Paso 3: Nueva contraseña (condicional)
+                        if (codeValidated) ...[
+                          const SizedBox(height: 12),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF00897B)
+                                  .withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(8),
+                              border:
+                                  Border.all(color: const Color(0xFF00897B)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Row(
+                                  children: [
+                                    Icon(Icons.info,
+                                        size: 16, color: Color(0xFF00897B)),
+                                    SizedBox(width: 8),
+                                    Text(
+                                      'Paso 3: Nueva contraseña',
+                                      style: TextStyle(
+                                        color: Color(0xFF00897B),
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'Introduce tu nueva contraseña.',
+                                  style: TextStyle(fontSize: 13),
+                                ),
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: passwordController,
+                                  obscureText: true,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Nueva contraseña',
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  onChanged: (value) {
+                                    setDialogState(() {
+                                      passwordPreview = value;
+                                      if (inlineMessage != null) {
+                                        inlineMessage = null;
+                                      }
+                                    });
+                                  },
+                                ),
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: repeatController,
+                                  obscureText: true,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Repetir nueva contraseña',
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  onChanged: (_) {
+                                    if (inlineMessage != null) {
+                                      setDialogState(() {
+                                        inlineMessage = null;
+                                      });
+                                    }
+                                  },
+                                ),
+                                const SizedBox(height: 12),
+                                PasswordRequirementsChecklist(
+                                  policy: checklistPolicy,
+                                  password: passwordPreview,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        // Mensajes inline
+                        if (inlineMessage != null) ...[
+                          const SizedBox(height: 12),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: inlineMessageColor.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: inlineMessageColor),
+                            ),
+                            child: Text(
+                              inlineMessage!,
+                              style: TextStyle(
+                                color: inlineMessageColor,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              actions: [
+                if (codeValidated)
+                  ElevatedButton(
+                    onPressed: () async {
+                      final code = codeController.text.trim();
+                      final pwd = passwordController.text;
+                      final repeat = repeatController.text;
+                      if (pwd.isEmpty || repeat.isEmpty) {
+                        setDialogState(() {
+                          inlineMessage =
+                              'Completa ambos campos de contraseña.';
+                          inlineMessageColor = Colors.orange;
+                        });
+                        return;
+                      }
+                      if (pwd != repeat) {
+                        setDialogState(() {
+                          inlineMessage = 'Las contraseñas no coinciden.';
+                          inlineMessageColor = Colors.orange;
+                        });
+                        return;
+                      }
+
+                      final passwordValidationError =
+                          _validateRecoveryPassword(pwd, passwordPolicy);
+                      if (passwordValidationError != null) {
+                        setDialogState(() {
+                          inlineMessage = passwordValidationError;
+                          inlineMessageColor = Colors.orange;
+                        });
+                        return;
+                      }
+
+                      try {
+                        await _apiService.resetPasswordWithEmailCode(
+                          identifier: identifier,
+                          code: code,
+                          newPassword: pwd,
+                        );
+                        if (!dialogContext.mounted) return;
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (!dialogContext.mounted) return;
+                          Navigator.of(dialogContext).pop(true);
+                        });
+                      } catch (e) {
+                        if (!dialogContext.mounted) return;
+                        setDialogState(() {
+                          inlineMessage =
+                              e.toString().replaceFirst('Exception: ', '');
+                          inlineMessageColor = Colors.red;
+                        });
+                      }
+                    },
+                    child: const Text('Restablecer contraseña'),
+                  ),
+              ],
+            );
+          },
+        );
+      },
     );
 
     codeController.dispose();
@@ -591,7 +947,7 @@ class _LoginScreenState extends State<LoginScreen> {
     if (result == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Contraseña actualizada. Ya puedes iniciar sesión.'),
+          content: Text('Contraseña restablecida. Ya puedes iniciar sesión.'),
           backgroundColor: Colors.green,
         ),
       );
@@ -605,117 +961,375 @@ class _LoginScreenState extends State<LoginScreen> {
     final codeController = TextEditingController();
     final passwordController = TextEditingController();
     final repeatController = TextEditingController();
+    final checklistPolicy =
+        PasswordPolicyRequirements.fromRecoveryPolicy(passwordPolicy);
+    String passwordPreview = '';
 
     final result = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Restablecer contraseña con 2FA'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: codeController,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
-                  labelText: 'Codigo 2FA',
-                  border: OutlineInputBorder(),
-                  counterText: '',
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: passwordController,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Nueva contraseña',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: repeatController,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Repetir nueva contraseña',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                _buildRecoveryPasswordHint(passwordPolicy),
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final code = codeController.text.trim();
-              final pwd = passwordController.text;
-              final repeat = repeatController.text;
-              if (code.length != 6 || pwd.isEmpty || repeat.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Completa los campos correctamente.'),
-                    backgroundColor: Colors.orange,
-                  ),
-                );
-                return;
-              }
-              if (pwd != repeat) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Las contraseñas no coinciden.'),
-                    backgroundColor: Colors.orange,
-                  ),
-                );
-                return;
-              }
+      builder: (dialogContext) {
+        bool step1Complete = false;
+        bool step2Complete = false;
+        String? inlineMessage;
+        Color inlineMessageColor = Colors.orange;
 
-              final passwordValidationError =
-                  _validateRecoveryPassword(pwd, passwordPolicy);
-              if (passwordValidationError != null) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(passwordValidationError),
-                    backgroundColor: Colors.orange,
-                  ),
-                );
-                return;
-              }
-
-              try {
-                await _apiService.resetPasswordWithTwoFactor(
-                  identifier: identifier,
-                  code2fa: code,
-                  newPassword: pwd,
-                );
-                if (!mounted) return;
-                Navigator.of(dialogContext).pop(true);
-              } catch (e) {
-                if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      e.toString().replaceFirst('Exception: ', ''),
+        return StatefulBuilder(
+          builder: (dialogCtx, setDialogState) {
+            return AlertDialog(
+              titlePadding: const EdgeInsets.fromLTRB(20, 16, 12, 0),
+              title: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Recuperar acceso',
+                      style: TextStyle(fontSize: 18),
                     ),
-                    backgroundColor: Colors.red,
                   ),
-                );
-              }
-            },
-            child: const Text('Actualizar contraseña'),
-          ),
-        ],
-      ),
+                  IconButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(false),
+                    tooltip: 'Cancelar',
+                    style: IconButton.styleFrom(
+                      shape: const CircleBorder(),
+                    ),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 520,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(dialogCtx).size.height * 0.72,
+                  ),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Intro explicativo
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.blue),
+                          ),
+                          child: const Text(
+                            'Para restablecer tu contraseña con doble factor de autenticación, necesitas el código temporal de tu app.',
+                            style: TextStyle(color: Colors.blue, fontSize: 13),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        if (!step1Complete)
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF00897B)
+                                  .withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(8),
+                              border:
+                                  Border.all(color: const Color(0xFF00897B)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: const [
+                                    Icon(Icons.info,
+                                        size: 16, color: Color(0xFF00897B)),
+                                    SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'Paso 1: Abre tu app de autenticación',
+                                        style: TextStyle(
+                                          color: Color(0xFF00897B),
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'Busca el código temporal de 6 dígitos en tu app de autenticación (Google Authenticator, Microsoft Authenticator, Authy, etc.)',
+                                  style: TextStyle(fontSize: 12),
+                                ),
+                                const SizedBox(height: 8),
+                                ElevatedButton.icon(
+                                  icon: const Icon(Icons.check, size: 16),
+                                  label: const Text('Ya lo tengo'),
+                                  onPressed: () {
+                                    setDialogState(() {
+                                      step1Complete = true;
+                                      inlineMessage = null;
+                                    });
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        if (step1Complete && !step2Complete) ...[
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF00897B)
+                                  .withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(8),
+                              border:
+                                  Border.all(color: const Color(0xFF00897B)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: const [
+                                    Icon(Icons.info,
+                                        size: 16, color: Color(0xFF00897B)),
+                                    SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'Paso 2: Verifica tu código 2FA',
+                                        style: TextStyle(
+                                          color: Color(0xFF00897B),
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'Introduce el código de 6 dígitos en el campo de abajo.',
+                                  style: TextStyle(fontSize: 12),
+                                ),
+                                const SizedBox(height: 8),
+                                TextField(
+                                  controller: codeController,
+                                  keyboardType: TextInputType.number,
+                                  maxLength: 6,
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.digitsOnly,
+                                  ],
+                                  decoration: const InputDecoration(
+                                    labelText: 'Código 2FA (6 dígitos)',
+                                    hintText: '000000',
+                                    border: OutlineInputBorder(),
+                                    counterText: '',
+                                  ),
+                                  onChanged: (_) {
+                                    if (inlineMessage != null) {
+                                      setDialogState(() {
+                                        inlineMessage = null;
+                                      });
+                                    }
+                                  },
+                                ),
+                                const SizedBox(height: 12),
+                                ElevatedButton(
+                                  onPressed: () async {
+                                    final code = codeController.text.trim();
+                                    if (code.length != 6) {
+                                      setDialogState(() {
+                                        inlineMessage =
+                                            'El código debe tener exactamente 6 dígitos.';
+                                        inlineMessageColor = Colors.orange;
+                                      });
+                                      return;
+                                    }
+                                    try {
+                                      await _apiService
+                                          .validateTwoFactorRecoveryCode(
+                                        identifier: identifier,
+                                        code2fa: code,
+                                      );
+                                      if (!dialogContext.mounted) return;
+                                      setDialogState(() {
+                                        step2Complete = true;
+                                        inlineMessage = null;
+                                      });
+                                    } catch (e) {
+                                      if (!dialogContext.mounted) return;
+                                      setDialogState(() {
+                                        inlineMessage = e
+                                            .toString()
+                                            .replaceFirst('Exception: ', '');
+                                        inlineMessageColor = Colors.red;
+                                      });
+                                    }
+                                  },
+                                  child: const Text('Verificar código 2FA'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        if (step2Complete) ...[
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF00897B)
+                                  .withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(8),
+                              border:
+                                  Border.all(color: const Color(0xFF00897B)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: const [
+                                    Icon(Icons.info,
+                                        size: 16, color: Color(0xFF00897B)),
+                                    SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'Paso 3: Nueva contraseña',
+                                        style: TextStyle(
+                                          color: Color(0xFF00897B),
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'Introduce tu nueva contraseña.',
+                                  style: TextStyle(fontSize: 12),
+                                ),
+                                const SizedBox(height: 8),
+                                TextField(
+                                  controller: passwordController,
+                                  obscureText: true,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Nueva contraseña',
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  onChanged: (value) {
+                                    setDialogState(() {
+                                      passwordPreview = value;
+                                      if (inlineMessage != null) {
+                                        inlineMessage = null;
+                                      }
+                                    });
+                                  },
+                                ),
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: repeatController,
+                                  obscureText: true,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Repetir nueva contraseña',
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  onChanged: (_) {
+                                    if (inlineMessage != null) {
+                                      setDialogState(() {
+                                        inlineMessage = null;
+                                      });
+                                    }
+                                  },
+                                ),
+                                const SizedBox(height: 12),
+                                PasswordRequirementsChecklist(
+                                  policy: checklistPolicy,
+                                  password: passwordPreview,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        // Mensajes inline
+                        if (inlineMessage != null) ...[
+                          const SizedBox(height: 12),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: inlineMessageColor.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: inlineMessageColor),
+                            ),
+                            child: Text(
+                              inlineMessage!,
+                              style: TextStyle(
+                                color: inlineMessageColor,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              actions: [
+                if (step2Complete)
+                  ElevatedButton(
+                    onPressed: () async {
+                      final code = codeController.text.trim();
+                      final pwd = passwordController.text;
+                      final repeat = repeatController.text;
+                      if (pwd.isEmpty || repeat.isEmpty) {
+                        setDialogState(() {
+                          inlineMessage =
+                              'Completa ambos campos de contraseña.';
+                          inlineMessageColor = Colors.orange;
+                        });
+                        return;
+                      }
+                      if (pwd != repeat) {
+                        setDialogState(() {
+                          inlineMessage = 'Las contraseñas no coinciden.';
+                          inlineMessageColor = Colors.orange;
+                        });
+                        return;
+                      }
+
+                      final passwordValidationError =
+                          _validateRecoveryPassword(pwd, passwordPolicy);
+                      if (passwordValidationError != null) {
+                        setDialogState(() {
+                          inlineMessage = passwordValidationError;
+                          inlineMessageColor = Colors.orange;
+                        });
+                        return;
+                      }
+
+                      try {
+                        await _apiService.resetPasswordWithTwoFactor(
+                          identifier: identifier,
+                          code2fa: code,
+                          newPassword: pwd,
+                        );
+                        if (!dialogContext.mounted) return;
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (!dialogContext.mounted) return;
+                          Navigator.of(dialogContext).pop(true);
+                        });
+                      } catch (e) {
+                        if (!dialogContext.mounted) return;
+                        setDialogState(() {
+                          inlineMessage =
+                              e.toString().replaceFirst('Exception: ', '');
+                          inlineMessageColor = Colors.red;
+                        });
+                      }
+                    },
+                    child: const Text('Restablecer contraseña'),
+                  ),
+              ],
+            );
+          },
+        );
+      },
     );
 
     codeController.dispose();

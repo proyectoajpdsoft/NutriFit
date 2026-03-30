@@ -7,6 +7,10 @@ import 'package:nutri_app/services/auth_service.dart';
 class AuthErrorHandler {
   static final GlobalKey<NavigatorState> navigatorKey =
       GlobalKey<NavigatorState>();
+  static bool _redirectInProgress = false;
+  static DateTime? _lastSessionExpiredSnackAt;
+
+  static const Duration _sessionSnackCooldown = Duration(seconds: 20);
 
   static void handleAuthError(
     BuildContext context,
@@ -32,26 +36,45 @@ class AuthErrorHandler {
   static void _redirectToLogin({
     VoidCallback? onSessionCleared,
   }) async {
-    // Limpia la sesión
-    await AuthService().logout();
-    if (onSessionCleared != null) {
-      onSessionCleared();
+    // Evita redirecciones/snackbars duplicados cuando llegan varios 401 en paralelo.
+    if (_redirectInProgress) {
+      return;
     }
+    _redirectInProgress = true;
 
-    final navigator = navigatorKey.currentState;
-    if (navigator == null) return;
-    navigator.pushNamedAndRemoveUntil('login', (route) => false);
+    try {
+      // Limpia la sesión
+      await AuthService().logout();
+      if (onSessionCleared != null) {
+        onSessionCleared();
+      }
 
-    final ctx = navigatorKey.currentContext;
-    if (ctx != null) {
-      ScaffoldMessenger.of(ctx).showSnackBar(
-        const SnackBar(
-          content:
-              Text('Tu sesión ha caducado, por favor, vuelve a iniciar sesión'),
-          backgroundColor: Colors.orange,
-          duration: Duration(seconds: 4),
-        ),
-      );
+      final navigator = navigatorKey.currentState;
+      if (navigator == null) return;
+      navigator.pushNamedAndRemoveUntil('login', (route) => false);
+
+      final ctx = navigatorKey.currentContext;
+      if (ctx != null) {
+        final now = DateTime.now();
+        final canShowSnack = _lastSessionExpiredSnackAt == null ||
+            now.difference(_lastSessionExpiredSnackAt!) >=
+                _sessionSnackCooldown;
+
+        if (canShowSnack) {
+          _lastSessionExpiredSnackAt = now;
+          ScaffoldMessenger.of(ctx).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Tu sesión ha caducado, por favor, vuelve a iniciar sesión',
+              ),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 4),
+            ),
+          );
+        }
+      }
+    } finally {
+      _redirectInProgress = false;
     }
   }
 }

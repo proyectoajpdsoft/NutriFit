@@ -20,6 +20,12 @@ $validator = new TokenValidator($db);
 $user = $validator->validateToken();
 PermissionManager::checkPermission($user, 'entrenamientos');
 
+try {
+    $db->exec("ALTER TABLE nu_entrenamientos_ejercicios ADD COLUMN IF NOT EXISTS codigo_ejercicio_catalogo INT NULL AFTER codigo_plan_fit_ejercicio");
+} catch (Exception $e) {
+    // ignore
+}
+
 $method = $_SERVER['REQUEST_METHOD'];
 $action = $_GET['action'] ?? null;
 
@@ -61,16 +67,18 @@ switch ($method) {
 
 function get_ejercicios_entrenamiento($codigo_entrenamiento) {
     global $db;
-    $query = "SELECT e.codigo, e.codigo_entrenamiento, e.codigo_plan_fit_ejercicio, e.nombre, e.instrucciones, e.url_video,
-               pfe.codigo_ejercicio_catalogo,
+    $query = "SELECT e.codigo, e.codigo_entrenamiento, e.codigo_plan_fit_ejercicio,
+               COALESCE(e.codigo_ejercicio_catalogo, pfe.codigo_ejercicio_catalogo) AS codigo_ejercicio_catalogo,
+               e.nombre, e.instrucciones, e.url_video,
                NULL AS foto,
-               COALESCE(c.foto_miniatura, pfe.foto_miniatura) AS foto_miniatura,
+               COALESCE(c_direct.foto_miniatura, c_plan.foto_miniatura, pfe.foto_miniatura) AS foto_miniatura,
                      e.tiempo_plan, e.descanso_plan, e.repeticiones_plan, e.kilos_plan, e.esfuerzo_percibido, e.tiempo_realizado, e.repeticiones_realizadas,
                      e.sensaciones, e.comentario_nutricionista, e.comentario_leido, e.comentario_leido_fecha,
                      e.sensaciones_leido_nutri, e.sensaciones_leido_nutri_fecha, e.realizado, e.orden
               FROM nu_entrenamientos_ejercicios e
               LEFT JOIN nu_plan_fit_ejercicio pfe ON e.codigo_plan_fit_ejercicio = pfe.codigo
-          LEFT JOIN nu_plan_fit_ejercicios_catalogo c ON c.codigo = pfe.codigo_ejercicio_catalogo
+              LEFT JOIN nu_plan_fit_ejercicios_catalogo c_plan ON c_plan.codigo = pfe.codigo_ejercicio_catalogo
+              LEFT JOIN nu_plan_fit_ejercicios_catalogo c_direct ON c_direct.codigo = e.codigo_ejercicio_catalogo
               WHERE e.codigo_entrenamiento = :codigo_entrenamiento
               ORDER BY e.orden DESC, e.codigo DESC";
     $stmt = $db->prepare($query);
@@ -346,11 +354,11 @@ function save_ejercicios_entrenamiento() {
     }
 
     $insert = $db->prepare(
-        "INSERT INTO nu_entrenamientos_ejercicios (codigo_entrenamiento, codigo_plan_fit_ejercicio, nombre, instrucciones, url_video,
+        "INSERT INTO nu_entrenamientos_ejercicios (codigo_entrenamiento, codigo_plan_fit_ejercicio, codigo_ejercicio_catalogo, nombre, instrucciones, url_video,
             tiempo_plan, descanso_plan, repeticiones_plan, kilos_plan, esfuerzo_percibido, tiempo_realizado, repeticiones_realizadas, sensaciones,
             comentario_nutricionista, comentario_leido, comentario_leido_fecha, sensaciones_leido_nutri, sensaciones_leido_nutri_fecha,
             realizado, orden)
-        VALUES (:codigo_entrenamiento, :codigo_plan_fit_ejercicio, :nombre, :instrucciones, :url_video,
+        VALUES (:codigo_entrenamiento, :codigo_plan_fit_ejercicio, :codigo_ejercicio_catalogo, :nombre, :instrucciones, :url_video,
             :tiempo_plan, :descanso_plan, :repeticiones_plan, :kilos_plan, :esfuerzo_percibido, :tiempo_realizado, :repeticiones_realizadas, :sensaciones,
             :comentario_nutricionista, :comentario_leido, :comentario_leido_fecha, :sensaciones_leido_nutri, :sensaciones_leido_nutri_fecha,
             :realizado, :orden)"
@@ -361,6 +369,7 @@ function save_ejercicios_entrenamiento() {
     foreach ($ejercicios as $index => $e) {
         $insert->bindValue(':codigo_entrenamiento', $codigo_entrenamiento, PDO::PARAM_INT);
         $insert->bindValue(':codigo_plan_fit_ejercicio', $e['codigo_plan_fit_ejercicio'] ?? null, $e['codigo_plan_fit_ejercicio'] ? PDO::PARAM_INT : PDO::PARAM_NULL);
+        $insert->bindValue(':codigo_ejercicio_catalogo', $e['codigo_ejercicio_catalogo'] ?? null, !empty($e['codigo_ejercicio_catalogo']) ? PDO::PARAM_INT : PDO::PARAM_NULL);
         $insert->bindValue(':nombre', $e['nombre'] ?? '', PDO::PARAM_STR);
         $insert->bindValue(':instrucciones', $e['instrucciones'] ?? null, PDO::PARAM_STR);
         $insert->bindValue(':url_video', $e['url_video'] ?? null, PDO::PARAM_STR);

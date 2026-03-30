@@ -12,6 +12,10 @@ import 'package:nutri_app/models/plan_fit.dart';
 import 'package:nutri_app/models/plan_fit_ejercicio.dart';
 import 'package:nutri_app/models/plan_fit_categoria.dart';
 import 'package:nutri_app/models/plan_fit_dia.dart';
+import 'package:nutri_app/models/alimento.dart';
+import 'package:nutri_app/models/alimento_grupo.dart';
+import 'package:nutri_app/models/harvard_categoria.dart';
+import 'package:nutri_app/models/plan_nutri_estructura.dart';
 import 'package:nutri_app/models/entrenamiento_actividad_custom.dart';
 import 'package:nutri_app/models/entrenamiento.dart';
 import 'package:nutri_app/models/chat_conversation.dart';
@@ -30,6 +34,9 @@ import 'package:flutter/foundation.dart'; // Import necesario para debugPrint
 import 'package:nutri_app/exceptions/auth_exceptions.dart';
 import 'package:nutri_app/services/auth_error_handler.dart';
 import 'package:nutri_app/services/thumbnail_generator.dart';
+import 'package:ftpconnect/ftpconnect.dart';
+import 'package:crypto/crypto.dart';
+import 'package:encrypt/encrypt.dart' as enc;
 
 class ChatMessagesPage {
   final List<ChatMessage> items;
@@ -53,6 +60,7 @@ class ApiService {
   static const String _prefsDebugModeKey = 'isDebugMode';
   static const String _prefsEffectiveDebugModeKey = 'effectiveDebugMode';
   static const String _globalDebugParamName = 'modo_debug';
+  static const String _ftpsClientCipherPassphrase = 'nutrifit-ftps-client-v1';
 
   static Future<void>? _baseUrlBootstrapFuture;
   static String _resolvedBaseUrl = _defaultBaseUrl;
@@ -260,7 +268,17 @@ class ApiService {
     if (statusCode == 401) {
       try {
         final response = json.decode(responseBody);
-        final code = response['code'];
+        final code = response['code']?.toString();
+        final message = response['message']?.toString().toLowerCase() ?? '';
+
+        // 401 de flujo 2FA (pre-login): no es sesión expirada.
+        if (code == 'TWO_FACTOR_REQUIRED' ||
+            code == 'INVALID_2FA_CODE' ||
+            code == 'REUSED_2FA_CODE' ||
+            code == 'LOGIN_BLOCKED' ||
+            message.contains('2fa')) {
+          throw Exception(response['message'] ?? 'Error de autenticación.');
+        }
 
         // Si el código es INVALID_TOKEN, significa que el token expiró o es inválido
         if (code == 'INVALID_TOKEN' ||
@@ -681,6 +699,78 @@ class ApiService {
     );
   }
 
+  Future<Map<String, dynamic>> notifyPremiumPaymentDone({
+    required String paymentMethod,
+    required int periodMonths,
+    required String priceText,
+    required String concept,
+  }) async {
+    final headers = await _getHeaders();
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/account_recovery.php'),
+      headers: headers,
+      body: jsonEncode({
+        'action': 'notify_premium_payment_done',
+        'payment_method': paymentMethod,
+        'period_months': periodMonths,
+        'price_text': priceText,
+        'concept': concept,
+      }),
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+
+    throw Exception(
+      decoded['message']?.toString() ??
+          'No se pudo notificar el pago Premium al nutricionista.',
+    );
+  }
+
+  Future<void> registerHeRealizadoElPago({
+    int? periodMonths,
+    String? paymentMethod,
+  }) async {
+    try {
+      final headers = await _getHeaders();
+      await _safePost(
+        Uri.parse('${_baseUrl}api/account_recovery.php'),
+        headers: headers,
+        body: jsonEncode({
+          'action': 'register_he_realizado_el_pago',
+          if (periodMonths != null) 'period_months': periodMonths,
+          if (paymentMethod != null && paymentMethod.trim().isNotEmpty)
+            'payment_method': paymentMethod.trim(),
+        }),
+      );
+    } catch (_) {
+      // Dato estadístico: no interrumpe el flujo en caso de error.
+    }
+  }
+
+  Future<void> registerContinuarPago({
+    int? periodMonths,
+    String? paymentMethod,
+  }) async {
+    try {
+      final headers = await _getHeaders();
+      await _safePost(
+        Uri.parse('${_baseUrl}api/account_recovery.php'),
+        headers: headers,
+        body: jsonEncode({
+          'action': 'register_continuar_pago',
+          if (periodMonths != null) 'period_months': periodMonths,
+          if (paymentMethod != null && paymentMethod.trim().isNotEmpty)
+            'payment_method': paymentMethod.trim(),
+        }),
+      );
+    } catch (_) {
+      // Dato estadístico: no interrumpe el flujo en caso de error.
+    }
+  }
+
   Future<Map<String, dynamic>> getPasswordRecoveryOptions({
     required String identifier,
   }) async {
@@ -783,6 +873,58 @@ class ApiService {
     throw Exception(
       decoded['message']?.toString() ??
           'No se pudo restablecer la contrasena con 2FA.',
+    );
+  }
+
+  Future<Map<String, dynamic>> validateEmailRecoveryCode({
+    required String identifier,
+    required String code,
+  }) async {
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/account_recovery.php'),
+      headers: {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'action': 'validate_email_recovery_code',
+        'identifier': identifier,
+        'code': code,
+      }),
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+    throw Exception(
+      decoded['message']?.toString() ?? 'Codigo de recuperacion invalido.',
+    );
+  }
+
+  Future<Map<String, dynamic>> validateTwoFactorRecoveryCode({
+    required String identifier,
+    required String code2fa,
+  }) async {
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/account_recovery.php'),
+      headers: {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'action': 'validate_2fa_recovery_code',
+        'identifier': identifier,
+        'code_2fa': code2fa,
+      }),
+    );
+
+    final decoded = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200) {
+      return decoded;
+    }
+    throw Exception(
+      decoded['message']?.toString() ?? 'Codigo 2FA invalido.',
     );
   }
 
@@ -1721,7 +1863,10 @@ ${response.body}
     }
   }
 
-  Future<bool> createPlan(PlanNutricional plan, String? filePath) async {
+  Future<int> createPlanAndReturnCodigo(
+    PlanNutricional plan,
+    String? filePath,
+  ) async {
     final userCode = await _getUserCode();
     final headers = await _getHeaders();
     headers.remove('Content-Type'); // Remover para evitar conflicto
@@ -1729,9 +1874,13 @@ ${response.body}
     // Preparar campos del formulario
     final body = {
       'codigo_paciente': plan.codigoPaciente?.toString() ?? '',
+      'titulo_plan': plan.tituloPlan ?? '',
+      'objetivo_plan': plan.objetivoPlan ?? '',
       'fecha_inicio': plan.desde?.toIso8601String().split('T').first ?? '',
       'fecha_fin': plan.hasta?.toIso8601String().split('T').first ?? '',
       'semanas': plan.semanas ?? '',
+      'total_semanas': (plan.totalSemanas ?? 0).toString(),
+      'usa_estructura_detallada': plan.usaEstructuraDetallada ?? 'N',
       'completado': plan.completado ?? 'N',
       'codigo_entrevista': plan.codigoEntrevista?.toString() ?? '',
       'descripcion': plan.planIndicaciones ?? '',
@@ -1765,7 +1914,25 @@ ${response.body}
     if (response.statusCode != 201) {
       throw Exception('Respuesta del servidor al crear plan: ${response.body}');
     }
-    return response.statusCode == 201;
+
+    try {
+      final decoded = jsonDecode(response.body);
+      final codigo = int.tryParse(decoded['codigo']?.toString() ?? '');
+      if (codigo != null && codigo > 0) {
+        return codigo;
+      }
+    } catch (_) {
+      // Si no viene JSON válido, se informa abajo con el cuerpo recibido.
+    }
+
+    throw Exception(
+      'El plan se creó, pero el servidor no devolvió un código válido: ${response.body}',
+    );
+  }
+
+  Future<bool> createPlan(PlanNutricional plan, String? filePath) async {
+    await createPlanAndReturnCodigo(plan, filePath);
+    return true;
   }
 
   Future<bool> updatePlan(PlanNutricional plan, String? filePath) async {
@@ -1777,9 +1944,13 @@ ${response.body}
     final body = {
       'codigo': plan.codigo.toString(),
       'codigo_paciente': plan.codigoPaciente?.toString() ?? '',
+      'titulo_plan': plan.tituloPlan ?? '',
+      'objetivo_plan': plan.objetivoPlan ?? '',
       'fecha_inicio': plan.desde?.toIso8601String().split('T').first ?? '',
       'fecha_fin': plan.hasta?.toIso8601String().split('T').first ?? '',
       'semanas': plan.semanas ?? '',
+      'total_semanas': (plan.totalSemanas ?? 0).toString(),
+      'usa_estructura_detallada': plan.usaEstructuraDetallada ?? 'N',
       'completado': plan.completado ?? 'N',
       'codigo_entrevista': plan.codigoEntrevista?.toString() ?? '',
       'descripcion': plan.planIndicaciones ?? '',
@@ -1830,6 +2001,265 @@ ${response.body}
       );
     }
     return response.statusCode == 200;
+  }
+
+  Future<List<AlimentoGrupo>> getAlimentoGrupos() async {
+    final response = await get('api/alimento_grupos.php');
+    if (response.statusCode != 200) {
+      throw Exception('No se pudieron cargar los grupos de alimentos.');
+    }
+    final List<dynamic> data = jsonDecode(response.body);
+    return data
+        .whereType<Map>()
+        .map((e) => AlimentoGrupo.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  Future<bool> saveAlimentoGrupo(AlimentoGrupo grupo) async {
+    final userCode = await _getUserCode();
+    final body = <String, String>{
+      'codigo': grupo.codigo?.toString() ?? '',
+      'nombre': grupo.nombre,
+      'descripcion': grupo.descripcion ?? '',
+      'activo': grupo.activo.toString(),
+      if (grupo.codigo == null) 'codusuarioa': userCode.toString(),
+      if (grupo.codigo != null) 'codusuariom': userCode.toString(),
+    };
+    final response = await post(
+      'api/alimento_grupos.php',
+      body: jsonEncode(body),
+    );
+    return response.statusCode == 200 || response.statusCode == 201;
+  }
+
+  Future<bool> deleteAlimentoGrupo(int codigo) async {
+    final response = await http.delete(
+      Uri.parse('${_baseUrl}api/alimento_grupos.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode({'codigo': codigo}),
+    );
+    if (response.statusCode == 200) return true;
+    String msg = 'No se pudo eliminar el grupo.';
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map && decoded['message'] != null) {
+        msg = decoded['message'].toString();
+      }
+    } catch (_) {}
+    throw Exception(msg);
+  }
+
+  Future<List<HarvardCategoria>> getHarvardCategorias() async {
+    final response = await get('api/harvard_categorias.php');
+    if (response.statusCode != 200) {
+      // Return empty list gracefully (tables may not exist yet)
+      return [];
+    }
+    final List<dynamic> data = jsonDecode(response.body);
+    return data
+        .whereType<Map>()
+        .map((e) => HarvardCategoria.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  Future<List<Alimento>> getAlimentos({
+    String? search,
+    int? codigoGrupo,
+    List<int>? codigoGrupos,
+    bool soloActivos = false,
+  }) async {
+    final grupos = <int>{};
+    if (codigoGrupo != null && codigoGrupo > 0) {
+      grupos.add(codigoGrupo);
+    }
+    if (codigoGrupos != null) {
+      grupos.addAll(codigoGrupos.where((g) => g > 0));
+    }
+
+    final query = <String, String>{
+      if ((search ?? '').trim().isNotEmpty) 'search': search!.trim(),
+      if (codigoGrupo != null) 'codigo_grupo': codigoGrupo.toString(),
+      if (grupos.isNotEmpty)
+        'codigo_grupos': grupos.map((g) => g.toString()).join(','),
+      if (soloActivos) 'solo_activos': '1',
+    };
+    final suffix = query.isEmpty
+        ? ''
+        : '?${query.entries.map((e) => '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}').join('&')}';
+    final response = await get('api/alimentos.php$suffix');
+    if (response.statusCode != 200) {
+      throw Exception('No se pudieron cargar los alimentos.');
+    }
+    final List<dynamic> data = jsonDecode(response.body);
+    return data
+        .whereType<Map>()
+        .map((e) => Alimento.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  Future<List<PlanNutricional>> getPlanesForAlimento(int codigoAlimento) async {
+    final response = await get(
+      'api/alimentos.php?codigo_alimento_planes=$codigoAlimento',
+    );
+    if (response.statusCode != 200) {
+      throw Exception('No se pudieron cargar los planes del alimento.');
+    }
+    final List<dynamic> data = jsonDecode(response.body);
+    return data
+        .whereType<Map>()
+        .map((e) => PlanNutricional.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  Future<List<PlanFit>> getPlanesForEjercicio(int codigoEjercicio) async {
+    final response = await get(
+      'api/plan_fit_ejercicios.php?planes_ejercicio=$codigoEjercicio',
+    );
+    if (response.statusCode != 200) {
+      throw Exception('No se pudieron cargar los planes del ejercicio.');
+    }
+    final List<dynamic> data = jsonDecode(response.body);
+    return data
+        .whereType<Map>()
+        .map((e) => PlanFit.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  Future<bool> saveAlimento(Alimento alimento) async {
+    final userCode = await _getUserCode();
+    final grupos = <int>{};
+    if (alimento.codigoGrupo != null && alimento.codigoGrupo! > 0) {
+      grupos.add(alimento.codigoGrupo!);
+    }
+    grupos.addAll(alimento.codigoGrupos.where((g) => g > 0));
+
+    final body = <String, String>{
+      'codigo': alimento.codigo?.toString() ?? '',
+      'nombre': alimento.nombre,
+      'codigo_grupo': alimento.codigoGrupo?.toString() ?? '',
+      'codigo_grupos': grupos.map((g) => g.toString()).join(','),
+      'activo': alimento.activo.toString(),
+      'observacion': alimento.observacion ?? '',
+      'opcion': alimento.opcion ?? '',
+      'harvard_categoria': alimento.harvardCategoria ?? '',
+      'harvard_categorias': alimento.harvardCategorias.isNotEmpty
+          ? alimento.harvardCategorias.join(',')
+          : (alimento.harvardCategoria ?? ''),
+      if (alimento.codigo == null) 'codigousuarioa': userCode.toString(),
+      if (alimento.codigo != null) 'codusuariom': userCode.toString(),
+    };
+    final response = await post(
+      'api/alimentos.php',
+      body: jsonEncode(body),
+    );
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return true;
+    }
+
+    var msg = 'No se pudo guardar el alimento.';
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map && decoded['message'] != null) {
+        msg = decoded['message'].toString();
+      }
+    } catch (_) {}
+    throw Exception(msg);
+  }
+
+  /// Creates a new alimento and returns its assigned [codigo], or null on failure.
+  Future<int?> createAlimentoGetCodigo(Alimento alimento) async {
+    final userCode = await _getUserCode();
+    final grupos = <int>{};
+    if (alimento.codigoGrupo != null && alimento.codigoGrupo! > 0) {
+      grupos.add(alimento.codigoGrupo!);
+    }
+    grupos.addAll(alimento.codigoGrupos.where((g) => g > 0));
+
+    final body = <String, String>{
+      'nombre': alimento.nombre,
+      'codigo_grupo': alimento.codigoGrupo?.toString() ?? '',
+      'codigo_grupos': grupos.map((g) => g.toString()).join(','),
+      'activo': '1',
+      'observacion': alimento.observacion ?? '',
+      'opcion': alimento.opcion ?? '',
+      'codigousuarioa': userCode.toString(),
+    };
+    final response = await post(
+      'api/alimentos.php',
+      body: jsonEncode(body),
+    );
+    if (response.statusCode == 201) {
+      try {
+        final decoded = jsonDecode(response.body);
+        return int.tryParse(decoded['codigo']?.toString() ?? '');
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  Future<bool> deleteAlimento(int codigo) async {
+    final response = await http.delete(
+      Uri.parse('${_baseUrl}api/alimentos.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode({'codigo': codigo}),
+    );
+    if (response.statusCode == 200) return true;
+    String msg = 'No se pudo eliminar el alimento.';
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map && decoded['message'] != null) {
+        msg = decoded['message'].toString();
+      }
+    } catch (_) {}
+    throw Exception(msg);
+  }
+
+  Future<PlanNutriEstructura> getPlanNutriEstructura(int codigoPlan) async {
+    final response = await get(
+      'api/plan_nutricional_estructura.php?codigo_plan_nutricional=$codigoPlan',
+    );
+    if (response.statusCode != 200) {
+      throw Exception('No se pudo cargar la estructura del plan nutricional.');
+    }
+    return PlanNutriEstructura.fromJson(
+      Map<String, dynamic>.from(jsonDecode(response.body)),
+    );
+  }
+
+  Future<bool> savePlanNutriEstructura(PlanNutriEstructura estructura) async {
+    final response = await post(
+      'api/plan_nutricional_estructura.php',
+      body: jsonEncode(estructura.toJson()),
+    );
+    if (response.statusCode != 200) {
+      String errorMessage = response.body.trim();
+      if (errorMessage.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(errorMessage);
+          if (decoded is Map<String, dynamic>) {
+            final message = decoded['message']?.toString().trim() ?? '';
+            final error = decoded['error']?.toString().trim() ?? '';
+            final parts = <String>[
+              if (message.isNotEmpty) message,
+              if (error.isNotEmpty) error,
+            ];
+            if (parts.isNotEmpty) {
+              errorMessage = parts.join('\n');
+            }
+          }
+        } catch (_) {
+          // Mantener el cuerpo bruto si no viene en JSON.
+        }
+      }
+      if (errorMessage.isEmpty) {
+        errorMessage =
+            'Respuesta vacía del servidor (HTTP ${response.statusCode}).';
+      }
+      throw Exception(
+        'No se pudo guardar la estructura del plan nutricional:\n$errorMessage',
+      );
+    }
+    return true;
   }
 
   // --- PLANES FIT ---
@@ -2029,11 +2459,26 @@ ${response.body}
 
   Future<List<PlanFitEjercicio>> getPlanFitEjerciciosCatalog({
     String? search,
+    bool premiumVisibleOnly = false,
+    int? categoriaCode,
+    List<int>? categoriaCodes,
+    int limit = 15,
+    int offset = 0,
   }) async {
     final queryParams = <String, String>{'catalog': '1'};
+    if (premiumVisibleOnly) {
+      queryParams['premium_visible'] = '1';
+    }
     if (search != null && search.trim().isNotEmpty) {
       queryParams['search'] = search.trim();
     }
+    if (categoriaCodes != null && categoriaCodes.isNotEmpty) {
+      queryParams['categorias'] = categoriaCodes.join(',');
+    } else if (categoriaCode != null) {
+      queryParams['categoria'] = categoriaCode.toString();
+    }
+    queryParams['limit'] = limit.toString();
+    queryParams['offset'] = offset.toString();
 
     final uri = Uri.parse(
       '${_baseUrl}api/plan_fit_ejercicios.php',
@@ -2462,6 +2907,7 @@ ${response.body}
   Future<List<PlanFitEjercicio>> getCatalogByCategoria(
     int codigoCategoria, {
     String? search,
+    bool premiumVisibleOnly = false,
   }) async {
     final queryParams = {
       'catalog': '1',
@@ -2469,6 +2915,9 @@ ${response.body}
     };
     if (search != null && search.trim().isNotEmpty) {
       queryParams['search'] = search.trim();
+    }
+    if (premiumVisibleOnly) {
+      queryParams['premium_visible'] = '1';
     }
 
     final uri = Uri.parse(
@@ -2583,6 +3032,17 @@ ${response.body}
       data['instrucciones'] = instruccionesText;
     }
 
+    final instruccionesDetalladasText =
+        (ejercicio.instruccionesDetalladas ?? '').trim();
+    if (instruccionesDetalladasText.isNotEmpty) {
+      data['instrucciones_detalladas'] = instruccionesDetalladasText;
+    }
+
+    final hashtagText = (ejercicio.hashtag ?? '').trim();
+    if (hashtagText.isNotEmpty) {
+      data['hashtag'] = hashtagText;
+    }
+
     if (ejercicio.urlVideo != null && ejercicio.urlVideo!.isNotEmpty) {
       data['url_video'] = ejercicio.urlVideo;
     }
@@ -2597,6 +3057,9 @@ ${response.body}
     }
     if (ejercicio.kilos != null) {
       data['kilos'] = ejercicio.kilos;
+    }
+    if ((ejercicio.visiblePremium ?? '').isNotEmpty) {
+      data['visible_premium'] = ejercicio.visiblePremium;
     }
 
     if (categorias != null && categorias.isNotEmpty) {
@@ -2666,6 +3129,17 @@ ${response.body}
       data['clear_instrucciones'] = '1';
     }
 
+    final instruccionesDetalladasText =
+        (ejercicio.instruccionesDetalladas ?? '').trim();
+    if (instruccionesDetalladasText.isNotEmpty) {
+      data['instrucciones_detalladas'] = instruccionesDetalladasText;
+    } else {
+      data['clear_instrucciones_detalladas'] = '1';
+    }
+
+    final hashtagText = (ejercicio.hashtag ?? '').trim();
+    data['hashtag'] = hashtagText;
+
     if (removeFoto) {
       data['eliminar_foto'] = '1';
     }
@@ -2684,6 +3158,9 @@ ${response.body}
     }
     if (ejercicio.kilos != null) {
       data['kilos'] = ejercicio.kilos;
+    }
+    if ((ejercicio.visiblePremium ?? '').isNotEmpty) {
+      data['visible_premium'] = ejercicio.visiblePremium;
     }
 
     if (categorias != null && categorias.isNotEmpty) {
@@ -3698,6 +4175,36 @@ ${response.body}
     return jsonDecode(response.body) ?? {};
   }
 
+  Future<List<Map<String, dynamic>>> getUsuarioPremiumAuditLog(
+    int codigoUsuario,
+  ) async {
+    final response = await http.post(
+      Uri.parse('${_baseUrl}api/usuarios.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode({
+        'action': 'premium_audit_log',
+        'codigo_usuario': codigoUsuario,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception('Respuesta del servidor (${response.statusCode}): $body');
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is List) {
+      return decoded
+          .whereType<Map>()
+          .map((item) => item.map(
+                (key, value) => MapEntry(key.toString(), value),
+              ))
+          .toList();
+    }
+    return const [];
+  }
+
   Future<bool> updateUsuario(Map<String, dynamic> usuarioData) async {
     final userCode = await _getUserCode();
     usuarioData['codusuariom'] = userCode;
@@ -3962,6 +4469,94 @@ ${response.body}
         'Error al cargar sesiones (Código: ${response.statusCode}). Respuesta: ${response.body}',
       );
     }
+  }
+
+  Future<List<SessionLog>> getAllSessionLogs() async {
+    final uri = Uri.parse(
+      '${_baseUrl}api/sesiones.php',
+    ).replace(queryParameters: {'all_sesiones': '1'});
+
+    final response = await http.get(uri, headers: await _getHeaders());
+
+    if (response.statusCode == 200) {
+      try {
+        final jsonResponse = json.decode(response.body);
+        final rawList = (jsonResponse['todas_sesiones'] as List?) ?? const [];
+        return rawList
+            .map((s) => SessionLog.fromJson(Map<String, dynamic>.from(s)))
+            .toList();
+      } catch (e) {
+        throw Exception('Error al procesar el listado de sesiones: $e');
+      }
+    }
+
+    if (response.statusCode == 404) {
+      return const [];
+    }
+
+    throw Exception(
+      'Error al cargar sesiones globales (Código: ${response.statusCode}). Respuesta: ${response.body}',
+    );
+  }
+
+  Future<SessionPagedResponse> getAllSessionLogsPaged({
+    required int limit,
+    required int offset,
+    int? codigoUsuario,
+    String? fechaHoraQuery,
+    DateTime? desde,
+    DateTime? hasta,
+  }) async {
+    final queryParams = <String, String>{
+      'all_sesiones': '1',
+      'limit': '$limit',
+      'offset': '$offset',
+    };
+
+    if (codigoUsuario != null) {
+      queryParams['codigo_usuario_filter'] = '$codigoUsuario';
+    }
+    if (fechaHoraQuery != null && fechaHoraQuery.trim().isNotEmpty) {
+      queryParams['fecha_hora_q'] = fechaHoraQuery.trim();
+    }
+    if (desde != null) {
+      queryParams['desde'] = desde.toIso8601String();
+    }
+    if (hasta != null) {
+      queryParams['hasta'] = hasta.toIso8601String();
+    }
+
+    final uri = Uri.parse(
+      '${_baseUrl}api/sesiones.php',
+    ).replace(queryParameters: queryParams);
+
+    final response = await http.get(uri, headers: await _getHeaders());
+
+    if (response.statusCode == 200) {
+      try {
+        final jsonResponse = json.decode(response.body);
+        return SessionPagedResponse.fromJson(
+          Map<String, dynamic>.from(jsonResponse),
+        );
+      } catch (e) {
+        throw Exception(
+            'Error al procesar el listado paginado de sesiones: $e');
+      }
+    }
+
+    if (response.statusCode == 404) {
+      return SessionPagedResponse(
+        sesiones: const [],
+        totalFiltrado: 0,
+        limit: limit,
+        offset: offset,
+        hasMore: false,
+      );
+    }
+
+    throw Exception(
+      'Error al cargar sesiones paginadas (Código: ${response.statusCode}). Respuesta: ${response.body}',
+    );
   }
 
   // --- PARÁMETROS GLOBALES ---
@@ -4457,6 +5052,40 @@ ${response.body}
     }
   }
 
+  /// Verifica si un email ya existe en la base de datos
+  Future<bool> checkEmailExists(String email, {int? excludeCodigo}) async {
+    final payload = <String, dynamic>{
+      'action': 'check_email',
+      'email': email,
+      if (excludeCodigo != null && excludeCodigo > 0)
+        'exclude_codigo': excludeCodigo,
+    };
+
+    final response = await http.post(
+      Uri.parse('${_baseUrl}api/usuarios.php'),
+      headers: {
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode(payload),
+    );
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      return data['exists'] == true;
+    }
+
+    try {
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      final message = data['message']?.toString().trim() ?? '';
+      if (message.isNotEmpty) {
+        throw Exception(message);
+      }
+    } catch (_) {}
+
+    throw Exception('Fallo al validar email (Código: ${response.statusCode})');
+  }
+
   /// Crea un nuevo usuario mediante registro (sin necesidad de admin)
   Future<Map<String, dynamic>> registerUsuario({
     required String nick,
@@ -4580,5 +5209,458 @@ ${response.body}
       // debugPrint('Error en deleteImagenEntrenamiento: $e');
       return false;
     }
+  }
+
+  // --- VÍDEOS EJERCICIOS ---
+  String get baseUrl => _baseUrl;
+  Future<List<Map<String, dynamic>>> getVideosEjercicios() async {
+    final response = await _safeGet(
+      Uri.parse('${_baseUrl}api/video_ejercicios.php'),
+      headers: await _getHeaders(),
+    );
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      throw Exception('Error al obtener vídeos (${response.statusCode})');
+    }
+    final List<dynamic> data = jsonDecode(response.body);
+    return data.cast<Map<String, dynamic>>();
+  }
+
+  Future<List<Map<String, dynamic>>> getVideosEjerciciosForUser(
+      int usuarioCodigo) async {
+    final response = await _safeGet(
+      Uri.parse('${_baseUrl}api/video_ejercicios.php?usuario=$usuarioCodigo'),
+      headers: await _getHeaders(),
+    );
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      throw Exception('Error al obtener vídeos (${response.statusCode})');
+    }
+    final List<dynamic> data = jsonDecode(response.body);
+    return data.cast<Map<String, dynamic>>();
+  }
+
+  Future<List<Map<String, dynamic>>> getVideosFavoritosForUser(
+      int usuarioCodigo) async {
+    final response = await _safeGet(
+      Uri.parse(
+          '${_baseUrl}api/video_ejercicio_usuarios.php?favoritos=1&usuario=$usuarioCodigo'),
+      headers: await _getHeaders(),
+    );
+    if (response.statusCode != 200) return [];
+    final List<dynamic> data = jsonDecode(response.body);
+    return data.cast<Map<String, dynamic>>();
+  }
+
+  Future<List<Map<String, dynamic>>> getVideoCategorias() async {
+    final response = await _safeGet(
+      Uri.parse('${_baseUrl}api/video_ejercicios.php?categorias=1'),
+      headers: await _getHeaders(),
+    );
+    if (response.statusCode != 200) return [];
+    final List<dynamic> data = jsonDecode(response.body);
+    return data.cast<Map<String, dynamic>>();
+  }
+
+  Future<Map<String, dynamic>> createVideoCategoria(
+      String nombre, int codusuarioa) async {
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/video_ejercicios.php?categorias=1'),
+      headers: await _getHeaders(),
+      body: jsonEncode({'nombre': nombre, 'codusuarioa': codusuarioa}),
+    );
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw Exception('Error al crear categoría (${response.statusCode})');
+    }
+    return jsonDecode(response.body);
+  }
+
+  Future<void> updateVideoCategoria({
+    required int codigo,
+    required String nombre,
+  }) async {
+    final response = await _safePut(
+      Uri.parse('${_baseUrl}api/video_ejercicios.php?categorias=1'),
+      headers: await _getHeaders(),
+      body: jsonEncode({'codigo': codigo, 'nombre': nombre}),
+    );
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      throw Exception('Error al actualizar categoría (${response.statusCode})');
+    }
+  }
+
+  Future<void> deleteVideoCategoria(int codigo) async {
+    final response = await _safeDelete(
+      Uri.parse(
+          '${_baseUrl}api/video_ejercicios.php?categorias=1&codigo=$codigo'),
+      headers: await _getHeaders(),
+    );
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      throw Exception('Error al eliminar categoría (${response.statusCode})');
+    }
+  }
+
+  Future<Map<String, dynamic>> createVideoEjercicio(
+      Map<String, dynamic> data) async {
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/video_ejercicios.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode(data),
+    );
+    if (response.statusCode != 201) {
+      _validateResponse(response.statusCode, response.body);
+      throw Exception('Error al crear vídeo (${response.statusCode})');
+    }
+    return jsonDecode(response.body);
+  }
+
+  Future<void> updateVideoEjercicio(Map<String, dynamic> data) async {
+    final response = await _safePut(
+      Uri.parse('${_baseUrl}api/video_ejercicios.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode(data),
+    );
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      throw Exception('Error al actualizar vídeo (${response.statusCode})');
+    }
+  }
+
+  /// Sube un fichero de vídeo al servidor (endpoint video_ejercicio_upload.php).
+  /// Devuelve la ruta relativa que se debe guardar en BD (ej: "subcarpeta/video.mp4").
+  Future<String> uploadVideoEjercicio({
+    required Uint8List bytes,
+    required String filename,
+    String? subcarpeta,
+  }) async {
+    try {
+      final ftpsConfig = await getVideoEjercicioFtpsConfig();
+      if (_isTruthy(ftpsConfig['enabled'])) {
+        return await _uploadVideoEjercicioViaFtps(
+          bytes: bytes,
+          filename: filename,
+          subcarpeta: subcarpeta,
+          config: ftpsConfig,
+        );
+      }
+    } catch (e) {
+      debugPrint('[VideoUpload][FTPS] Fallback a HTTP: $e');
+    }
+
+    return _uploadVideoEjercicioViaHttp(
+      bytes: bytes,
+      filename: filename,
+      subcarpeta: subcarpeta,
+    );
+  }
+
+  Future<Map<String, dynamic>> getVideoEjercicioFtpsConfig() async {
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/video_ejercicio_ftps.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode({'action': 'get_config'}),
+    );
+
+    final decoded = (jsonDecode(response.body) as Map<String, dynamic>? ??
+        <String, dynamic>{});
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        decoded['message']?.toString() ??
+            'No se pudo leer configuración FTPS (${response.statusCode})',
+      );
+    }
+
+    return decoded;
+  }
+
+  Future<String> _uploadVideoEjercicioViaHttp({
+    required Uint8List bytes,
+    required String filename,
+    String? subcarpeta,
+  }) async {
+    final headers = await _getHeaders();
+    // Multipart no puede llevar Content-Type JSON; quitarlo y conservar Authorization.
+    final token = headers['Authorization'];
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('${_baseUrl}api/video_ejercicio_upload.php'),
+    );
+    if (token != null) request.headers['Authorization'] = token;
+
+    final safeName = _sanitizeFileName(filename, fallback: 'video.mp4');
+
+    // Subcarpeta opcional
+    if (subcarpeta != null && subcarpeta.trim().isNotEmpty) {
+      request.fields['subcarpeta'] = subcarpeta.trim();
+    }
+
+    // Detectar content-type básico por extensión
+    final ext =
+        safeName.contains('.') ? safeName.split('.').last.toLowerCase() : 'mp4';
+    final contentType = ext == 'gif'
+        ? MediaType('image', 'gif')
+        : MediaType('video', ext == 'webm' ? 'webm' : 'mp4');
+
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'video',
+        bytes,
+        filename: safeName,
+        contentType: contentType,
+      ),
+    );
+
+    final streamed = await request.send();
+    final body = await streamed.stream.bytesToString();
+
+    if (streamed.statusCode != 200) {
+      String msg = 'Error al subir el vídeo (${streamed.statusCode})';
+      if (streamed.statusCode == 413) {
+        msg = 'El servidor rechazó la subida por tamaño (413). '
+            'Aumenta los límites de subida en servidor/proxy '
+            '(upload_max_filesize, post_max_size, y límite del proxy/CDN).';
+      } else if (streamed.statusCode == 406) {
+        msg = 'El servidor rechazó la subida (406). '
+            'Suele deberse a reglas de seguridad (WAF/ModSecurity) '
+            'que bloquean multipart/binarios en este endpoint.';
+      }
+      try {
+        final decoded = jsonDecode(body);
+        if (decoded['error'] != null) msg = decoded['error'].toString();
+      } catch (_) {}
+
+      final rawBody = body.trim();
+      final lowerBody = rawBody.toLowerCase();
+      final looksLikeWaf = lowerBody.contains('mod_security') ||
+          lowerBody.contains('modsecurity') ||
+          lowerBody.contains('not acceptable') ||
+          lowerBody.contains('forbidden by administrative rules');
+      if (looksLikeWaf && streamed.statusCode == 406) {
+        msg = 'El servidor/WAF bloqueó la subida (406). '
+            'Revisa ModSecurity/WAF para permitir POST multipart en '
+            'api/video_ejercicio_upload.php.';
+      } else if (rawBody.isNotEmpty && !rawBody.startsWith('{')) {
+        final compact = rawBody.replaceAll(RegExp(r'\s+'), ' ').trim();
+        final snippet =
+            compact.length > 180 ? '${compact.substring(0, 180)}…' : compact;
+        msg = '$msg Respuesta servidor: $snippet';
+      }
+
+      throw Exception(msg);
+    }
+
+    final decoded = jsonDecode(body);
+    final ruta = (decoded['ruta_video'] ?? '').toString().trim();
+    if (ruta.isEmpty) {
+      throw Exception('El servidor no devolvió la ruta del vídeo');
+    }
+    return ruta;
+  }
+
+  Future<String> _uploadVideoEjercicioViaFtps({
+    required Uint8List bytes,
+    required String filename,
+    String? subcarpeta,
+    required Map<String, dynamic> config,
+  }) async {
+    final host = (config['host'] ?? '').toString().trim();
+    final port = int.tryParse((config['port'] ?? '').toString()) ?? 21;
+    final securityRaw =
+        (config['security'] ?? 'ftpes').toString().trim().toLowerCase();
+    final remoteRoot = (config['remote_root'] ?? '').toString().trim();
+    final userEnc = (config['user_enc'] ?? '').toString().trim();
+    final passEnc = (config['pass_enc'] ?? '').toString().trim();
+
+    if (host.isEmpty || userEnc.isEmpty || passEnc.isEmpty) {
+      throw Exception(
+          'Configuración FTPS incompleta. Revisa los parámetros de conexión.');
+    }
+
+    final user = _decryptFtpsSecretLocal(userEnc);
+    final pass = _decryptFtpsSecretLocal(passEnc);
+    if (user.isEmpty || pass.isEmpty) {
+      throw Exception('No se pudo descifrar credenciales FTPS en local.');
+    }
+
+    final safeName = _sanitizeFileName(filename, fallback: 'video.mp4');
+    final safeSubfolder = _sanitizePathPart(subcarpeta ?? '');
+    final remoteRelativePath =
+        safeSubfolder.isEmpty ? safeName : '$safeSubfolder/$safeName';
+
+    final securityType = securityRaw == 'ftps'
+        ? SecurityType.ftps
+        : (securityRaw == 'ftp' ? SecurityType.ftp : SecurityType.ftpes);
+
+    final ftp = FTPConnect(
+      host,
+      port: port,
+      user: user,
+      pass: pass,
+      securityType: securityType,
+      showLog: false,
+      timeout: 60,
+    );
+
+    File? tempFile;
+    var connected = false;
+
+    try {
+      connected = await ftp.connect();
+      if (!connected) {
+        throw Exception('No se pudo conectar al servidor FTPS.');
+      }
+
+      await ftp.setTransferType(TransferType.binary);
+
+      final tmpDir = await getTemporaryDirectory();
+      tempFile = File('${tmpDir.path}/$safeName');
+      await tempFile.writeAsBytes(bytes, flush: true);
+
+      final root = remoteRoot.replaceAll('\\', '/').trim();
+      if (root.isNotEmpty) {
+        await _ensureFtpsPath(ftp, root);
+      }
+      if (safeSubfolder.isNotEmpty) {
+        await _ensureFtpsPath(ftp, safeSubfolder);
+      }
+
+      final uploaded = await ftp.uploadFile(tempFile, sRemoteName: safeName);
+      if (!uploaded) {
+        throw Exception('La subida FTPS devolvió estado no exitoso.');
+      }
+
+      return remoteRelativePath;
+    } finally {
+      if (connected) {
+        try {
+          await ftp.disconnect();
+        } catch (_) {}
+      }
+      if (tempFile != null && await tempFile.exists()) {
+        try {
+          await tempFile.delete();
+        } catch (_) {}
+      }
+    }
+  }
+
+  String _decryptFtpsSecretLocal(String encryptedText) {
+    final input = encryptedText.trim();
+    if (input.isEmpty) return '';
+    const prefix = 'ENCFTPS1:';
+    if (!input.startsWith(prefix)) {
+      return input;
+    }
+
+    try {
+      final payload = base64Decode(input.substring(prefix.length));
+      if (payload.length <= 16) return '';
+
+      final ivBytes = payload.sublist(0, 16);
+      final cipherBytes = payload.sublist(16);
+      final keyBytes =
+          sha256.convert(utf8.encode(_ftpsClientCipherPassphrase)).bytes;
+
+      final key = enc.Key(Uint8List.fromList(keyBytes));
+      final iv = enc.IV(Uint8List.fromList(ivBytes));
+      final encrypter =
+          enc.Encrypter(enc.AES(key, mode: enc.AESMode.cbc, padding: 'PKCS7'));
+      final decrypted = encrypter.decryptBytes(
+        enc.Encrypted(Uint8List.fromList(cipherBytes)),
+        iv: iv,
+      );
+      return utf8.decode(decrypted);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  String _sanitizePathPart(String value) {
+    final cleaned = value
+        .replaceAll('\\', '/')
+        .split('/')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty && e != '.' && e != '..')
+        .map((e) => e.replaceAll(RegExp(r'[^A-Za-z0-9._\-]'), ''))
+        .where((e) => e.isNotEmpty)
+        .join('/');
+    return cleaned;
+  }
+
+  Future<void> _ensureFtpsPath(FTPConnect ftp, String pathValue) async {
+    var normalized = pathValue.replaceAll('\\', '/').trim();
+    if (normalized.isEmpty) return;
+
+    final isAbsolute = normalized.startsWith('/');
+    normalized = normalized.replaceAll(RegExp(r'/+'), '/');
+    final segments = normalized
+        .split('/')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+
+    if (isAbsolute) {
+      final rootOk = await ftp.changeDirectory('/');
+      if (!rootOk) {
+        throw Exception('No se pudo acceder a la raíz FTPS.');
+      }
+    }
+
+    for (final segment in segments) {
+      final moved = await ftp.changeDirectory(segment);
+      if (moved) continue;
+
+      final created = await ftp.makeDirectory(segment);
+      if (!created) {
+        throw Exception('No se pudo crear carpeta remota: $segment');
+      }
+      final movedAfterCreate = await ftp.changeDirectory(segment);
+      if (!movedAfterCreate) {
+        throw Exception('No se pudo abrir carpeta remota: $segment');
+      }
+    }
+  }
+
+  Future<void> deleteVideoEjercicio(int codigo) async {
+    final response = await _safeDelete(
+      Uri.parse('${_baseUrl}api/video_ejercicios.php?codigo=$codigo'),
+      headers: await _getHeaders(),
+    );
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      throw Exception('Error al eliminar vídeo (${response.statusCode})');
+    }
+  }
+
+  Future<Map<String, dynamic>> toggleVideoLike(
+      {required int videoCodigo, required int usuarioCodigo}) async {
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/video_ejercicio_usuarios.php?toggle_like=1'),
+      headers: await _getHeaders(),
+      body: jsonEncode(
+          {'codigo_video': videoCodigo, 'codigo_usuario': usuarioCodigo}),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Error al actualizar like (${response.statusCode})');
+    }
+    return jsonDecode(response.body);
+  }
+
+  Future<Map<String, dynamic>> toggleVideoFavorito(
+      {required int videoCodigo, required int usuarioCodigo}) async {
+    final response = await _safePost(
+      Uri.parse(
+          '${_baseUrl}api/video_ejercicio_usuarios.php?toggle_favorito=1'),
+      headers: await _getHeaders(),
+      body: jsonEncode(
+          {'codigo_video': videoCodigo, 'codigo_usuario': usuarioCodigo}),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Error al actualizar favorito (${response.statusCode})');
+    }
+    return jsonDecode(response.body);
   }
 }

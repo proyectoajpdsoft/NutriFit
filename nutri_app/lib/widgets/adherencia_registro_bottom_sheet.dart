@@ -21,10 +21,26 @@ Future<void> showAdherenciaRegistroBottomSheet({
   }
 
   final rootContext = context;
+  var tiempoAvisoCumplimientoSegundos = 18;
 
   final adherenciaService = AdherenciaService();
   final apiService = ApiService();
   final tipos = tiposDisponibles.toSet().toList(growable: false);
+
+  Future<void> cargarTiempoAvisoCumplimiento() async {
+    try {
+      final raw =
+          await apiService.getParametroValor('tiempo_aviso_cumplimiento');
+      final parsed = int.tryParse((raw ?? '').trim());
+      if (parsed != null) {
+        tiempoAvisoCumplimientoSegundos = parsed.clamp(3, 300).toInt();
+      }
+    } catch (_) {
+      // Mantiene el valor por defecto si el parámetro no existe o falla.
+    }
+  }
+
+  await cargarTiempoAvisoCumplimiento();
 
   String tipoLabel(AdherenciaTipo tipo) {
     return tipo == AdherenciaTipo.nutri ? 'Plan Nutricional' : 'Plan Fit';
@@ -115,13 +131,6 @@ Future<void> showAdherenciaRegistroBottomSheet({
     }
 
     final overlay = Overlay.of(rootContext, rootOverlay: true);
-    if (overlay == null) {
-      ScaffoldMessenger.of(rootContext).showSnackBar(
-        SnackBar(content: Text('$title\n$body')),
-      );
-      _ultimoAvisoAdherencia = now;
-      return;
-    }
 
     late OverlayEntry overlayEntry;
     bool visible = false;
@@ -237,14 +246,17 @@ Future<void> showAdherenciaRegistroBottomSheet({
       overlayEntry.markNeedsBuild();
     });
 
-    Future<void>.delayed(const Duration(seconds: 5), hideOverlay);
+    Future<void>.delayed(
+      Duration(seconds: tiempoAvisoCumplimientoSegundos),
+      hideOverlay,
+    );
   }
 
   Future<String?> pedirMotivo(
     AdherenciaEstado estado, {
     String? motivoInicial,
   }) async {
-    final motivoController = TextEditingController(text: motivoInicial ?? '');
+    var motivoTexto = motivoInicial ?? '';
     final titulo = estado == AdherenciaEstado.noRealizado
         ? 'Motivo de no realización'
         : 'Motivo de cumplimiento parcial';
@@ -253,11 +265,14 @@ Future<void> showAdherenciaRegistroBottomSheet({
       context: rootContext,
       builder: (dialogContext) => AlertDialog(
         title: Text(titulo),
-        content: TextField(
-          controller: motivoController,
+        content: TextFormField(
+          initialValue: motivoTexto,
           maxLines: 3,
           autofocus: true,
           textCapitalization: TextCapitalization.sentences,
+          onChanged: (value) {
+            motivoTexto = value;
+          },
           decoration: const InputDecoration(
             hintText: 'Cuéntanos brevemente qué pasó hoy',
           ),
@@ -269,7 +284,7 @@ Future<void> showAdherenciaRegistroBottomSheet({
           ),
           ElevatedButton(
             onPressed: () {
-              final value = motivoController.text.trim();
+              final value = motivoTexto.trim();
               Navigator.pop(dialogContext, value);
             },
             child: const Text('Guardar y continuar'),
@@ -277,8 +292,6 @@ Future<void> showAdherenciaRegistroBottomSheet({
         ],
       ),
     );
-
-    motivoController.dispose();
     return result;
   }
 
@@ -417,7 +430,16 @@ Future<void> showAdherenciaRegistroBottomSheet({
             ),
           );
 
+          // Cerrar el bottom sheet para que no esté visible cuando aparezca
+          // el mensaje de ánimo/alerta
+          if (sheetContext.mounted) {
+            Navigator.pop(sheetContext);
+          }
+
           if (estado != AdherenciaEstado.cumplido) {
+            // Pequeño retraso para que el bottom sheet ya esté oculto
+            // antes de que aparezca el mensaje de ánimo
+            await Future.delayed(const Duration(seconds: 2));
             await mostrarAlertaSemanalSiAplica(tipo, fechaRegistro);
           }
         } catch (e) {
@@ -533,6 +555,8 @@ Future<void> showAdherenciaRegistroBottomSheet({
                 style:
                     const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
+              const SizedBox(height: 10),
+              _CumplimientoInfoBanner(tipos: tiposToShow),
               const SizedBox(height: 12),
               for (var i = 0; i < tiposToShow.length; i++) ...[
                 buildTipoRegistro(setModalState, tiposToShow[i]),
@@ -553,4 +577,194 @@ Future<void> showAdherenciaRegistroBottomSheet({
       );
     },
   );
+}
+
+/// Expandable info banner explaining what each compliance state means,
+/// tailored to the plan types being shown.
+class _CumplimientoInfoBanner extends StatefulWidget {
+  const _CumplimientoInfoBanner({required this.tipos});
+
+  final List<AdherenciaTipo> tipos;
+
+  @override
+  State<_CumplimientoInfoBanner> createState() =>
+      _CumplimientoInfoBannerState();
+}
+
+class _CumplimientoInfoBannerState extends State<_CumplimientoInfoBanner> {
+  bool _expanded = false;
+
+  bool get _hasNutri => widget.tipos.contains(AdherenciaTipo.nutri);
+  bool get _hasFit => widget.tipos.contains(AdherenciaTipo.fit);
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeInOut,
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.blue.shade100),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline,
+                      size: 16, color: Colors.blue.shade700),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '¿Qué significa cada estado de cumplimiento?',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.blue.shade800,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    _expanded
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down,
+                    size: 18,
+                    color: Colors.blue.shade700,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_expanded) ...[
+            Divider(height: 1, color: Colors.blue.shade100),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_hasNutri) ...[
+                    _SectionTitle('Plan Nutricional'),
+                    const SizedBox(height: 4),
+                    _StateRow(
+                      icon: Icons.check_circle_outline,
+                      color: Colors.green,
+                      label: 'Cumplido',
+                      description:
+                          'Seguiste el plan de alimentación tal como estaba previsto para este día.',
+                    ),
+                    _StateRow(
+                      icon: Icons.change_circle_outlined,
+                      color: Colors.orange,
+                      label: 'Parcial',
+                      description:
+                          'Seguiste parte del plan pero no completamente: alguna comida omitida, cambiada o con cantidad distinta.',
+                    ),
+                    _StateRow(
+                      icon: Icons.cancel_outlined,
+                      color: Colors.red,
+                      label: 'No realizado',
+                      description:
+                          'No seguiste el plan de alimentación en este día.',
+                    ),
+                    if (_hasFit) const SizedBox(height: 10),
+                  ],
+                  if (_hasFit) ...[
+                    _SectionTitle('Plan Fit'),
+                    const SizedBox(height: 4),
+                    _StateRow(
+                      icon: Icons.check_circle_outline,
+                      color: Colors.green,
+                      label: 'Cumplido',
+                      description:
+                          'Realizaste el entrenamiento completo previsto para este día.',
+                    ),
+                    _StateRow(
+                      icon: Icons.change_circle_outlined,
+                      color: Colors.orange,
+                      label: 'Parcial',
+                      description:
+                          'Hiciste parte del entrenamiento: algunos ejercicios, series o tiempo incompleto.',
+                    ),
+                    _StateRow(
+                      icon: Icons.cancel_outlined,
+                      color: Colors.red,
+                      label: 'No realizado',
+                      description:
+                          'No realizaste el entrenamiento en este día.',
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle(this.text);
+  final String text;
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: TextStyle(
+        fontSize: 11,
+        fontWeight: FontWeight.w700,
+        color: Colors.blue.shade900,
+        letterSpacing: 0.3,
+      ),
+    );
+  }
+}
+
+class _StateRow extends StatelessWidget {
+  const _StateRow({
+    required this.icon,
+    required this.color,
+    required this.label,
+    required this.description,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String label;
+  final String description;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 6),
+          Expanded(
+            child: RichText(
+              text: TextSpan(
+                style: const TextStyle(
+                    fontSize: 12, color: Colors.black87, height: 1.4),
+                children: [
+                  TextSpan(
+                    text: '$label: ',
+                    style: TextStyle(fontWeight: FontWeight.w600, color: color),
+                  ),
+                  TextSpan(text: description),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

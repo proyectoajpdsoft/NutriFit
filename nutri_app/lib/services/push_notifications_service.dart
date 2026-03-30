@@ -154,6 +154,12 @@ class PushNotificationsService {
     _desktopPollTimer?.cancel();
 
     Future<void> pollOnce() async {
+      if (!authService.isLoggedIn ||
+          (authService.userCode ?? '').trim().isEmpty) {
+        _lastDesktopUnreadCount = null;
+        return;
+      }
+
       if (authService.isGuestMode) {
         _lastDesktopUnreadCount = null;
         return;
@@ -255,6 +261,16 @@ class PushNotificationsService {
         _initialized = true;
       }
 
+      if (!_supportsFirebasePush() &&
+          _supportsDesktopNativeNotifications() &&
+          _desktopPollTimer == null) {
+        _startDesktopPolling(
+          authService: authService,
+          apiService: apiService,
+          scope: scope,
+        );
+      }
+
       if (_supportsFirebasePush()) {
         final token = await FirebaseMessaging.instance.getToken();
         final trimmed = token?.trim() ?? '';
@@ -280,5 +296,11 @@ class PushNotificationsService {
     required ApiService apiService,
   }) async {
     await initForCurrentUser(authService: authService, apiService: apiService);
+  }
+
+  void clearUserSessionState() {
+    _desktopPollTimer?.cancel();
+    _desktopPollTimer = null;
+    _lastDesktopUnreadCount = null;
   }
 }

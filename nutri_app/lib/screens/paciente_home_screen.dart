@@ -13,6 +13,7 @@ import 'package:nutri_app/screens/chat_screen.dart';
 import 'package:nutri_app/screens/messages_inbox_screen.dart';
 import 'package:nutri_app/screens/mediciones/pesos_usuario_screen.dart';
 import 'package:nutri_app/screens/etiqueta_nutricional_scanner_screen.dart';
+import 'package:nutri_app/screens/planes_fit/plan_fit_ejercicios_catalog_screen.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/adherencia_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
@@ -35,8 +36,9 @@ class PacienteHomeScreen extends StatefulWidget {
 }
 
 class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
-  static const MethodChannel _externalUrlChannel =
-      MethodChannel('nutri_app/external_url');
+  static const MethodChannel _externalUrlChannel = MethodChannel(
+    'nutri_app/external_url',
+  );
 
   final ApiService _apiService = ApiService();
   final AdherenciaService _adherenciaService = AdherenciaService();
@@ -51,17 +53,20 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   Map<String, String> _contactInfo = {};
   List<Consejo> _consejosDestacados = [];
   List<Consejo> _consejosPersonalizadosNoLeidos = [];
+  // ignore: unused_field
   int _consejosNoLeidos = 0;
   int _consejosPersonalizadosNoLeidosCount = 0;
   int _comentariosNoLeidos = 0;
   int _chatNoLeidos = 0;
   bool _showWelcomeMessage = false;
   bool _showContactCardFirstTime = true;
+  // ignore: unused_field
   bool _hasPersonalizados = false;
   bool _isContactCardExpanded = true;
   bool _isAdherenciaCardExpanded = true;
   bool _isRecomendacionesCardExpanded = true;
   bool _twoFactorPromptShownInSession = false;
+  bool _premiumWarningShownInSession = false;
 
   @override
   void initState() {
@@ -80,7 +85,119 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     _loadRecomendacionesCardExpandedState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkAndShowTwoFactorRecommendation();
+      _checkAndShowPremiumExpiryWarning();
     });
+  }
+
+  String _premiumWarningShownKey(String userCode, String dayKey) {
+    return 'premium_warning_shown_${userCode}_$dayKey';
+  }
+
+  Future<void> _checkAndShowPremiumExpiryWarning() async {
+    if (!mounted || _premiumWarningShownInSession) return;
+
+    final authService = context.read<AuthService>();
+    final type = (authService.userType ?? '').toLowerCase();
+    if (type == 'nutricionista' || type == 'administrador' || type == 'guest') {
+      return;
+    }
+
+    final expiry = authService.premiumExpiryDate;
+    final days = authService.premiumDaysUntilExpiry;
+    final userCode = (authService.userCode ?? '').trim();
+    if (expiry == null || days == null || userCode.isEmpty) return;
+
+    int warningDays = 7;
+    try {
+      final raw = await context
+          .read<ApiService>()
+          .getParametroValor('premium_dias_aviso_vencimiento');
+      final parsed = int.tryParse((raw ?? '').trim());
+      if (parsed != null && parsed > 0 && parsed <= 90) {
+        warningDays = parsed;
+      }
+    } catch (_) {}
+
+    if (days > warningDays) return;
+
+    final today = DateTime.now();
+    final dayKey =
+        '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_premiumWarningShownKey(userCode, dayKey)) == true) {
+      return;
+    }
+
+    _premiumWarningShownInSession = true;
+    final formattedExpiry =
+        '${expiry.day.toString().padLeft(2, '0')}/${expiry.month.toString().padLeft(2, '0')}/${expiry.year}';
+    final isExpired = days < 0;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isDismissible: true,
+      enableDrag: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.workspace_premium,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        isExpired
+                            ? 'Tu Premium ha caducado'
+                            : 'Tu Premium está próximo a caducar',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  isExpired
+                      ? 'Tu Premium caducó el $formattedExpiry. Puedes renovarlo ahora.'
+                      : 'Tu Premium vence el $formattedExpiry (${days == 0 ? 'hoy' : 'en $days día${days == 1 ? '' : 's'}'}). Te recomendamos renovarlo para no perder ventajas.',
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                      child: const Text('Más tarde'),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.of(sheetContext).pop();
+                        Navigator.pushNamed(context, '/premium_info');
+                      },
+                      icon: const Icon(Icons.workspace_premium_outlined),
+                      label: const Text('Renovar Premium'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    await prefs.setBool(_premiumWarningShownKey(userCode, dayKey), true);
   }
 
   String _twoFactorPromptDismissedKey(String userCode) {
@@ -348,7 +465,8 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
 
   Future<void> _loadContactCardFirstTimeFlag() async {
     final authService = context.read<AuthService>();
-    final isPatient = authService.userType == 'Paciente';
+    final isPatient =
+        authService.userType == 'Paciente' || authService.isPremium;
 
     if (isPatient) {
       final prefs = await SharedPreferences.getInstance();
@@ -406,10 +524,8 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     final authService = context.read<AuthService>();
     final apiService = context.read<ApiService>();
 
-    // Verificar que el usuario sea realmente paciente o guest
-    if (authService.userType != 'Paciente' &&
-        authService.userType != 'Usuario' &&
-        authService.userType != 'Guest') {
+    // Verificar que el usuario pertenezca al área paciente (incluye Premium)
+    if (!authService.isPatientAreaUser) {
       setState(() {
         _isAuthorized = false;
       });
@@ -528,6 +644,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     return tipo == AdherenciaTipo.nutri ? 'Plan nutricional' : 'Plan Fit';
   }
 
+  // ignore: unused_element
   String _adherenciaEstadoLabel(AdherenciaEstado estado) {
     switch (estado) {
       case AdherenciaEstado.cumplido:
@@ -615,10 +732,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
               const Spacer(),
               Text(
                 '${metric.logrados.toStringAsFixed(1)}/${metric.planificados}',
-                style: TextStyle(
-                  color: Colors.grey.shade700,
-                  fontSize: 12,
-                ),
+                style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
               ),
             ],
           ),
@@ -641,6 +755,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
           height: 28,
           child: Stack(
             alignment: Alignment.center,
+            fit: StackFit.expand,
             children: [
               CircularProgressIndicator(
                 value: (percent.clamp(0, 100)) / 100,
@@ -650,11 +765,23 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                   _adherenciaColorByPercent(percent),
                 ),
               ),
-              Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
+              Center(
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  strutStyle: const StrutStyle(
+                    forceStrutHeight: true,
+                    height: 1,
+                  ),
+                  textHeightBehavior: const TextHeightBehavior(
+                    applyHeightToFirstAscent: false,
+                    applyHeightToLastDescent: false,
+                  ),
+                  style: const TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    height: 1,
+                  ),
                 ),
               ),
             ],
@@ -664,8 +791,9 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     );
   }
 
-  Future<void> _showAdherenciaRegistroRapido(
-      {AdherenciaTipo? tipoInicial}) async {
+  Future<void> _showAdherenciaRegistroRapido({
+    AdherenciaTipo? tipoInicial,
+  }) async {
     final authService = context.read<AuthService>();
     final userCode = authService.userCode;
     if (userCode == null || userCode.isEmpty) return;
@@ -836,8 +964,10 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                 ),
                 if (badgeCount > 0)
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 3,
+                    ),
                     decoration: const BoxDecoration(
                       color: Colors.red,
                       shape: BoxShape.circle,
@@ -893,8 +1023,9 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     try {
       final email = await _apiService.getParametro('nutricionista_email');
       final telefono = await _apiService.getParametro('nutricionista_telefono');
-      final telegram =
-          await _apiService.getParametro('nutricionista_usuario_telegram');
+      final telegram = await _apiService.getParametro(
+        'nutricionista_usuario_telegram',
+      );
 
       _contactInfo = {
         'email': email?['valor'] ?? '',
@@ -1091,6 +1222,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     );
   }
 
+  // ignore: unused_element
   Future<void> _launchPhone(String phoneNumber) async {
     if (phoneNumber.isEmpty) return;
     await _launchExternalUrl('tel:$phoneNumber');
@@ -1139,10 +1271,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
             const SizedBox(height: 8),
             const Text(
               'Desde NutriFit podrás consultar tus planes nutricionales y de entrenamiento personalizados. Podrás chatear y contactar con tu dietista online y leer recomendaciones personalizadas. \n\nDispones de Consejos de nutrición y salud, Recetas de cocina, lista de la compra, información de alimentos, mediciones (control de peso), presión arterial y muchas otras cosas...',
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.white,
-              ),
+              style: TextStyle(fontSize: 14, color: Colors.white),
             ),
           ],
         ),
@@ -1204,9 +1333,8 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => ConsejoDetailScreen(
-                          consejo: consejo,
-                        ),
+                        builder: (context) =>
+                            ConsejoDetailScreen(consejo: consejo),
                       ),
                     ).then((_) {
                       // Recargar consejos después de ver el detalle
@@ -1242,8 +1370,11 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                   color: Colors.amber.shade100,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child:
-                    const Icon(Icons.lightbulb, color: Colors.amber, size: 28),
+                child: const Icon(
+                  Icons.lightbulb,
+                  color: Colors.amber,
+                  size: 28,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -1264,7 +1395,9 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                           const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.red,
                               borderRadius: BorderRadius.circular(10),
@@ -1306,6 +1439,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     return _buildPrimaryContactCard();
   }
 
+  // ignore: unused_element
   Widget _buildContactAccordion() {
     return Theme(
       data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
@@ -1322,9 +1456,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildPrimaryContactItems(),
-              ],
+              children: [_buildPrimaryContactItems()],
             ),
           ),
         ],
@@ -1351,16 +1483,15 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
           tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
           title: Row(
             children: [
-              Icon(Icons.help_outline,
-                  color: Theme.of(context).colorScheme.primary),
+              Icon(
+                Icons.help_outline,
+                color: Theme.of(context).colorScheme.primary,
+              ),
               const SizedBox(width: 8),
               const Expanded(
                 child: Text(
                   'Contactar con dietista online',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
               ),
             ],
@@ -1435,17 +1566,23 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
             Icon(icon, size: 20, color: Colors.grey.shade700),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(' $label',
-                  style: const TextStyle(fontWeight: FontWeight.w500)),
+              child: Text(
+                ' $label',
+                style: const TextStyle(fontWeight: FontWeight.w500),
+              ),
             ),
-            Icon(Icons.arrow_forward_ios,
-                size: 16, color: Colors.grey.shade400),
+            Icon(
+              Icons.arrow_forward_ios,
+              size: 16,
+              color: Colors.grey.shade400,
+            ),
           ],
         ),
       ),
     );
   }
 
+  // ignore: unused_element
   Future<void> _addToContacts() async {
     // Implementación simple: mostrar un diálogo con instrucciones
     if (!mounted) return;
@@ -1530,9 +1667,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     // Usuario registrado: abrir pantalla de chat
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => const ChatScreen(),
-      ),
+      MaterialPageRoute(builder: (context) => const ChatScreen()),
     );
   }
 
@@ -1554,11 +1689,128 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     );
   }
 
+  void _handleVideosEjerciciosAccess() {
+    final authService = context.read<AuthService>();
+    if (authService.isPremium || authService.userType == 'Nutricionista') {
+      Navigator.pushNamed(context, '/videos_ejercicios');
+      return;
+    }
+    RestrictedAccessDialogHelper.show(
+      context,
+      title: 'Vídeos ejercicios',
+      message:
+          'Los vídeos de ejercicios completos están disponibles para usuarios Premium. Si quieres activar este acceso, puedes revisar las ventajas y solicitarlo directamente al nutricionista.',
+      primaryActionLabel: 'Hazte Premium',
+      primaryActionIcon: Icons.workspace_premium,
+      primaryRouteName: '/premium_info',
+    );
+  }
+
+  void _handleSustitucionesSaludablesAccess() {
+    final authService = context.read<AuthService>();
+    if (authService.isPremium || authService.userType == 'Nutricionista') {
+      Navigator.pushNamed(context, '/sustituciones_saludables');
+      return;
+    }
+    RestrictedAccessDialogHelper.show(
+      context,
+      title: 'Sustituciones',
+      message:
+          'La biblioteca de sustituciones saludables está disponible para usuarios Premium. Desde aquí puedes consultar equivalencias rápidas, favoritos y filtros para mantener tu plan sin improvisar.',
+      primaryActionLabel: 'Hazte Premium',
+      primaryActionIcon: Icons.workspace_premium,
+      primaryRouteName: '/premium_info',
+    );
+  }
+
+  void _handleCharlasSeminariosAccess() {
+    final authService = context.read<AuthService>();
+    if (authService.isPremium ||
+        authService.userType == 'Nutricionista' ||
+        authService.userType == 'Administrador') {
+      Navigator.pushNamed(context, '/charlas_seminarios');
+      return;
+    }
+    RestrictedAccessDialogHelper.show(
+      context,
+      title: 'Charlas y Seminarios',
+      message:
+          'Las charlas y seminarios están disponibles para usuarios Premium. Activa Premium para acceder al contenido exclusivo.',
+      primaryActionLabel: 'Hazte Premium',
+      primaryActionIcon: Icons.workspace_premium,
+      primaryRouteName: '/premium_info',
+    );
+  }
+
+  void _handleSuplementosAccess() {
+    final authService = context.read<AuthService>();
+    if (authService.isPremium ||
+        authService.userType == 'Nutricionista' ||
+        authService.userType == 'Administrador') {
+      Navigator.pushNamed(context, '/suplementos');
+      return;
+    }
+    RestrictedAccessDialogHelper.show(
+      context,
+      title: 'Suplementos',
+      message:
+          'La sección de suplementos está disponible para usuarios Premium. Activa Premium para consultar el catálogo de suplementos.',
+      primaryActionLabel: 'Hazte Premium',
+      primaryActionIcon: Icons.workspace_premium,
+      primaryRouteName: '/premium_info',
+    );
+  }
+
+  void _handleAditivosAccess() {
+    final authService = context.read<AuthService>();
+    if (authService.isPremium ||
+        authService.userType == 'Nutricionista' ||
+        authService.userType == 'Administrador') {
+      Navigator.pushNamed(context, '/aditivos');
+      return;
+    }
+    RestrictedAccessDialogHelper.show(
+      context,
+      title: 'Aditivos alimentarios',
+      message:
+          'La sección de aditivos alimentarios está disponible para usuarios Premium. Activa Premium para consultar el catálogo de aditivos.',
+      primaryActionLabel: 'Hazte Premium',
+      primaryActionIcon: Icons.workspace_premium,
+      primaryRouteName: '/premium_info',
+    );
+  }
+
+  void _handleCatalogoEjerciciosAccess() {
+    final authService = context.read<AuthService>();
+    if (authService.isPremium || authService.userType == 'Nutricionista') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const PlanFitEjerciciosCatalogScreen(
+            readOnly: true,
+            premiumVisibleOnly: true,
+          ),
+        ),
+      );
+      return;
+    }
+    RestrictedAccessDialogHelper.show(
+      context,
+      title: 'Catálogo ejercicios',
+      message:
+          'El catálogo de ejercicios para pacientes está disponible para usuarios Premium. Activa Premium para consultar los ejercicios habilitados y usarlos en tus actividades.',
+      primaryActionLabel: 'Hazte Premium',
+      primaryActionIcon: Icons.workspace_premium,
+      primaryRouteName: '/premium_info',
+    );
+  }
+
   Widget _buildHomeCard({
     required BuildContext context,
     required IconData icon,
     required String label,
     required VoidCallback onTap,
+    bool showPremiumBadge = false,
   }) {
     return Card(
       elevation: 4,
@@ -1568,28 +1820,56 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(12.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+          child: Stack(
+            alignment: Alignment.center,
             children: [
-              Icon(icon,
-                  size: 38, color: Theme.of(context).colorScheme.primary),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: Text(
-                  label,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontSize:
-                            (Theme.of(context).textTheme.titleSmall?.fontSize ??
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    icon,
+                    size: 38,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: Text(
+                      label,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontSize: (Theme.of(context)
+                                        .textTheme
+                                        .titleSmall
+                                        ?.fontSize ??
                                     14) -
                                 1,
-                        height: 1.1,
-                      ),
-                ),
+                            height: 1.1,
+                          ),
+                    ),
+                  ),
+                ],
               ),
+              if (showPremiumBadge)
+                Positioned(
+                  top: 0,
+                  right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.all(5),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade400,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Icon(
+                      Icons.workspace_premium,
+                      size: 14,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -1605,12 +1885,8 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     // Si el usuario no está autorizado, mostrar una pantalla de carga mientras se redirige
     if (!_isAuthorized) {
       return Scaffold(
-        appBar: AppBar(
-          title: const Text('Inicio'),
-        ),
-        body: const Center(
-          child: CircularProgressIndicator(),
-        ),
+        appBar: AppBar(title: const Text('Inicio')),
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
@@ -1626,8 +1902,10 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
             Padding(
               padding: const EdgeInsets.only(right: 8.0, top: 8.0),
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8.0,
+                  vertical: 4.0,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.orange.shade700,
                   borderRadius: BorderRadius.circular(10),
@@ -1740,7 +2018,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
             onPressed: () {
               _openProfileEditor();
             },
-          )
+          ),
         ],
       ),
       drawer: const AppDrawer(),
@@ -1763,7 +2041,9 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                     if (_consejosDestacados.length > 2)
                       Padding(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 16.0, vertical: 8.0),
+                          horizontal: 16.0,
+                          vertical: 8.0,
+                        ),
                         child: Center(
                           child: TextButton.icon(
                             onPressed: () {
@@ -1824,6 +2104,48 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                           '/consejos_paciente',
                           arguments: {'openDestacados': true},
                         ),
+                      ),
+                      _buildHomeCard(
+                        context: context,
+                        icon: Icons.play_circle_outline,
+                        label: 'Vídeos Ejercicios',
+                        showPremiumBadge: true,
+                        onTap: _handleVideosEjerciciosAccess,
+                      ),
+                      _buildHomeCard(
+                        context: context,
+                        icon: Icons.fitness_center,
+                        label: 'Catálogo ejercicios',
+                        showPremiumBadge: true,
+                        onTap: _handleCatalogoEjerciciosAccess,
+                      ),
+                      _buildHomeCard(
+                        context: context,
+                        icon: Icons.swap_horiz_rounded,
+                        label: 'Sustituciones saludables',
+                        showPremiumBadge: true,
+                        onTap: _handleSustitucionesSaludablesAccess,
+                      ),
+                      _buildHomeCard(
+                        context: context,
+                        icon: Icons.present_to_all_rounded,
+                        label: 'Charlas y Seminarios',
+                        showPremiumBadge: true,
+                        onTap: _handleCharlasSeminariosAccess,
+                      ),
+                      _buildHomeCard(
+                        context: context,
+                        icon: Icons.medication_outlined,
+                        label: 'Suplementos',
+                        showPremiumBadge: true,
+                        onTap: _handleSuplementosAccess,
+                      ),
+                      _buildHomeCard(
+                        context: context,
+                        icon: Icons.science_outlined,
+                        label: 'Aditivos alimentarios',
+                        showPremiumBadge: true,
+                        onTap: _handleAditivosAccess,
                       ),
                       _buildHomeCard(
                         context: context,

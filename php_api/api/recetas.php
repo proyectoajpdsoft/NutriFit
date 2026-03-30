@@ -26,6 +26,8 @@ PermissionManager::checkPermission($user, 'recetas');
 
 switch($request_method) {
     case 'GET':
+        $limit = isset($_GET["limit"]) ? max(1, min(100, intval($_GET["limit"]))) : null;
+        $offset = isset($_GET["offset"]) ? max(0, intval($_GET["offset"])) : 0;
         if(isset($_GET["total_recetas"])) {
             get_total_recetas();
         } else if(isset($_GET["categorias"])) {
@@ -35,10 +37,10 @@ switch($request_method) {
         } else if(isset($_GET["paciente"]) || isset($_GET["get_recetas_paciente"])) {
             $paciente = isset($_GET["paciente"]) ? $_GET["paciente"] : '0';
             $usuario = isset($_GET["codigo_usuario"]) ? $_GET["codigo_usuario"] : null;
-            get_recetas_paciente($paciente, $usuario);
+            get_recetas_paciente($paciente, $usuario, $limit, $offset);
         } else if(isset($_GET["portada"]) && isset($_GET["paciente_codigo"])) {
             $usuario = isset($_GET["codigo_usuario"]) ? $_GET["codigo_usuario"] : null;
-            get_recetas_portada_paciente($_GET["paciente_codigo"], $usuario);
+            get_recetas_portada_paciente($_GET["paciente_codigo"], $usuario, $limit, $offset);
         } else if(isset($_GET["total_likes"]) && isset($_GET["receta"])) {
             get_total_likes($_GET["receta"]);
         } else {
@@ -53,10 +55,16 @@ switch($request_method) {
         }
         break;
     case 'PUT':
-        update_receta();
+        if(isset($_GET["categorias"])) {
+            update_receta_categoria();
+        } else {
+            update_receta();
+        }
         break;
     case 'DELETE':
-        if(!empty($_GET["codigo"])) {
+        if(isset($_GET["categorias"]) && !empty($_GET["codigo"])) {
+            delete_receta_categoria($_GET["codigo"]);
+        } else if(!empty($_GET["codigo"])) {
             delete_receta($_GET["codigo"]);
         }
         break;
@@ -152,6 +160,99 @@ function create_receta_categoria() {
         http_response_code(503);
         ob_clean();
         echo json_encode(array("message" => "No se pudo crear la categoria."));
+    }
+}
+
+function update_receta_categoria() {
+    global $db;
+    ensure_receta_categoria_tables();
+
+    $codigo = isset($_GET["codigo"]) ? intval($_GET["codigo"]) : 0;
+    if ($codigo <= 0) {
+        http_response_code(400);
+        ob_clean();
+        echo json_encode(array("message" => "Falta el codigo de la categoria."));
+        return;
+    }
+
+    $data = json_decode(file_get_contents("php://input"));
+    if (empty($data->nombre)) {
+        http_response_code(400);
+        ob_clean();
+        echo json_encode(array("message" => "Falta el nombre de la categoria."));
+        return;
+    }
+
+    $nombre = trim($data->nombre);
+    $codusuariom = isset($data->codusuariom) ? intval($data->codusuariom) : 1;
+
+    $stmt = $db->prepare("SELECT codigo FROM nu_receta_categoria WHERE LOWER(nombre) = LOWER(:nombre) AND codigo <> :codigo LIMIT 1");
+    $stmt->bindParam(':nombre', $nombre);
+    $stmt->bindParam(':codigo', $codigo, PDO::PARAM_INT);
+    $stmt->execute();
+    if ($stmt->fetch(PDO::FETCH_ASSOC)) {
+        http_response_code(409);
+        ob_clean();
+        echo json_encode(array("message" => "Ya existe otra categoria con ese nombre."));
+        return;
+    }
+
+    $stmt = $db->prepare("UPDATE nu_receta_categoria SET nombre = :nombre, fecham = NOW(), codusuariom = :codusuariom WHERE codigo = :codigo");
+    $stmt->bindParam(':nombre', $nombre);
+    $stmt->bindParam(':codusuariom', $codusuariom, PDO::PARAM_INT);
+    $stmt->bindParam(':codigo', $codigo, PDO::PARAM_INT);
+
+    if ($stmt->execute()) {
+        ob_clean();
+        echo json_encode(array("message" => "Categoria actualizada.", "codigo" => $codigo, "nombre" => $nombre));
+    } else {
+        http_response_code(503);
+        ob_clean();
+        echo json_encode(array("message" => "No se pudo actualizar la categoria."));
+    }
+}
+
+function delete_receta_categoria($codigo) {
+    global $db;
+    ensure_receta_categoria_tables();
+
+    $codigo = intval($codigo);
+    if ($codigo <= 0) {
+        http_response_code(400);
+        ob_clean();
+        echo json_encode(array("message" => "Codigo de categoria invalido."));
+        return;
+    }
+
+    try {
+        $db->beginTransaction();
+
+        $stmtRel = $db->prepare("DELETE FROM nu_receta_categoria_rel WHERE codigo_categoria = :codigo");
+        $stmtRel->bindParam(':codigo', $codigo, PDO::PARAM_INT);
+        $stmtRel->execute();
+
+        $stmtCat = $db->prepare("DELETE FROM nu_receta_categoria WHERE codigo = :codigo");
+        $stmtCat->bindParam(':codigo', $codigo, PDO::PARAM_INT);
+        $stmtCat->execute();
+
+        if ($stmtCat->rowCount() === 0) {
+            $db->rollBack();
+            http_response_code(404);
+            ob_clean();
+            echo json_encode(array("message" => "Categoria no encontrada."));
+            return;
+        }
+
+        $db->commit();
+        ob_clean();
+        echo json_encode(array("message" => "Categoria eliminada."));
+    } catch (Exception $e) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        http_response_code(500);
+        ob_clean();
+        echo json_encode(array("message" => "No se pudo eliminar la categoria.", "error" => $e->getMessage()));
     }
 }
 
@@ -288,7 +389,7 @@ function get_receta($codigo) {
     }
 }
 
-function get_recetas_paciente($paciente_codigo, $codigo_usuario = null) {
+function get_recetas_paciente($paciente_codigo, $codigo_usuario = null, $limit = null, $offset = 0) {
     global $db;
     ensure_receta_categoria_tables();
 
@@ -334,6 +435,16 @@ function get_recetas_paciente($paciente_codigo, $codigo_usuario = null) {
         $stmt = $db->prepare($query);
     }
 
+    if ($limit !== null) {
+        $query .= " LIMIT :limit OFFSET :offset";
+        $stmt = $db->prepare($query);
+        if ($codigo_usuario !== null) {
+            $stmt->bindParam(':codigo_usuario', $codigo_usuario);
+        }
+        $stmt->bindValue(':limit', intval($limit), PDO::PARAM_INT);
+        $stmt->bindValue(':offset', intval($offset), PDO::PARAM_INT);
+    }
+
     $stmt->execute();
     $recetas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -350,7 +461,7 @@ function get_recetas_paciente($paciente_codigo, $codigo_usuario = null) {
     echo json_encode($recetas);
 }
 
-function get_recetas_portada_paciente($paciente_codigo, $codigo_usuario = null) {
+function get_recetas_portada_paciente($paciente_codigo, $codigo_usuario = null, $limit = null, $offset = 0) {
     global $db;
     ensure_receta_categoria_tables();
 
@@ -421,6 +532,18 @@ function get_recetas_portada_paciente($paciente_codigo, $codigo_usuario = null) 
         
         $stmt = $db->prepare($query);
         $stmt->bindParam(':hoy', $hoy);
+    }
+
+    if ($limit !== null) {
+        $query .= " LIMIT :limit OFFSET :offset";
+        $stmt = $db->prepare($query);
+        if ($codigo_usuario !== null && $codigo_paciente !== null) {
+            $stmt->bindParam(':codigo_usuario', $codigo_usuario);
+            $stmt->bindParam(':codigo_paciente', $codigo_paciente);
+        }
+        $stmt->bindParam(':hoy', $hoy);
+        $stmt->bindValue(':limit', intval($limit), PDO::PARAM_INT);
+        $stmt->bindValue(':offset', intval($offset), PDO::PARAM_INT);
     }
 
     $stmt->execute();

@@ -6,6 +6,17 @@ import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/widgets/app_drawer.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+enum _OrdenPlanes { nombre, numPlanes, fechaPlan }
+
+enum _PlanesTopAction {
+  filtrar,
+  verTodos,
+  refrescar,
+  sortNombre,
+  sortNumPlanes,
+  sortFechaPlan
+}
+
 class PlanesPacientesListScreen extends StatefulWidget {
   const PlanesPacientesListScreen({super.key});
 
@@ -17,13 +28,19 @@ class PlanesPacientesListScreen extends StatefulWidget {
 class _PlanesPacientesListScreenState extends State<PlanesPacientesListScreen> {
   final ApiService _apiService = ApiService();
   late Future<List<Paciente>> _pacientesFuture;
-  late Future<Map<int, int>> _totalesPlanesMap;
+  late Future<Map<int, Map<String, dynamic>>> _totalesPlanesMap;
   String _filtroActivo = "S"; // Por defecto, solo activos
   final TextEditingController _searchController = TextEditingController();
   String _searchText = '';
   bool _showSearchField = false;
   bool _showFilterPlanes = false;
   bool _showInfoMessage = true;
+
+  _OrdenPlanes _ordenPlanes = _OrdenPlanes.nombre;
+  bool _ordenAscendente = true;
+
+  static const String _prefOrdenKey = 'planes_pacientes_orden';
+  static const String _prefOrdenAscKey = 'planes_pacientes_orden_asc';
 
   @override
   void initState() {
@@ -60,12 +77,20 @@ class _PlanesPacientesListScreenState extends State<PlanesPacientesListScreen> {
         prefs.getBool('planes_pacientes_show_search_field') ?? false;
     final showFilter = prefs.getBool('planes_pacientes_show_filter') ?? false;
     final hasShownInfo = prefs.getBool('planes_pacientes_shown_info') ?? false;
+    final storedOrden = prefs.getInt(_prefOrdenKey);
+    final storedOrdenAsc = prefs.getBool(_prefOrdenAscKey);
     if (!mounted) return;
     setState(() {
       _filtroActivo = filtro;
       _showSearchField = showSearch;
       _showFilterPlanes = showFilter;
       _showInfoMessage = !hasShownInfo;
+      _ordenPlanes = storedOrden != null &&
+              storedOrden >= 0 &&
+              storedOrden < _OrdenPlanes.values.length
+          ? _OrdenPlanes.values[storedOrden]
+          : _OrdenPlanes.nombre;
+      _ordenAscendente = storedOrdenAsc ?? true;
     });
     if (!hasShownInfo) {
       await prefs.setBool('planes_pacientes_shown_info', true);
@@ -80,12 +105,59 @@ class _PlanesPacientesListScreenState extends State<PlanesPacientesListScreen> {
     await prefs.setBool('planes_pacientes_show_filter', _showFilterPlanes);
   }
 
-  Future<Map<int, int>> _fetchTotalesPlanes() async {
+  Future<void> _applySortSelection(_OrdenPlanes orden) async {
+    setState(() {
+      if (_ordenPlanes == orden) {
+        _ordenAscendente = !_ordenAscendente;
+      } else {
+        _ordenPlanes = orden;
+        _ordenAscendente = orden == _OrdenPlanes.nombre;
+      }
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_prefOrdenKey, _ordenPlanes.index);
+    await prefs.setBool(_prefOrdenAscKey, _ordenAscendente);
+  }
+
+  Future<void> _handleTopAction(_PlanesTopAction action) async {
+    switch (action) {
+      case _PlanesTopAction.filtrar:
+        setState(() {
+          _showFilterPlanes = !_showFilterPlanes;
+        });
+        _saveUiState();
+        break;
+      case _PlanesTopAction.verTodos:
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => const PlanesListScreen(paciente: null),
+          ),
+        );
+        break;
+      case _PlanesTopAction.refrescar:
+        _refreshPacientes();
+        break;
+      case _PlanesTopAction.sortNombre:
+        await _applySortSelection(_OrdenPlanes.nombre);
+        break;
+      case _PlanesTopAction.sortNumPlanes:
+        await _applySortSelection(_OrdenPlanes.numPlanes);
+        break;
+      case _PlanesTopAction.sortFechaPlan:
+        await _applySortSelection(_OrdenPlanes.fechaPlan);
+        break;
+    }
+  }
+
+  Future<Map<int, Map<String, dynamic>>> _fetchTotalesPlanes() async {
     try {
       final totales = await _apiService.getPacientesTotalesBatch();
-      final map = <int, int>{};
+      final map = <int, Map<String, dynamic>>{};
       for (var item in totales) {
-        map[item['codigo']] = item['total_planes'] ?? 0;
+        map[item['codigo']] = {
+          'count': item['total_planes'] ?? 0,
+          'fecha': item['fecha_ultimo_plan'],
+        };
       }
       return map;
     } catch (e) {
@@ -126,10 +198,89 @@ class _PlanesPacientesListScreenState extends State<PlanesPacientesListScreen> {
               _saveUiState();
             },
           ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _refreshPacientes,
-            tooltip: 'Actualizar',
+          PopupMenuButton<_PlanesTopAction>(
+            tooltip: 'Más opciones',
+            onSelected: _handleTopAction,
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: _PlanesTopAction.filtrar,
+                child: Row(children: [
+                  Icon(
+                    _showFilterPlanes
+                        ? Icons.filter_alt
+                        : Icons.filter_alt_outlined,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 10),
+                  const Text('Filtrar'),
+                ]),
+              ),
+              const PopupMenuItem(
+                value: _PlanesTopAction.verTodos,
+                child: Row(children: [
+                  Icon(Icons.list, size: 18),
+                  SizedBox(width: 10),
+                  Text('Ver todos los planes'),
+                ]),
+              ),
+              const PopupMenuItem(
+                value: _PlanesTopAction.refrescar,
+                child: Row(children: [
+                  Icon(Icons.refresh, size: 18),
+                  SizedBox(width: 10),
+                  Text('Refrescar'),
+                ]),
+              ),
+              const PopupMenuDivider(),
+              CheckedPopupMenuItem(
+                value: _PlanesTopAction.sortNombre,
+                checked: _ordenPlanes == _OrdenPlanes.nombre,
+                child: Row(
+                  children: [
+                    const Expanded(child: Text('Ordenar paciente')),
+                    if (_ordenPlanes == _OrdenPlanes.nombre)
+                      Icon(
+                        _ordenAscendente
+                            ? Icons.arrow_upward
+                            : Icons.arrow_downward,
+                        size: 18,
+                      ),
+                  ],
+                ),
+              ),
+              CheckedPopupMenuItem(
+                value: _PlanesTopAction.sortNumPlanes,
+                checked: _ordenPlanes == _OrdenPlanes.numPlanes,
+                child: Row(
+                  children: [
+                    const Expanded(child: Text('Ordenar nº planes')),
+                    if (_ordenPlanes == _OrdenPlanes.numPlanes)
+                      Icon(
+                        _ordenAscendente
+                            ? Icons.arrow_upward
+                            : Icons.arrow_downward,
+                        size: 18,
+                      ),
+                  ],
+                ),
+              ),
+              CheckedPopupMenuItem(
+                value: _PlanesTopAction.sortFechaPlan,
+                checked: _ordenPlanes == _OrdenPlanes.fechaPlan,
+                child: Row(
+                  children: [
+                    const Expanded(child: Text('Ordenar Recientes')),
+                    if (_ordenPlanes == _OrdenPlanes.fechaPlan)
+                      Icon(
+                        _ordenAscendente
+                            ? Icons.arrow_upward
+                            : Icons.arrow_downward,
+                        size: 18,
+                      ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -258,15 +409,53 @@ class _PlanesPacientesListScreenState extends State<PlanesPacientesListScreen> {
                           (p) => p.nombre.toLowerCase().contains(_searchText))
                       .toList();
                 }
-                return FutureBuilder<Map<int, int>>(
+                return FutureBuilder<Map<int, Map<String, dynamic>>>(
                   future: _totalesPlanesMap,
                   builder: (context, totalesSnap) {
                     final totalesMap = totalesSnap.data ?? {};
+                    // Sort pacientes according to current sort criteria
+                    final sorted = List<Paciente>.from(pacientes)
+                      ..sort((a, b) {
+                        int cmp;
+                        switch (_ordenPlanes) {
+                          case _OrdenPlanes.nombre:
+                            cmp = a.nombre
+                                .toLowerCase()
+                                .compareTo(b.nombre.toLowerCase());
+                            break;
+                          case _OrdenPlanes.numPlanes:
+                            final countA =
+                                (totalesMap[a.codigo]?['count'] ?? 0) as int;
+                            final countB =
+                                (totalesMap[b.codigo]?['count'] ?? 0) as int;
+                            cmp = countA.compareTo(countB);
+                            if (cmp == 0) {
+                              cmp = a.nombre
+                                  .toLowerCase()
+                                  .compareTo(b.nombre.toLowerCase());
+                            }
+                            break;
+                          case _OrdenPlanes.fechaPlan:
+                            final fechaA = (totalesMap[a.codigo]?['fecha'] ??
+                                '') as String;
+                            final fechaB = (totalesMap[b.codigo]?['fecha'] ??
+                                '') as String;
+                            cmp = fechaA.compareTo(fechaB);
+                            if (cmp == 0) {
+                              cmp = a.nombre
+                                  .toLowerCase()
+                                  .compareTo(b.nombre.toLowerCase());
+                            }
+                            break;
+                        }
+                        return _ordenAscendente ? cmp : -cmp;
+                      });
                     return ListView.builder(
-                      itemCount: pacientes.length,
+                      itemCount: sorted.length,
                       itemBuilder: (context, index) {
-                        final paciente = pacientes[index];
-                        final count = totalesMap[paciente.codigo] ?? 0;
+                        final paciente = sorted[index];
+                        final count =
+                            (totalesMap[paciente.codigo]?['count'] ?? 0) as int;
                         return Card(
                           margin: const EdgeInsets.symmetric(
                               horizontal: 16, vertical: 6),

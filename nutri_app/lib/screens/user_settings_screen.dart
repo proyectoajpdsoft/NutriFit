@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/services/api_service.dart';
+import 'package:nutri_app/services/config_service.dart';
 import 'package:nutri_app/services/user_settings_service.dart';
 import 'package:provider/provider.dart';
 
@@ -24,6 +25,8 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
   String _weightControlCalendarViewMode = 'month';
   String _nutriAdherenceCalendarViewMode = 'month';
   String _fitAdherenceCalendarViewMode = 'month';
+  double _barcodeFrameWidth = UserSettingsService.barcodeFrameWidthDefault;
+  double _barcodeFrameHeight = UserSettingsService.barcodeFrameHeightDefault;
   bool _isNutriLikeUser = false;
   bool _isGuestUser = false;
   late String _scopeKey;
@@ -64,6 +67,10 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
         await UserSettingsService.getNutriAdherenceCalendarViewMode(scope);
     final fitAdherenceCalendarViewMode =
         await UserSettingsService.getFitAdherenceCalendarViewMode(scope);
+    final barcodeFrameWidth =
+        await UserSettingsService.getBarcodeFrameWidthNormalized(scope);
+    final barcodeFrameHeight =
+        await UserSettingsService.getBarcodeFrameHeightNormalized(scope);
     final userType = (authService.userType ?? '').trim();
     final isNutriLike =
         userType == 'Nutricionista' || userType == 'Administrador';
@@ -71,8 +78,8 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
 
     if (!isNutriLike && !authService.isGuestMode) {
       try {
-        final remoteChatUnreadPush =
-            await _apiService.getChatUnreadPushEnabled();
+        final remoteChatUnreadPush = await _apiService
+            .getChatUnreadPushEnabled();
         chatUnreadPushEnabled = remoteChatUnreadPush;
         await UserSettingsService.setChatUnreadPushEnabled(
           scope,
@@ -96,6 +103,8 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
       _weightControlCalendarViewMode = weightControlCalendarViewMode;
       _nutriAdherenceCalendarViewMode = nutriAdherenceCalendarViewMode;
       _fitAdherenceCalendarViewMode = fitAdherenceCalendarViewMode;
+      _barcodeFrameWidth = barcodeFrameWidth;
+      _barcodeFrameHeight = barcodeFrameHeight;
       _isNutriLikeUser = isNutriLike;
       _isGuestUser = authService.isGuestMode;
       _isLoading = false;
@@ -143,8 +152,9 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
       );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content:
-              Text('No se pudo guardar la preferencia de notificaciones push.'),
+          content: Text(
+            'No se pudo guardar la preferencia de notificaciones push.',
+          ),
           backgroundColor: Colors.red,
         ),
       );
@@ -191,7 +201,9 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
       _nutriAdherenceCalendarViewMode = mode;
     });
     await UserSettingsService.setNutriAdherenceCalendarViewMode(
-        _scopeKey, mode);
+      _scopeKey,
+      mode,
+    );
   }
 
   Future<void> _updateFitAdherenceCalendarViewMode(String mode) async {
@@ -199,6 +211,90 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
       _fitAdherenceCalendarViewMode = mode;
     });
     await UserSettingsService.setFitAdherenceCalendarViewMode(_scopeKey, mode);
+  }
+
+  Future<void> _updateBarcodeFrameWidth(double value) async {
+    setState(() {
+      _barcodeFrameWidth = value;
+    });
+    await UserSettingsService.setBarcodeFrameWidthNormalized(_scopeKey, value);
+  }
+
+  Future<void> _updateBarcodeFrameHeight(double value) async {
+    setState(() {
+      _barcodeFrameHeight = value;
+    });
+    await UserSettingsService.setBarcodeFrameHeightNormalized(_scopeKey, value);
+  }
+
+  Future<void> _resetBarcodeFrameSize() async {
+    const defaultWidth = UserSettingsService.barcodeFrameWidthDefault;
+    const defaultHeight = UserSettingsService.barcodeFrameHeightDefault;
+
+    setState(() {
+      _barcodeFrameWidth = defaultWidth;
+      _barcodeFrameHeight = defaultHeight;
+    });
+
+    await UserSettingsService.setBarcodeFrameWidthNormalized(
+      _scopeKey,
+      defaultWidth,
+    );
+    await UserSettingsService.setBarcodeFrameHeightNormalized(
+      _scopeKey,
+      defaultHeight,
+    );
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Recuadro de escaneo restablecido a valores por defecto'),
+      ),
+    );
+  }
+
+  Widget _buildSliderTile({
+    required String title,
+    required String subtitle,
+    required double value,
+    required double min,
+    required double max,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 4),
+          Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: Slider(
+                  value: value,
+                  min: min,
+                  max: max,
+                  divisions: 50,
+                  label: '${(value * 100).round()}%',
+                  onChanged: onChanged,
+                ),
+              ),
+              SizedBox(
+                width: 52,
+                child: Text(
+                  '${(value * 100).round()}%',
+                  textAlign: TextAlign.end,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   String _calendarModeLabel(String mode) {
@@ -236,10 +332,7 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 4),
           Text(
             'Vista actual: ${_calendarModeLabel(mode)}',
@@ -266,12 +359,15 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final configService = context.watch<ConfigService>();
     final showLegendsTab = !_isNutriLikeUser;
+    const showDisplayTab = true;
     final showUserPushSwitch = !_isNutriLikeUser && !_isGuestUser;
     final tabs = <Tab>[
       const Tab(text: 'Notificaciones'),
       if (showLegendsTab) const Tab(text: 'Leyendas'),
       if (showLegendsTab) const Tab(text: 'Calendarios'),
+      if (showDisplayTab) const Tab(text: 'Mostrar'),
     ];
 
     return DefaultTabController(
@@ -283,9 +379,7 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
             onPressed: () => Navigator.of(context).pop(),
           ),
           title: const Text('Ajustes'),
-          bottom: TabBar(
-            tabs: tabs,
-          ),
+          bottom: TabBar(tabs: tabs),
         ),
         body: _isLoading
             ? const Center(child: CircularProgressIndicator())
@@ -299,7 +393,8 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
                           children: [
                             SwitchListTile(
                               title: const Text(
-                                  'Avisos de incumplimiento Plan Nutri'),
+                                'Avisos de incumplimiento Plan Nutri',
+                              ),
                               subtitle: const Text(
                                 'Recibir notificaciones cuando no se cumpla el plan nutricional.',
                               ),
@@ -309,7 +404,8 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
                             const Divider(height: 1),
                             SwitchListTile(
                               title: const Text(
-                                  'Avisos de incumplimiento Plan Fit'),
+                                'Avisos de incumplimiento Plan Fit',
+                              ),
                               subtitle: const Text(
                                 'Recibir notificaciones cuando no se cumpla el plan de entrenamiento.',
                               ),
@@ -320,7 +416,8 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
                               const Divider(height: 1),
                               SwitchListTile(
                                 title: const Text(
-                                    'Activar notificaciones push de chat'),
+                                  'Activar notificaciones push de chat',
+                                ),
                                 subtitle: const Text(
                                   'Recibir notificaciones push cuando tengas mensajes sin leer del dietista.',
                                 ),
@@ -351,7 +448,8 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
                               const Divider(height: 1),
                               SwitchListTile(
                                 title: const Text(
-                                    'Calendario de control de pesos'),
+                                  'Calendario de control de pesos',
+                                ),
                                 subtitle: const Text(
                                   'Muestra u oculta la leyenda del calendario de control de pesos (adelgazó, engordó, sin cambios, IMC normal, IMC fuera de rango y superior peso/inferior IMC).',
                                 ),
@@ -403,6 +501,74 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
                                 title: 'Calendario Planes Fit',
                                 mode: _fitAdherenceCalendarViewMode,
                                 onChanged: _updateFitAdherenceCalendarViewMode,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  if (showDisplayTab)
+                    ListView(
+                      padding: const EdgeInsets.all(16),
+                      children: [
+                        Card(
+                          child: Column(
+                            children: [
+                              SwitchListTile(
+                                title: const Text(
+                                  'Mostrar equivalencias en actividades',
+                                ),
+                                subtitle: const Text(
+                                  'Activa o desactiva los mensajes de equivalencias en la pantalla de actividades.',
+                                ),
+                                value:
+                                    configService.showEquivalenciasActividades,
+                                onChanged: (value) {
+                                  context
+                                      .read<ConfigService>()
+                                      .setShowEquivalenciasActividades(value);
+                                },
+                              ),
+                              const Divider(height: 1),
+                              _buildSliderTile(
+                                title: 'Ancho del recuadro de escaneo',
+                                subtitle:
+                                    'Se aplica al hacer foto en escanear etiquetas y en lista de la compra.',
+                                value: _barcodeFrameWidth,
+                                min: UserSettingsService.barcodeFrameWidthMin,
+                                max: UserSettingsService.barcodeFrameWidthMax,
+                                onChanged: (value) {
+                                  _updateBarcodeFrameWidth(value);
+                                },
+                              ),
+                              const Divider(height: 1),
+                              _buildSliderTile(
+                                title: 'Alto del recuadro de escaneo',
+                                subtitle:
+                                    'Ajusta la altura del area a encuadrar para el codigo de barras.',
+                                value: _barcodeFrameHeight,
+                                min: UserSettingsService.barcodeFrameHeightMin,
+                                max: UserSettingsService.barcodeFrameHeightMax,
+                                onChanged: (value) {
+                                  _updateBarcodeFrameHeight(value);
+                                },
+                              ),
+                              const Divider(height: 1),
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  10,
+                                  16,
+                                  14,
+                                ),
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: OutlinedButton.icon(
+                                    onPressed: _resetBarcodeFrameSize,
+                                    icon: const Icon(Icons.restart_alt),
+                                    label: const Text('Restablecer tamaño'),
+                                  ),
+                                ),
                               ),
                             ],
                           ),

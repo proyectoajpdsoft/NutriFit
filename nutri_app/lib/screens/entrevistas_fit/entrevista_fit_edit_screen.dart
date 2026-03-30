@@ -97,7 +97,11 @@ class _EntrevistaFitEditScreenState extends State<EntrevistaFitEditScreen> {
     super.dispose();
   }
 
-  void _submitForm() async {
+  void _submitForm() {
+    _saveForm(closeOnSuccess: true);
+  }
+
+  Future<bool> _saveForm({required bool closeOnSuccess}) async {
     if (_formKey.currentState!.validate()) {
       final entrevistaData = EntrevistaFit(
         codigo: widget.entrevista?.codigo ?? 0,
@@ -140,6 +144,7 @@ class _EntrevistaFitEditScreenState extends State<EntrevistaFitEditScreen> {
         }
 
         if (success) {
+          _hasChanges = false;
           // Mostrar mensaje según sea alta o modificación
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -149,7 +154,10 @@ class _EntrevistaFitEditScreenState extends State<EntrevistaFitEditScreen> {
               backgroundColor: Colors.green,
             ),
           );
-          Navigator.of(context).pop(true);
+          if (closeOnSuccess && mounted) {
+            Navigator.of(context).pop(true);
+          }
+          return true;
         } else {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
               content: Text('Error al guardar'), backgroundColor: Colors.red));
@@ -159,6 +167,7 @@ class _EntrevistaFitEditScreenState extends State<EntrevistaFitEditScreen> {
             SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
       }
     }
+    return false;
   }
 
   void _markDirty() {
@@ -170,7 +179,10 @@ class _EntrevistaFitEditScreenState extends State<EntrevistaFitEditScreen> {
 
   Future<bool> _confirmDiscardChanges() async {
     if (!_hasChanges) return true;
-    return showUnsavedChangesDialog(context);
+    return showUnsavedChangesDialog(
+      context,
+      onSave: () => _saveForm(closeOnSuccess: false),
+    );
   }
 
   Future<void> _handleBack() async {
@@ -242,7 +254,10 @@ class _EntrevistaFitEditScreenState extends State<EntrevistaFitEditScreen> {
     return SwitchListTile(
       title: Text(label),
       value: value,
-      onChanged: onChanged,
+      onChanged: (newValue) {
+        onChanged(newValue);
+        _markDirty();
+      },
     );
   }
 
@@ -277,24 +292,34 @@ class _EntrevistaFitEditScreenState extends State<EntrevistaFitEditScreen> {
                   _buildDateTimePicker(
                     label: 'Fecha prevista',
                     date: _fechaPrevista,
-                    onChanged: (newDate) =>
-                        setState(() => _fechaPrevista = newDate),
+                    onChanged: (newDate) {
+                      setState(() => _fechaPrevista = newDate);
+                      _markDirty();
+                    },
                   ),
                   _buildDateTimePicker(
                     label: 'Fecha realización',
                     date: _fechaRealizacion,
-                    onChanged: (newDate) =>
-                        setState(() => _fechaRealizacion = newDate),
+                    onChanged: (newDate) {
+                      setState(() => _fechaRealizacion = newDate);
+                      _markDirty();
+                    },
                   ),
                   SwitchListTile(
                     title: const Text('Completada'),
                     value: _completada,
-                    onChanged: (value) => setState(() => _completada = value),
+                    onChanged: (value) {
+                      setState(() => _completada = value);
+                      _markDirty();
+                    },
                   ),
                   SwitchListTile(
                     title: const Text('Online'),
                     value: _online,
-                    onChanged: (value) => setState(() => _online = value),
+                    onChanged: (value) {
+                      setState(() => _online = value);
+                      _markDirty();
+                    },
                   ),
                   const SizedBox(height: 12),
                   _buildAccordion('ACERCA DE LA CONSULTA', [

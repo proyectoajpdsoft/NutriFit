@@ -10,10 +10,19 @@ class ListaCompraEditScreen extends StatefulWidget {
   final ListaCompraItem? item;
   final bool forceNew;
 
+  /// Cuando el nutricionista añade un item a la lista de otro usuario,
+  /// se pasa aquí el código de ese usuario destino.
+  final String? targetUserCode;
+
+  /// Nombre del usuario destino para mostrarlo en el AppBar.
+  final String? targetUserName;
+
   const ListaCompraEditScreen({
     super.key,
     this.item,
     this.forceNew = false,
+    this.targetUserCode,
+    this.targetUserName,
   });
 
   @override
@@ -140,7 +149,7 @@ class _ListaCompraEditScreenState extends State<ListaCompraEditScreen> {
           _notasController.text.isEmpty ? null : _notasController.text;
 
       if (_isNew) {
-        final ownerCode = authService.userCode;
+        final ownerCode = widget.targetUserCode ?? authService.userCode;
         if (ownerCode != null && ownerCode.isNotEmpty) {
           _item.codigoUsuario = int.parse(ownerCode);
           if (authService.userCode != null &&
@@ -157,9 +166,17 @@ class _ListaCompraEditScreenState extends State<ListaCompraEditScreen> {
           return;
         }
 
+        // Construir body: si hay un usuario destino distinto al autenticado,
+        // añadir target_usuario para que el backend lo use como propietario.
+        final bodyMap = _item.toJson();
+        if (widget.targetUserCode != null &&
+            widget.targetUserCode != authService.userCode) {
+          bodyMap['target_usuario'] = int.parse(widget.targetUserCode!);
+        }
+
         final response = await apiService.post(
           'api/lista_compra.php',
-          body: json.encode(_item.toJson()),
+          body: json.encode(bodyMap),
         );
 
         if (response.statusCode == 201) {
@@ -333,7 +350,12 @@ class _ListaCompraEditScreenState extends State<ListaCompraEditScreen> {
             icon: const Icon(Icons.arrow_back),
             onPressed: _handleBack,
           ),
-          title: Text(_isNew ? 'Agregar Item' : 'Editar Item'),
+          title: widget.targetUserCode != null && _isNew
+              ? Text(
+                  'Recomendar a ${widget.targetUserName ?? 'usuario'}',
+                  overflow: TextOverflow.ellipsis,
+                )
+              : Text(_isNew ? 'Agregar Item' : 'Editar Item'),
           actions: [
             if (_isLoading)
               const Center(

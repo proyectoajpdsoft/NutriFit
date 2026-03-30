@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -24,11 +25,25 @@ import 'package:nutri_app/screens/consejos_paciente_screen.dart';
 import 'package:nutri_app/screens/recetas_paciente_screen.dart';
 import 'package:nutri_app/screens/recetas_list_screen.dart';
 import 'package:nutri_app/screens/receta_edit_screen.dart';
+import 'package:nutri_app/screens/sustitucion_saludable_edit_screen.dart';
+import 'package:nutri_app/screens/sustituciones_saludables_list_screen.dart';
+import 'package:nutri_app/screens/sustituciones_saludables_screen.dart';
+import 'package:nutri_app/screens/charlas_seminarios_screen.dart';
+import 'package:nutri_app/screens/charlas_seminarios_list_screen.dart';
+import 'package:nutri_app/screens/suplementos_list_screen.dart';
+import 'package:nutri_app/screens/suplemento_edit_screen.dart';
+import 'package:nutri_app/screens/suplementos_paciente_screen.dart';
+import 'package:nutri_app/screens/aditivos_list_screen.dart';
+import 'package:nutri_app/screens/aditivo_edit_screen.dart';
+import 'package:nutri_app/screens/aditivos_paciente_screen.dart';
 import 'package:nutri_app/screens/lista_compra_screen.dart';
 import 'package:nutri_app/screens/entrenamientos_screen.dart';
 import 'package:nutri_app/screens/todo_list_screen.dart';
 import 'package:nutri_app/screens/etiqueta_nutricional_scanner_screen.dart';
 import 'package:nutri_app/screens/user_settings_screen.dart';
+import 'package:nutri_app/screens/videos_ejercicios/videos_ejercicios_paciente_screen.dart';
+import 'package:nutri_app/screens/videos_ejercicios/videos_ejercicios_list_screen.dart';
+import 'package:nutri_app/screens/premium_info_screen.dart';
 import 'package:nutri_app/services/auth_error_handler.dart';
 import 'package:nutri_app/constants/app_constants.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -53,7 +68,7 @@ Future<void> main() async {
     await Firebase.initializeApp();
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   } catch (_) {
-    // Si Firebase no está configurado todavía en el entorno local,
+    // Si Firebase no estÃ¡ configurado todavÃ­a en el entorno local,
     // no bloqueamos el arranque de la app.
   }
   await _initWindowManager();
@@ -103,10 +118,11 @@ class AppState extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthService()),
         ChangeNotifierProvider(
-            create: (_) => ConfigService()), // <-- SERVICIO AÑADIDO
+          create: (_) => ConfigService(),
+        ), // <-- SERVICIO AÃ‘ADIDO
         Provider(
-            create: (_) =>
-                ApiService()), // <-- SERVICIO AÑADIDO para ApiService
+          create: (_) => ApiService(),
+        ), // <-- SERVICIO AÃ‘ADIDO para ApiService
       ],
       child: const MyApp(),
     );
@@ -116,23 +132,40 @@ class AppState extends StatelessWidget {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
+  bool get _isMobileTitlePlatform =>
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+
   @override
   Widget build(BuildContext context) {
+    final mobileTitle = _isMobileTitlePlatform;
+    final colorScheme = ColorScheme.fromSeed(seedColor: Colors.pink);
+
     return MaterialApp(
       title: AppConstants.appTitle,
       navigatorKey: AuthErrorHandler.navigatorKey,
       scrollBehavior: const AppScrollBehavior(),
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.pink),
+        colorScheme: colorScheme,
         visualDensity: VisualDensity.adaptivePlatformDensity,
+        appBarTheme: AppBarTheme(
+          foregroundColor: colorScheme.onSurface,
+          titleTextStyle: TextStyle(
+            fontSize: mobileTitle ? 17 : 20,
+            fontWeight: FontWeight.w600,
+            color: colorScheme.onSurface,
+          ),
+          toolbarTextStyle: TextStyle(
+            fontSize: mobileTitle ? 14 : 16,
+            fontWeight: FontWeight.w500,
+            color: colorScheme.onSurface,
+          ),
+        ),
         useMaterial3: true,
       ),
       locale: const Locale('es', 'ES'),
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
-      supportedLocales: const [
-        Locale('es', 'ES'),
-        Locale('en', 'US'),
-      ],
+      supportedLocales: const [Locale('es', 'ES'), Locale('en', 'US')],
       debugShowCheckedModeBanner: false,
       initialRoute: 'splash',
       routes: {
@@ -150,11 +183,28 @@ class MyApp extends StatelessWidget {
         '/recetas_paciente': (_) => const RecetasPacienteScreen(),
         '/recetas_list': (_) => const RecetasListScreen(),
         '/receta_edit': (_) => const RecetaEditScreen(),
+        '/sustituciones_saludables': (_) =>
+            const SustitucionesSaludablesScreen(),
+        '/sustituciones_saludables_list': (_) =>
+            const SustitucionesSaludablesListScreen(),
+        '/sustitucion_saludable_edit': (_) =>
+            const SustitucionSaludableEditScreen(),
         '/lista_compra': (_) => const ListaCompraScreen(),
         '/entrenamientos': (_) => const EntrenamientosScreen(),
         '/todo_list': (_) => const TodoListScreen(),
         '/scanner_etiquetas': (_) => const EtiquetaNutricionalScannerScreen(),
         '/user_settings': (_) => const UserSettingsScreen(),
+        '/videos_ejercicios': (_) => const VideosEjerciciosPacienteScreen(),
+        '/videos_ejercicios_admin': (_) => const VideosEjerciciosListScreen(),
+        '/charlas_seminarios': (_) => const CharlasSeminariosScreen(),
+        '/charlas_seminarios_list': (_) => const CharlasSeminariosListScreen(),
+        '/suplementos': (_) => const SuplementosPacienteScreen(),
+        '/suplementos_list': (_) => const SuplementosListScreen(),
+        '/suplemento_edit': (_) => const SuplementoEditScreen(),
+        '/aditivos': (_) => const AditivosPacienteScreen(),
+        '/aditivos_list': (_) => const AditivosListScreen(),
+        '/aditivo_edit': (_) => const AditivoEditScreen(),
+        '/premium_info': (_) => const PremiumInfoScreen(),
       },
     );
   }

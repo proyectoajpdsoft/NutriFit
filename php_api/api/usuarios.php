@@ -29,7 +29,7 @@ if ($request_method === 'POST') {
     $action = isset($data->action) ? $data->action : 'create';
     
     // Permitir registro sin autenticación
-    if ($action === 'register' || $action === 'check_nick') {
+    if ($action === 'register' || $action === 'check_nick' || $action === 'check_email') {
         $requiresAuth = false;
         $requiresPermission = false;
     } elseif ($action === 'delete_self_with_details') {
@@ -94,6 +94,8 @@ function handle_post_request() {
     
     if ($action === 'check_nick') {
         check_nick_exists($data);
+    } elseif ($action === 'check_email') {
+        check_email_exists($data);
     } elseif ($action === 'register') {
         register_usuario($data);
     } elseif ($action === 'delete_flow_info') {
@@ -110,6 +112,8 @@ function handle_post_request() {
         delete_usuario_cascade($data);
     } elseif ($action === 'move_usuario_data') {
         move_usuario_data($data);
+    } elseif ($action === 'premium_audit_log') {
+        get_usuario_premium_audit_log($data);
     } else {
         create_usuario($data);
     }
@@ -117,9 +121,36 @@ function handle_post_request() {
 
 function get_usuarios() {
     global $db;
+    $columns = get_usuario_columns_map_usuarios($db);
+
+    $select = "codigo, nick, nombre, email, tipo, activo, accesoweb, administrador, codigo_paciente, edad, altura, img_perfil";
+    if (isset($columns['premium_periodo_meses'])) {
+        $select .= ", premium_periodo_meses";
+    }
+    if (isset($columns['premium_expira_fecha'])) {
+        $select .= ", premium_expira_fecha";
+    }
+    if (isset($columns['premium_desde_fecha'])) {
+        $select .= ", premium_desde_fecha";
+    }
+    if (isset($columns['premium_hasta_fecha'])) {
+        $select .= ", premium_hasta_fecha";
+    }
+    if (isset($columns['premium_periodo_meses_solicitado'])) {
+        $select .= ", premium_periodo_meses_solicitado";
+    }
+    if (isset($columns['premium_forma_pago_solicitada'])) {
+        $select .= ", premium_forma_pago_solicitada";
+    }
+    if (isset($columns['premium_solicitud_pendiente'])) {
+        $select .= ", premium_solicitud_pendiente";
+    }
+    if (isset($columns['premium_fecha_solicitud'])) {
+        $select .= ", premium_fecha_solicitud";
+    }
+
     // Incluir img_perfil para que se muestre en el listado
-    $query = "SELECT codigo, nick, nombre, email, tipo, activo, accesoweb, administrador, codigo_paciente, edad, altura, img_perfil
-              FROM usuario ORDER BY nombre";
+    $query = "SELECT $select FROM usuario ORDER BY nombre";
     $stmt = $db->prepare($query);
     $stmt->execute();
     $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -146,8 +177,35 @@ function get_total_usuarios() {
 
 function get_usuario($codigo) {
     global $db;
-    $query = "SELECT codigo, nick, nombre, email, tipo, activo, administrador, codigo_paciente, accesoweb, edad, altura, img_perfil
-              FROM usuario WHERE codigo = :codigo LIMIT 0,1";
+    $columns = get_usuario_columns_map_usuarios($db);
+
+    $select = "codigo, nick, nombre, email, tipo, activo, administrador, codigo_paciente, accesoweb, edad, altura, img_perfil";
+    if (isset($columns['premium_periodo_meses'])) {
+        $select .= ", premium_periodo_meses";
+    }
+    if (isset($columns['premium_expira_fecha'])) {
+        $select .= ", premium_expira_fecha";
+    }
+    if (isset($columns['premium_desde_fecha'])) {
+        $select .= ", premium_desde_fecha";
+    }
+    if (isset($columns['premium_hasta_fecha'])) {
+        $select .= ", premium_hasta_fecha";
+    }
+    if (isset($columns['premium_periodo_meses_solicitado'])) {
+        $select .= ", premium_periodo_meses_solicitado";
+    }
+    if (isset($columns['premium_forma_pago_solicitada'])) {
+        $select .= ", premium_forma_pago_solicitada";
+    }
+    if (isset($columns['premium_solicitud_pendiente'])) {
+        $select .= ", premium_solicitud_pendiente";
+    }
+    if (isset($columns['premium_fecha_solicitud'])) {
+        $select .= ", premium_fecha_solicitud";
+    }
+
+    $query = "SELECT $select FROM usuario WHERE codigo = :codigo LIMIT 0,1";
     $stmt = $db->prepare($query);
     $stmt->bindParam(':codigo', $codigo);
     $stmt->execute();
@@ -162,6 +220,55 @@ function get_usuario($codigo) {
         http_response_code(404);
         echo json_encode(array("message" => "Usuario o contraseña incorrectos."));
     }
+}
+
+function get_usuario_premium_audit_log($data) {
+    global $db;
+
+    $codigo_usuario = intval($data->codigo_usuario ?? 0);
+    if ($codigo_usuario <= 0) {
+        http_response_code(400);
+        echo json_encode(array('message' => 'Código de usuario no válido.'));
+        return;
+    }
+
+    if (!usuarios_table_exists($db, 'usuario_premium_auditoria')) {
+        http_response_code(200);
+        echo json_encode(array());
+        return;
+    }
+
+    $auditColumns = get_table_columns_map_usuarios($db, 'usuario_premium_auditoria');
+    $select = array(
+        'id',
+        'codigo_usuario',
+        'accion',
+        'detalle',
+        'periodo_meses',
+        'forma_pago',
+        'codigo_usuario_actor',
+        'fecha_accion',
+    );
+    if (isset($auditColumns['premium_desde'])) {
+        $select[] = 'premium_desde';
+    }
+    if (isset($auditColumns['premium_hasta'])) {
+        $select[] = 'premium_hasta';
+    }
+
+    $query = 'SELECT ' . implode(', ', $select) . '
+              FROM usuario_premium_auditoria
+              WHERE codigo_usuario = :codigo_usuario
+              ORDER BY fecha_accion DESC, id DESC
+              LIMIT 200';
+
+    $stmt = $db->prepare($query);
+    $stmt->bindValue(':codigo_usuario', $codigo_usuario, PDO::PARAM_INT);
+    $stmt->execute();
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    http_response_code(200);
+    echo json_encode($rows ?: array());
 }
 
 function bind_usuario_params($stmt, $data) {
@@ -243,6 +350,277 @@ function parse_param_bool_usuarios($value, $default = false) {
     return in_array($normalized, array('1', 'S', 'SI', 'SÍ', 'Y', 'YES', 'TRUE'), true);
 }
 
+function get_usuario_columns_map_usuarios($db) {
+    static $cache = null;
+    if ($cache !== null) {
+        return $cache;
+    }
+
+    $cache = array();
+    try {
+        $stmt = $db->query('SHOW COLUMNS FROM usuario');
+        $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : array();
+        foreach ($rows as $row) {
+            $field = strtolower(trim((string)($row['Field'] ?? '')));
+            if ($field !== '') {
+                $cache[$field] = true;
+            }
+        }
+    } catch (Throwable $e) {
+        $cache = array();
+    }
+
+    return $cache;
+}
+
+function get_table_columns_map_usuarios($db, $tableName) {
+    static $cacheByTable = array();
+    $cacheKey = strtolower(trim((string)$tableName));
+    if ($cacheKey === '') {
+        return array();
+    }
+    if (isset($cacheByTable[$cacheKey])) {
+        return $cacheByTable[$cacheKey];
+    }
+
+    $columns = array();
+    try {
+        $stmt = $db->query('SHOW COLUMNS FROM `' . str_replace('`', '``', $tableName) . '`');
+        $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : array();
+        foreach ($rows as $row) {
+            $field = strtolower(trim((string)($row['Field'] ?? '')));
+            if ($field !== '') {
+                $columns[$field] = true;
+            }
+        }
+    } catch (Throwable $e) {
+        $columns = array();
+    }
+
+    $cacheByTable[$cacheKey] = $columns;
+    return $columns;
+}
+
+function normalize_premium_period_usuarios($value) {
+    $allowed = array(1, 3, 6, 12);
+    $period = intval($value);
+    return in_array($period, $allowed, true) ? $period : null;
+}
+
+function compute_premium_expiration_date_usuarios($months, $baseDate = null) {
+    $period = normalize_premium_period_usuarios($months);
+    if ($period === null) {
+        return null;
+    }
+
+    try {
+        $base = $baseDate ? new DateTime($baseDate) : new DateTime('now');
+    } catch (Throwable $e) {
+        $base = new DateTime('now');
+    }
+
+    $base->setTime(0, 0, 0);
+    $base->modify('+' . $period . ' months');
+    return $base->format('Y-m-d');
+}
+
+function query_has_placeholder_usuarios($sql, $placeholder) {
+    $query = (string)$sql;
+    if ($query === '') {
+        return false;
+    }
+
+    $token = ltrim((string)$placeholder, ':');
+    if ($token === '') {
+        return false;
+    }
+
+    return preg_match('/:' . preg_quote($token, '/') . '\\b/', $query) === 1;
+}
+
+function bind_premium_usuario_params($stmt, $period, $expiraFecha, $sql = null) {
+    $query = $sql ?? ($stmt->queryString ?? '');
+
+    if (query_has_placeholder_usuarios($query, ':premium_periodo_meses')) {
+        if ($period === null) {
+            $stmt->bindValue(':premium_periodo_meses', null, PDO::PARAM_NULL);
+        } else {
+            $stmt->bindValue(':premium_periodo_meses', intval($period), PDO::PARAM_INT);
+        }
+    }
+
+    if (query_has_placeholder_usuarios($query, ':premium_expira_fecha')) {
+        if ($expiraFecha === null || trim((string)$expiraFecha) === '') {
+            $stmt->bindValue(':premium_expira_fecha', null, PDO::PARAM_NULL);
+        } else {
+            $stmt->bindValue(':premium_expira_fecha', $expiraFecha, PDO::PARAM_STR);
+        }
+    }
+}
+
+function normalize_iso_date_usuarios($value) {
+    $raw = trim((string)$value);
+    if ($raw === '') {
+        return null;
+    }
+
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+        return $raw;
+    }
+
+    try {
+        $date = new DateTime($raw);
+        return $date->format('Y-m-d');
+    } catch (Throwable $e) {
+        return null;
+    }
+}
+
+function normalize_pending_flag_usuarios($value, $default = 'N') {
+    $normalized = strtoupper(trim((string)$value));
+    if ($normalized === '') {
+        $normalized = strtoupper(trim((string)$default));
+    }
+    return $normalized === 'S' ? 'S' : 'N';
+}
+
+function bind_extended_premium_usuario_params(
+    $stmt,
+    $premiumDesdeFecha,
+    $premiumHastaFecha,
+    $premiumPeriodoSolicitado,
+    $premiumFormaPagoSolicitada,
+    $premiumSolicitudPendiente,
+    $premiumFechaSolicitud,
+    $sql = null
+) {
+    $query = $sql ?? ($stmt->queryString ?? '');
+
+    if (query_has_placeholder_usuarios($query, ':premium_desde_fecha')) {
+        if ($premiumDesdeFecha === null || trim((string)$premiumDesdeFecha) === '') {
+            $stmt->bindValue(':premium_desde_fecha', null, PDO::PARAM_NULL);
+        } else {
+            $stmt->bindValue(':premium_desde_fecha', $premiumDesdeFecha, PDO::PARAM_STR);
+        }
+    }
+
+    if (query_has_placeholder_usuarios($query, ':premium_hasta_fecha')) {
+        if ($premiumHastaFecha === null || trim((string)$premiumHastaFecha) === '') {
+            $stmt->bindValue(':premium_hasta_fecha', null, PDO::PARAM_NULL);
+        } else {
+            $stmt->bindValue(':premium_hasta_fecha', $premiumHastaFecha, PDO::PARAM_STR);
+        }
+    }
+
+    if (query_has_placeholder_usuarios($query, ':premium_periodo_meses_solicitado')) {
+        if ($premiumPeriodoSolicitado === null) {
+            $stmt->bindValue(':premium_periodo_meses_solicitado', null, PDO::PARAM_NULL);
+        } else {
+            $stmt->bindValue(':premium_periodo_meses_solicitado', intval($premiumPeriodoSolicitado), PDO::PARAM_INT);
+        }
+    }
+
+    if (query_has_placeholder_usuarios($query, ':premium_forma_pago_solicitada')) {
+        $value = trim((string)$premiumFormaPagoSolicitada);
+        if ($value === '') {
+            $stmt->bindValue(':premium_forma_pago_solicitada', null, PDO::PARAM_NULL);
+        } else {
+            $stmt->bindValue(':premium_forma_pago_solicitada', $value, PDO::PARAM_STR);
+        }
+    }
+
+    if (query_has_placeholder_usuarios($query, ':premium_solicitud_pendiente')) {
+        $stmt->bindValue(':premium_solicitud_pendiente', normalize_pending_flag_usuarios($premiumSolicitudPendiente, 'N'), PDO::PARAM_STR);
+    }
+
+    if (query_has_placeholder_usuarios($query, ':premium_fecha_solicitud')) {
+        if ($premiumFechaSolicitud === null || trim((string)$premiumFechaSolicitud) === '') {
+            $stmt->bindValue(':premium_fecha_solicitud', null, PDO::PARAM_NULL);
+        } else {
+            $stmt->bindValue(':premium_fecha_solicitud', $premiumFechaSolicitud, PDO::PARAM_STR);
+        }
+    }
+}
+
+function usuarios_table_exists($db, $table_name) {
+    try {
+        $stmt = $db->prepare('SHOW TABLES LIKE :table');
+        $stmt->bindParam(':table', $table_name, PDO::PARAM_STR);
+        $stmt->execute();
+        return $stmt->rowCount() > 0;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function log_usuario_premium_auditoria_usuarios($db, $codigo_usuario_objetivo, $accion, $detalle, $actor_codigo, $periodo_meses = null, $forma_pago = null, $desde = null, $hasta = null) {
+    if (!usuarios_table_exists($db, 'usuario_premium_auditoria')) {
+        return;
+    }
+
+    $auditColumns = get_table_columns_map_usuarios($db, 'usuario_premium_auditoria');
+
+    try {
+        $insertColumns = array('codigo_usuario', 'accion', 'detalle', 'periodo_meses', 'forma_pago');
+        $insertValues = array(':codigo_usuario', ':accion', ':detalle', ':periodo_meses', ':forma_pago');
+
+        if (isset($auditColumns['premium_desde'])) {
+            $insertColumns[] = 'premium_desde';
+            $insertValues[] = ':premium_desde';
+        }
+        if (isset($auditColumns['premium_hasta'])) {
+            $insertColumns[] = 'premium_hasta';
+            $insertValues[] = ':premium_hasta';
+        }
+
+        $insertColumns[] = 'codigo_usuario_actor';
+        $insertValues[] = ':codigo_usuario_actor';
+        $insertColumns[] = 'fecha_accion';
+        $insertValues[] = 'NOW()';
+
+        $stmt = $db->prepare(
+            'INSERT INTO usuario_premium_auditoria (' . implode(', ', $insertColumns) . ')
+             VALUES (' . implode(', ', $insertValues) . ')'
+        );
+        $stmt->bindValue(':codigo_usuario', intval($codigo_usuario_objetivo), PDO::PARAM_INT);
+        $stmt->bindValue(':accion', trim((string)$accion), PDO::PARAM_STR);
+        $stmt->bindValue(':detalle', trim((string)$detalle), PDO::PARAM_STR);
+
+        if ($periodo_meses === null) {
+            $stmt->bindValue(':periodo_meses', null, PDO::PARAM_NULL);
+        } else {
+            $stmt->bindValue(':periodo_meses', intval($periodo_meses), PDO::PARAM_INT);
+        }
+
+        $formaPago = trim((string)$forma_pago);
+        if ($formaPago === '') {
+            $stmt->bindValue(':forma_pago', null, PDO::PARAM_NULL);
+        } else {
+            $stmt->bindValue(':forma_pago', $formaPago, PDO::PARAM_STR);
+        }
+
+        if (isset($auditColumns['premium_desde'])) {
+            if ($desde === null || trim((string)$desde) === '') {
+                $stmt->bindValue(':premium_desde', null, PDO::PARAM_NULL);
+            } else {
+                $stmt->bindValue(':premium_desde', $desde, PDO::PARAM_STR);
+            }
+        }
+
+        if (isset($auditColumns['premium_hasta'])) {
+            if ($hasta === null || trim((string)$hasta) === '') {
+                $stmt->bindValue(':premium_hasta', null, PDO::PARAM_NULL);
+            } else {
+                $stmt->bindValue(':premium_hasta', $hasta, PDO::PARAM_STR);
+            }
+        }
+
+        $stmt->bindValue(':codigo_usuario_actor', intval($actor_codigo), PDO::PARAM_INT);
+        $stmt->execute();
+    } catch (Throwable $e) {
+    }
+}
+
 function get_password_policy_usuarios($db) {
     $min_length_raw = get_parametro_valor_usuarios($db, 'complejidad_contraseña_longitud_minima');
     $min_length = intval($min_length_raw);
@@ -308,6 +686,37 @@ function check_nick_exists($data) {
     
     http_response_code(200);
     echo json_encode(array("exists" => $result['count'] > 0));
+}
+
+/// Verifica si un email ya existe en la base de datos
+function check_email_exists($data) {
+    global $db;
+
+    $email = trim((string)($data->email ?? ''));
+    if ($email === '') {
+        http_response_code(400);
+        echo json_encode(array("message" => "El email es obligatorio.", "exists" => false));
+        return;
+    }
+
+    $exclude_codigo = isset($data->exclude_codigo) ? intval($data->exclude_codigo) : 0;
+
+    $query = "SELECT COUNT(*) as count FROM usuario WHERE LOWER(email) = LOWER(:email)";
+    if ($exclude_codigo > 0) {
+        $query .= " AND codigo <> :exclude_codigo";
+    }
+
+    $stmt = $db->prepare($query);
+    $email_clean = htmlspecialchars(strip_tags($email));
+    $stmt->bindParam(':email', $email_clean, PDO::PARAM_STR);
+    if ($exclude_codigo > 0) {
+        $stmt->bindParam(':exclude_codigo', $exclude_codigo, PDO::PARAM_INT);
+    }
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    http_response_code(200);
+    echo json_encode(array("exists" => intval($result['count'] ?? 0) > 0));
 }
 
 /// Registra un nuevo usuario (guest registration)
@@ -444,15 +853,88 @@ function create_usuario($data = null) {
     // ¡¡¡IMPORTANTE: Hashear la contraseña!!!
     $contrasena_hash = password_hash($data->contrasena, PASSWORD_BCRYPT);
     $codusuarioa = isset($data->codusuarioa) ? $data->codusuarioa : 1;
+    $columns = get_usuario_columns_map_usuarios($db);
+
+    $tipoNuevo = strtolower(trim((string)($data->tipo ?? '')));
+    $premiumPeriodoMeses = null;
+    $premiumExpiraFecha = null;
+    $premiumDesdeFecha = null;
+    $premiumHastaFecha = null;
+    $premiumPeriodoMesesSolicitado = normalize_premium_period_usuarios($data->premium_periodo_meses_solicitado ?? null);
+    $premiumFormaPagoSolicitada = trim((string)($data->premium_forma_pago_solicitada ?? ''));
+    $premiumSolicitudPendiente = normalize_pending_flag_usuarios($data->premium_solicitud_pendiente ?? 'N', 'N');
+    $premiumFechaSolicitud = null;
+    if (!empty($data->premium_fecha_solicitud)) {
+        try {
+            $premiumFechaSolicitud = (new DateTime((string)$data->premium_fecha_solicitud))->format('Y-m-d');
+        } catch (Throwable $e) {
+            $premiumFechaSolicitud = null;
+        }
+    }
+    if ($tipoNuevo === 'premium') {
+        $premiumPeriodoMeses = normalize_premium_period_usuarios($data->premium_periodo_meses ?? 1);
+        if ($premiumPeriodoMeses === null) {
+            $premiumPeriodoMeses = 1;
+        }
+        $premiumExpiraFecha = compute_premium_expiration_date_usuarios($premiumPeriodoMeses);
+        $premiumDesdeFecha = normalize_iso_date_usuarios($data->premium_desde_fecha ?? null);
+        if ($premiumDesdeFecha === null) {
+            $premiumDesdeFecha = date('Y-m-d');
+        }
+        $premiumHastaFecha = normalize_iso_date_usuarios($data->premium_hasta_fecha ?? null);
+        if ($premiumHastaFecha === null) {
+            $premiumHastaFecha = $premiumExpiraFecha;
+        }
+        if ($premiumHastaFecha !== null) {
+            $premiumExpiraFecha = $premiumHastaFecha;
+        }
+        $premiumSolicitudPendiente = 'N';
+    }
     
     $query = "INSERT INTO usuario SET
                 nick = :nick, nombre = :nombre, email = :email, contrasena = :contrasena,
                 tipo = :tipo, activo = :activo, accesoweb = :accesoweb, administrador = :administrador,
                 codigo_paciente = :codigo_paciente, edad = :edad, altura = :altura,
                 img_perfil = :img_perfil, fechaa = NOW(), codusuarioa = :codusuarioa";
+
+    if (isset($columns['premium_periodo_meses'])) {
+        $query .= ", premium_periodo_meses = :premium_periodo_meses";
+    }
+    if (isset($columns['premium_expira_fecha'])) {
+        $query .= ", premium_expira_fecha = :premium_expira_fecha";
+    }
+    if (isset($columns['premium_desde_fecha'])) {
+        $query .= ", premium_desde_fecha = :premium_desde_fecha";
+    }
+    if (isset($columns['premium_hasta_fecha'])) {
+        $query .= ", premium_hasta_fecha = :premium_hasta_fecha";
+    }
+    if (isset($columns['premium_periodo_meses_solicitado'])) {
+        $query .= ", premium_periodo_meses_solicitado = :premium_periodo_meses_solicitado";
+    }
+    if (isset($columns['premium_forma_pago_solicitada'])) {
+        $query .= ", premium_forma_pago_solicitada = :premium_forma_pago_solicitada";
+    }
+    if (isset($columns['premium_solicitud_pendiente'])) {
+        $query .= ", premium_solicitud_pendiente = :premium_solicitud_pendiente";
+    }
+    if (isset($columns['premium_fecha_solicitud'])) {
+        $query .= ", premium_fecha_solicitud = :premium_fecha_solicitud";
+    }
     
     $stmt = $db->prepare($query);
     bind_usuario_params($stmt, $data);
+    bind_premium_usuario_params($stmt, $premiumPeriodoMeses, $premiumExpiraFecha, $query);
+    bind_extended_premium_usuario_params(
+        $stmt,
+        $premiumDesdeFecha,
+        $premiumHastaFecha,
+        $premiumPeriodoMesesSolicitado,
+        $premiumFormaPagoSolicitada,
+        $premiumSolicitudPendiente,
+        $premiumFechaSolicitud,
+        $query
+    );
     $stmt->bindParam(":contrasena", $contrasena_hash);
     $stmt->bindParam(":codusuarioa", $codusuarioa);
     
@@ -481,6 +963,20 @@ function create_usuario($data = null) {
                 $response["sync_message"] = "Se han actualizado con el nuevo usuario: " . implode(" y ", $msg) . ".";
             }
         }
+
+        if ($tipoNuevo === 'premium') {
+            log_usuario_premium_auditoria_usuarios(
+                $db,
+                intval($nuevo_codigo),
+                'alta_premium_manual',
+                'Alta de usuario ya marcado como Premium.',
+                intval($codusuarioa),
+                $premiumPeriodoMeses,
+                $premiumFormaPagoSolicitada,
+                $premiumDesdeFecha,
+                $premiumHastaFecha
+            );
+        }
         echo json_encode($response);
     } else {
         http_response_code(503);
@@ -494,12 +990,56 @@ function create_usuario($data = null) {
 function update_usuario() {
     global $db;
     $data = json_decode(file_get_contents("php://input"));
+    $columns = get_usuario_columns_map_usuarios($db);
 
     if(empty($data->codigo)) {
         http_response_code(400);
         echo json_encode(array("message" => "Falta el código del usuario."));
         return;
     }
+
+    $currentSelect = 'tipo, email';
+    if (isset($columns['email_verificado'])) {
+        $currentSelect .= ', email_verificado';
+    }
+    if (isset($columns['fecha_verificacion_email'])) {
+        $currentSelect .= ', fecha_verificacion_email';
+    }
+    if (isset($columns['codigo_verificacion_email'])) {
+        $currentSelect .= ', codigo_verificacion_email';
+    }
+    if (isset($columns['codigo_verificacion_email_expira'])) {
+        $currentSelect .= ', codigo_verificacion_email_expira';
+    }
+    if (isset($columns['premium_periodo_meses'])) {
+        $currentSelect .= ', premium_periodo_meses';
+    }
+    if (isset($columns['premium_expira_fecha'])) {
+        $currentSelect .= ', premium_expira_fecha';
+    }
+    if (isset($columns['premium_desde_fecha'])) {
+        $currentSelect .= ', premium_desde_fecha';
+    }
+    if (isset($columns['premium_hasta_fecha'])) {
+        $currentSelect .= ', premium_hasta_fecha';
+    }
+    if (isset($columns['premium_periodo_meses_solicitado'])) {
+        $currentSelect .= ', premium_periodo_meses_solicitado';
+    }
+    if (isset($columns['premium_forma_pago_solicitada'])) {
+        $currentSelect .= ', premium_forma_pago_solicitada';
+    }
+    if (isset($columns['premium_solicitud_pendiente'])) {
+        $currentSelect .= ', premium_solicitud_pendiente';
+    }
+    if (isset($columns['premium_fecha_solicitud'])) {
+        $currentSelect .= ', premium_fecha_solicitud';
+    }
+
+    $stmtCurrent = $db->prepare("SELECT $currentSelect FROM usuario WHERE codigo = :codigo LIMIT 1");
+    $stmtCurrent->bindParam(':codigo', $data->codigo, PDO::PARAM_INT);
+    $stmtCurrent->execute();
+    $currentUserRow = $stmtCurrent->fetch(PDO::FETCH_ASSOC) ?: array();
     
     // Verificar si el usuario está actualizando su propio perfil o el de otro
     $authenticated_user = $GLOBALS['authenticated_user'] ?? null;
@@ -528,10 +1068,83 @@ function update_usuario() {
         }
     }
     
-    // Si se actualiza propio perfil, obtener el paciente anterior y mantenerlo
+    // Si se actualiza propio perfil, mantener campos de rol/asociación protegidos
+    // (tipo, administrador y paciente asociado solo los cambia nutricionista/admin).
     if ($is_updating_own_profile) {
         $codigo_paciente_anterior = $authenticated_user['codigo_paciente'] ?? null;
         $data->codigo_paciente = $codigo_paciente_anterior;
+        $data->tipo = $authenticated_user['tipo'] ?? ($data->tipo ?? 'Usuario');
+        $data->administrador = $authenticated_user['administrador'] ?? 'N';
+        if (isset($currentUserRow['premium_periodo_meses'])) {
+            $data->premium_periodo_meses = $currentUserRow['premium_periodo_meses'];
+        }
+    }
+
+    $tipoActual = strtolower(trim((string)($currentUserRow['tipo'] ?? '')));
+    $tipoNuevo = strtolower(trim((string)($data->tipo ?? '')));
+    $emailActual = trim((string)($currentUserRow['email'] ?? ''));
+    $emailNuevo = trim((string)($data->email ?? ''));
+    $emailChanged = strcasecmp($emailActual, $emailNuevo) !== 0;
+    $premiumPeriodoMeses = null;
+    $premiumExpiraFecha = null;
+    $premiumDesdeFecha = normalize_iso_date_usuarios($data->premium_desde_fecha ?? ($currentUserRow['premium_desde_fecha'] ?? null));
+    $premiumHastaFecha = normalize_iso_date_usuarios($data->premium_hasta_fecha ?? ($currentUserRow['premium_hasta_fecha'] ?? null));
+    $premiumPeriodoMesesSolicitado = normalize_premium_period_usuarios($data->premium_periodo_meses_solicitado ?? ($currentUserRow['premium_periodo_meses_solicitado'] ?? null));
+    $premiumFormaPagoSolicitada = trim((string)($data->premium_forma_pago_solicitada ?? ($currentUserRow['premium_forma_pago_solicitada'] ?? '')));
+    $premiumSolicitudPendiente = normalize_pending_flag_usuarios($data->premium_solicitud_pendiente ?? ($currentUserRow['premium_solicitud_pendiente'] ?? 'N'), 'N');
+    $premiumFechaSolicitud = null;
+    $premiumFechaSolicitudInput = $data->premium_fecha_solicitud ?? ($currentUserRow['premium_fecha_solicitud'] ?? null);
+    if ($premiumFechaSolicitudInput !== null && trim((string)$premiumFechaSolicitudInput) !== '') {
+        try {
+            $premiumFechaSolicitud = (new DateTime((string)$premiumFechaSolicitudInput))->format('Y-m-d');
+        } catch (Throwable $e) {
+            $premiumFechaSolicitud = null;
+        }
+    }
+
+    if ($emailChanged && $emailNuevo !== '') {
+        $stmtEmail = $db->prepare('SELECT codigo FROM usuario WHERE LOWER(email) = LOWER(:email) AND codigo <> :codigo LIMIT 1');
+        $stmtEmail->bindParam(':email', $emailNuevo, PDO::PARAM_STR);
+        $stmtEmail->bindParam(':codigo', $data->codigo, PDO::PARAM_INT);
+        $stmtEmail->execute();
+        if ($stmtEmail->fetch(PDO::FETCH_ASSOC)) {
+            http_response_code(400);
+            echo json_encode(array('message' => 'No puede usar esta cuenta de email, indique otra'));
+            return;
+        }
+    }
+
+    if ($tipoNuevo === 'premium') {
+        $periodInput = $data->premium_periodo_meses ?? ($currentUserRow['premium_periodo_meses'] ?? null);
+        $premiumPeriodoMeses = normalize_premium_period_usuarios($periodInput);
+        if ($premiumPeriodoMeses === null) {
+            $premiumPeriodoMeses = 1;
+        }
+
+        $hasExplicitPeriod = isset($data->premium_periodo_meses);
+        $isActivation = $tipoActual !== 'premium';
+        $existingExpira = trim((string)($currentUserRow['premium_expira_fecha'] ?? ''));
+        $expiredOrMissing = $existingExpira === '' || strtotime($existingExpira) === false || strtotime($existingExpira) < strtotime(date('Y-m-d'));
+
+        if ($isActivation || $hasExplicitPeriod || $expiredOrMissing) {
+            $premiumExpiraFecha = compute_premium_expiration_date_usuarios($premiumPeriodoMeses);
+        } else {
+            $premiumExpiraFecha = $existingExpira;
+        }
+
+        if ($premiumDesdeFecha === null) {
+            $premiumDesdeFecha = date('Y-m-d');
+        }
+        if ($premiumHastaFecha === null) {
+            $premiumHastaFecha = normalize_iso_date_usuarios($premiumExpiraFecha);
+        }
+        if ($premiumHastaFecha !== null) {
+            $premiumExpiraFecha = $premiumHastaFecha;
+        }
+        $premiumSolicitudPendiente = 'N';
+    } else {
+        $premiumDesdeFecha = null;
+        $premiumHastaFecha = null;
     }
     
     $codusuariom = isset($data->codusuariom) ? $data->codusuariom : 1;
@@ -559,16 +1172,76 @@ function update_usuario() {
                 $sql_pass
               WHERE codigo = :codigo";
 
+    if ($emailChanged && isset($columns['email_verificado'])) {
+        $query = str_replace('img_perfil = :img_perfil,', "img_perfil = :img_perfil, email_verificado = 'N',", $query);
+    }
+    if ($emailChanged && isset($columns['fecha_verificacion_email'])) {
+        $query = str_replace('img_perfil = :img_perfil,', 'img_perfil = :img_perfil, fecha_verificacion_email = NULL,', $query);
+    }
+    if ($emailChanged && isset($columns['codigo_verificacion_email'])) {
+        $query = str_replace('img_perfil = :img_perfil,', 'img_perfil = :img_perfil, codigo_verificacion_email = NULL,', $query);
+    }
+    if ($emailChanged && isset($columns['codigo_verificacion_email_expira'])) {
+        $query = str_replace('img_perfil = :img_perfil,', 'img_perfil = :img_perfil, codigo_verificacion_email_expira = NULL,', $query);
+    }
+
+    if (isset($columns['premium_periodo_meses'])) {
+        $query = str_replace('img_perfil = :img_perfil, fecham', 'img_perfil = :img_perfil, premium_periodo_meses = :premium_periodo_meses, fecham', $query);
+    }
+    if (isset($columns['premium_expira_fecha'])) {
+        $query = str_replace('img_perfil = :img_perfil,', 'img_perfil = :img_perfil, premium_expira_fecha = :premium_expira_fecha,', $query);
+    }
+    if (isset($columns['premium_desde_fecha'])) {
+        $query = str_replace('img_perfil = :img_perfil,', 'img_perfil = :img_perfil, premium_desde_fecha = :premium_desde_fecha,', $query);
+    }
+    if (isset($columns['premium_hasta_fecha'])) {
+        $query = str_replace('img_perfil = :img_perfil,', 'img_perfil = :img_perfil, premium_hasta_fecha = :premium_hasta_fecha,', $query);
+    }
+    if (isset($columns['premium_periodo_meses_solicitado'])) {
+        $query = str_replace('img_perfil = :img_perfil,', 'img_perfil = :img_perfil, premium_periodo_meses_solicitado = :premium_periodo_meses_solicitado,', $query);
+    }
+    if (isset($columns['premium_forma_pago_solicitada'])) {
+        $query = str_replace('img_perfil = :img_perfil,', 'img_perfil = :img_perfil, premium_forma_pago_solicitada = :premium_forma_pago_solicitada,', $query);
+    }
+    if (isset($columns['premium_solicitud_pendiente'])) {
+        $query = str_replace('img_perfil = :img_perfil,', 'img_perfil = :img_perfil, premium_solicitud_pendiente = :premium_solicitud_pendiente,', $query);
+    }
+    if (isset($columns['premium_fecha_solicitud'])) {
+        $query = str_replace('img_perfil = :img_perfil,', 'img_perfil = :img_perfil, premium_fecha_solicitud = :premium_fecha_solicitud,', $query);
+    }
+
     $stmt = $db->prepare($query);
     $stmt->bindParam(":codigo", $data->codigo);
     $stmt->bindParam(":codusuariom", $codusuariom);
     bind_usuario_params($stmt, $data);
+    bind_premium_usuario_params($stmt, $premiumPeriodoMeses, $premiumExpiraFecha, $query);
+    bind_extended_premium_usuario_params(
+        $stmt,
+        $premiumDesdeFecha,
+        $premiumHastaFecha,
+        $premiumPeriodoMesesSolicitado,
+        $premiumFormaPagoSolicitada,
+        $premiumSolicitudPendiente,
+        $premiumFechaSolicitud,
+        $query
+    );
 
     if(!empty($sql_pass)) {
         $stmt->bindParam(":contrasena", $contrasena_hash);
     }
 
-    if($stmt->execute()){
+    try {
+        $executed = $stmt->execute();
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo json_encode(array(
+            "message" => "Error al actualizar el usuario.",
+            "error" => $e->getMessage(),
+        ));
+        return;
+    }
+
+    if($executed){
         // Si se asignó un paciente por parte de un admin (no es actualización del propio perfil), sincronizar registros
         $sync_result = array();
         if (!$is_updating_own_profile && !empty($data->codigo_paciente)) {
@@ -591,6 +1264,47 @@ function update_usuario() {
                 $response["sync_message"] = "Se han actualizado con el usuario: " . implode(" y ", $msg) . ".";
             }
         }
+
+        $is_now_premium = $tipoNuevo === 'premium';
+        $was_premium = $tipoActual === 'premium';
+        if ($is_now_premium && !$was_premium) {
+            log_usuario_premium_auditoria_usuarios(
+                $db,
+                intval($data->codigo),
+                'activacion_premium_manual',
+                'El nutricionista/administrador activó Premium al usuario.',
+                intval($codusuariom),
+                $premiumPeriodoMeses,
+                $premiumFormaPagoSolicitada,
+                $premiumDesdeFecha,
+                $premiumHastaFecha
+            );
+        } elseif ($is_now_premium && $was_premium) {
+            log_usuario_premium_auditoria_usuarios(
+                $db,
+                intval($data->codigo),
+                'actualizacion_periodo_premium',
+                'Actualización manual del período Premium del usuario.',
+                intval($codusuariom),
+                $premiumPeriodoMeses,
+                $premiumFormaPagoSolicitada,
+                $premiumDesdeFecha,
+                $premiumHastaFecha
+            );
+        } elseif (!$is_now_premium && $was_premium) {
+            log_usuario_premium_auditoria_usuarios(
+                $db,
+                intval($data->codigo),
+                'desactivacion_premium_manual',
+                'El nutricionista/administrador desactivó Premium al usuario.',
+                intval($codusuariom),
+                null,
+                null,
+                null,
+                null
+            );
+        }
+
         echo json_encode($response);
     } else {
         http_response_code(503);

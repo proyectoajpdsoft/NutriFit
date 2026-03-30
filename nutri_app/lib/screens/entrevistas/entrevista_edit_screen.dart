@@ -152,7 +152,11 @@ class _EntrevistaEditScreenState extends State<EntrevistaEditScreen> {
     super.dispose();
   }
 
-  void _submitForm() async {
+  void _submitForm() {
+    _saveForm(closeOnSuccess: true);
+  }
+
+  Future<bool> _saveForm({required bool closeOnSuccess}) async {
     if (_formKey.currentState!.validate()) {
       final entrevistaData = Entrevista(
         codigo: widget.entrevista?.codigo ?? 0,
@@ -217,6 +221,7 @@ class _EntrevistaEditScreenState extends State<EntrevistaEditScreen> {
         }
 
         if (success) {
+          _hasChanges = false;
           // Mostrar mensaje según sea alta o modificación
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -226,7 +231,10 @@ class _EntrevistaEditScreenState extends State<EntrevistaEditScreen> {
               backgroundColor: Colors.green,
             ),
           );
-          Navigator.of(context).pop();
+          if (closeOnSuccess && mounted) {
+            Navigator.of(context).pop(true);
+          }
+          return true;
         } else {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('Error al guardar'),
@@ -238,6 +246,7 @@ class _EntrevistaEditScreenState extends State<EntrevistaEditScreen> {
             SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
       }
     }
+    return false;
   }
 
   void _markDirty() {
@@ -249,7 +258,10 @@ class _EntrevistaEditScreenState extends State<EntrevistaEditScreen> {
 
   Future<bool> _confirmDiscardChanges() async {
     if (!_hasChanges) return true;
-    return showUnsavedChangesDialog(context);
+    return showUnsavedChangesDialog(
+      context,
+      onSave: () => _saveForm(closeOnSuccess: false),
+    );
   }
 
   Future<void> _handleBack() async {
@@ -290,24 +302,34 @@ class _EntrevistaEditScreenState extends State<EntrevistaEditScreen> {
                   _buildDateTimePicker(
                     label: 'Fecha Prevista',
                     date: _fechaPrevista,
-                    onChanged: (newDate) =>
-                        setState(() => _fechaPrevista = newDate),
+                    onChanged: (newDate) {
+                      setState(() => _fechaPrevista = newDate);
+                      _markDirty();
+                    },
                   ),
                   _buildDateTimePicker(
                     label: 'Fecha Realización',
                     date: _fechaRealizacion,
-                    onChanged: (newDate) =>
-                        setState(() => _fechaRealizacion = newDate),
+                    onChanged: (newDate) {
+                      setState(() => _fechaRealizacion = newDate);
+                      _markDirty();
+                    },
                   ),
                   SwitchListTile(
                     title: const Text('Completada'),
                     value: _completada,
-                    onChanged: (value) => setState(() => _completada = value),
+                    onChanged: (value) {
+                      setState(() => _completada = value);
+                      _markDirty();
+                    },
                   ),
                   SwitchListTile(
                     title: const Text('Online'),
                     value: _online,
-                    onChanged: (value) => setState(() => _online = value),
+                    onChanged: (value) {
+                      setState(() => _online = value);
+                      _markDirty();
+                    },
                   ),
                   TextFormField(
                     controller: _controllers['peso'],

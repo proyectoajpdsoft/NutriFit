@@ -1,8 +1,10 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:image/image.dart' as img;
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
@@ -24,9 +26,16 @@ class ProfileImagePicker extends StatefulWidget {
 }
 
 class _ProfileImagePickerState extends State<ProfileImagePicker> {
+  static const Rect _profileCircleNormalizedRect = Rect.fromLTWH(
+    0.15,
+    0.22,
+    0.70,
+    0.58,
+  );
   final ImagePicker _picker = ImagePicker();
   final ApiService _apiService = ApiService();
   String? _imageBase64;
+  // ignore: unused_field
   int _maxImageSizeKb = 500; // Valor por defecto
   int _maxImageWidth = 400; // Valor por defecto
   int _maxImageHeight = 400; // Valor por defecto
@@ -41,8 +50,9 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
   Future<void> _loadMaxImageSize() async {
     try {
       // Primero intentar cargar el parámetro de dimensiones
-      final dimParam =
-          await _apiService.getParametro('usuario_max_imagen_tamaño');
+      final dimParam = await _apiService.getParametro(
+        'usuario_max_imagen_tamaño',
+      );
       if (dimParam != null) {
         final width = int.tryParse(dimParam['valor'] ?? '400');
         final height = int.tryParse(dimParam['valor2'] ?? '400');
@@ -125,10 +135,15 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
   Future<void> _pickAndCropImage(ImageSource source) async {
     try {
       // Paso 1: Seleccionar imagen
-      final XFile? pickedFile = await _picker.pickImage(
-        source: source,
-        imageQuality: 85, // Reducir calidad para optimizar tamaño
-      );
+      XFile? pickedFile;
+      if (source == ImageSource.camera) {
+        pickedFile = await _capturarImagenPerfilConCirculo();
+      } else {
+        pickedFile = await _picker.pickImage(
+          source: source,
+          imageQuality: 85, // Reducir calidad para optimizar tamaño
+        );
+      }
 
       if (pickedFile == null) return;
 
@@ -170,9 +185,114 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
     }
   }
 
+  Future<XFile?> _capturarImagenPerfilConCirculo() async {
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      return _picker.pickImage(source: ImageSource.camera, imageQuality: 85);
+    }
+
+    final capturedPath = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
+        builder: (_) => const _ProfileCircleCameraCaptureScreen(
+          circleRectNormalized: _profileCircleNormalizedRect,
+        ),
+      ),
+    );
+
+    if (capturedPath == null || capturedPath.trim().isEmpty) {
+      return null;
+    }
+
+    try {
+      final cropped = await _cropProfileImageWithCircle(
+        filePath: capturedPath,
+        normalizedRect: _profileCircleNormalizedRect,
+      );
+      return XFile(cropped ?? capturedPath);
+    } catch (_) {
+      return XFile(capturedPath);
+    }
+  }
+
+  Future<String?> _cropProfileImageWithCircle({
+    required String filePath,
+    required Rect normalizedRect,
+  }) async {
+    final sourceFile = File(filePath);
+    if (!await sourceFile.exists()) {
+      return null;
+    }
+
+    final bytes = await sourceFile.readAsBytes();
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) {
+      return null;
+    }
+
+    final left = (decoded.width * normalizedRect.left).round().clamp(
+          0,
+          decoded.width - 1,
+        );
+    final top = (decoded.height * normalizedRect.top).round().clamp(
+          0,
+          decoded.height - 1,
+        );
+
+    final maxCropWidth = decoded.width - left;
+    final maxCropHeight = decoded.height - top;
+
+    final cropWidth =
+        (decoded.width * normalizedRect.width).round().clamp(1, maxCropWidth);
+    final cropHeight = (decoded.height * normalizedRect.height)
+        .round()
+        .clamp(1, maxCropHeight);
+
+    final squareSize = math.min(cropWidth, cropHeight);
+    final squareX = left + ((cropWidth - squareSize) / 2).round();
+    final squareY = top + ((cropHeight - squareSize) / 2).round();
+
+    final croppedSquare = img.copyCrop(
+      decoded,
+      x: squareX,
+      y: squareY,
+      width: squareSize,
+      height: squareSize,
+    );
+
+    final radius = squareSize / 2;
+    final center = radius - 0.5;
+    final masked = img.Image(
+      width: squareSize,
+      height: squareSize,
+      numChannels: 4,
+    );
+
+    for (var y = 0; y < squareSize; y++) {
+      for (var x = 0; x < squareSize; x++) {
+        final dx = x - center;
+        final dy = y - center;
+        final distanceSquared = (dx * dx) + (dy * dy);
+        if (distanceSquared <= (radius * radius)) {
+          final pixel = croppedSquare.getPixel(x, y);
+          masked.setPixel(x, y, pixel);
+        } else {
+          masked.setPixelRgba(x, y, 0, 0, 0, 0);
+        }
+      }
+    }
+
+    final outputPath =
+        '${Directory.systemTemp.path}${Platform.pathSeparator}nutrifit_profile_circle_crop_${DateTime.now().millisecondsSinceEpoch}.png';
+    final outputFile = File(outputPath);
+    await outputFile.writeAsBytes(img.encodePng(masked, level: 4));
+    return outputFile.path;
+  }
+
   /// Muestra un error de manera controlada según el modo debug y tipo de usuario
-  void _showUserFriendlyError(String userMessage,
-      {String? technicalDetails, bool showDetail = false}) {
+  void _showUserFriendlyError(
+    String userMessage, {
+    String? technicalDetails,
+    bool showDetail = false,
+  }) {
     final authService = Provider.of<AuthService>(context, listen: false);
     final configService = Provider.of<ConfigService>(context, listen: false);
     final isAdmin = authService.userType == 'Nutricionista' ||
@@ -225,9 +345,9 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
               ),
             ListTile(
               leading: const Icon(Icons.photo_library),
-              title: Text(isCameraAvailable
-                  ? 'Elegir de galería'
-                  : 'Seleccionar imagen'),
+              title: Text(
+                isCameraAvailable ? 'Elegir de galería' : 'Seleccionar imagen',
+              ),
               onTap: () {
                 Navigator.pop(context);
                 _pickAndCropImage(ImageSource.gallery);
@@ -236,8 +356,10 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
             if (_imageBase64 != null)
               ListTile(
                 leading: const Icon(Icons.delete, color: Colors.red),
-                title: const Text('Eliminar foto',
-                    style: TextStyle(color: Colors.red)),
+                title: const Text(
+                  'Eliminar foto',
+                  style: TextStyle(color: Colors.red),
+                ),
                 onTap: () {
                   Navigator.pop(context);
                   setState(() {
@@ -316,19 +438,13 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
         Center(
           child: Text(
             'Selecciona tu imagen de perfil',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey.shade600,
-            ),
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
           ),
         ),
         Center(
           child: Text(
             'Máx. ${_maxImageWidth}x${_maxImageHeight}px',
-            style: TextStyle(
-              fontSize: 11,
-              color: Colors.grey.shade500,
-            ),
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
           ),
         ),
       ],
@@ -352,5 +468,239 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
       //     'Primer 100 chars del base64: ${_imageBase64!.substring(0, math.min(100, _imageBase64!.length))}');
       return Icon(Icons.person, size: 60, color: Colors.grey.shade400);
     }
+  }
+}
+
+class _ProfileCircleCameraCaptureScreen extends StatefulWidget {
+  const _ProfileCircleCameraCaptureScreen({required this.circleRectNormalized});
+
+  final Rect circleRectNormalized;
+
+  @override
+  State<_ProfileCircleCameraCaptureScreen> createState() =>
+      _ProfileCircleCameraCaptureScreenState();
+}
+
+class _ProfileCircleCameraCaptureScreenState
+    extends State<_ProfileCircleCameraCaptureScreen> {
+  CameraController? _controller;
+  bool _initializing = true;
+  bool _capturing = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _initCamera();
+  }
+
+  Future<void> _initCamera() async {
+    try {
+      final cameras = await availableCameras();
+      if (cameras.isEmpty) {
+        setState(() {
+          _error = 'No se encontro camara disponible.';
+          _initializing = false;
+        });
+        return;
+      }
+
+      final camera = cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.front,
+        orElse: () => cameras.first,
+      );
+
+      final controller = CameraController(
+        camera,
+        ResolutionPreset.high,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
+
+      await controller.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+
+      await controller.setFlashMode(FlashMode.off);
+
+      setState(() {
+        _controller = controller;
+        _initializing = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'No se pudo iniciar la camara: $e';
+        _initializing = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _capture() async {
+    final controller = _controller;
+    if (controller == null || _capturing || !controller.value.isInitialized) {
+      return;
+    }
+
+    setState(() {
+      _capturing = true;
+    });
+
+    try {
+      final file = await controller.takePicture();
+      if (!mounted) return;
+      Navigator.of(context).pop(file.path);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _capturing = false;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('No se pudo tomar la foto: $e')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (_controller != null && _controller!.value.isInitialized)
+              CameraPreview(_controller!),
+            if (_initializing) const Center(child: CircularProgressIndicator()),
+            if (_error != null)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Text(
+                    _error!,
+                    style: const TextStyle(color: Colors.white),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            if (!_initializing && _error == null)
+              CustomPaint(
+                painter: _ProfileCircleFocusPainter(
+                  normalizedRect: widget.circleRectNormalized,
+                ),
+              ),
+            if (!_initializing && _error == null)
+              Positioned(
+                top: 16,
+                left: 16,
+                right: 16,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Text(
+                    'Centra tu cara dentro del circulo para recortarla automaticamente',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 16,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed:
+                          _capturing ? null : () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close),
+                      label: const Text('Cancelar'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: const BorderSide(color: Colors.white70),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: _capturing ? null : _capture,
+                      icon: _capturing
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.camera_alt_outlined),
+                      label: const Text('Capturar'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.indigo,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileCircleFocusPainter extends CustomPainter {
+  const _ProfileCircleFocusPainter({required this.normalizedRect});
+
+  final Rect normalizedRect;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final frame = Rect.fromLTWH(
+      size.width * normalizedRect.left,
+      size.height * normalizedRect.top,
+      size.width * normalizedRect.width,
+      size.height * normalizedRect.height,
+    );
+
+    final outer = Path()..addRect(Offset.zero & size);
+    final inner = Path()..addOval(frame);
+
+    final overlayPath = Path.combine(PathOperation.difference, outer, inner);
+    canvas.drawPath(overlayPath, Paint()..color = Colors.black54);
+
+    final borderPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    canvas.drawOval(frame, borderPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ProfileCircleFocusPainter oldDelegate) {
+    return oldDelegate.normalizedRect != normalizedRect;
   }
 }

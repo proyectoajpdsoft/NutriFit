@@ -31,6 +31,7 @@ class ConfigService with ChangeNotifier {
   static const _kDefaultAccesoUsuarioKey = 'defaultAccesoUsuario';
   static const _kShowEquivalenciasActividadesKey =
       'showEquivalenciasActividades';
+  static const _kDeleteSwipePercentageKey = 'deleteSwipePercentage';
 
   AppMode _appMode = AppMode.normal;
   String? _defaultTipoCita;
@@ -56,6 +57,7 @@ class ConfigService with ChangeNotifier {
   bool _defaultActivoUsuario = true;
   bool _defaultAccesoUsuario = true;
   bool _showEquivalenciasActividades = true;
+  double _deleteSwipePercentage = 50.0;
   bool _isInitialized = false;
 
   AppMode get appMode => _appMode;
@@ -82,6 +84,9 @@ class ConfigService with ChangeNotifier {
   bool get defaultActivoUsuario => _defaultActivoUsuario;
   bool get defaultAccesoUsuario => _defaultAccesoUsuario;
   bool get showEquivalenciasActividades => _showEquivalenciasActividades;
+  double get deleteSwipePercentage => _deleteSwipePercentage;
+  double get deleteSwipeDismissThreshold =>
+      (_deleteSwipePercentage / 100).clamp(0.05, 1.0);
   bool get isInitialized => _isInitialized;
 
   ConfigService() {
@@ -141,6 +146,11 @@ class ConfigService with ChangeNotifier {
     _defaultAccesoUsuario = prefs.getBool(_kDefaultAccesoUsuarioKey) ?? true;
     _showEquivalenciasActividades =
         prefs.getBool(_kShowEquivalenciasActividadesKey) ?? true;
+    _deleteSwipePercentage =
+        prefs.getDouble(_kDeleteSwipePercentageKey) ?? 50.0;
+    _deleteSwipePercentage = _sanitizeDeleteSwipePercentage(
+      _deleteSwipePercentage,
+    );
 
     _isInitialized = true;
     notifyListeners();
@@ -427,5 +437,41 @@ class ConfigService with ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kShowEquivalenciasActividadesKey, show);
     notifyListeners();
+  }
+
+  double _sanitizeDeleteSwipePercentage(double value) {
+    if (value.isNaN || value.isInfinite) return 50.0;
+    if (value <= 1.0) {
+      value *= 100;
+    }
+    if (value < 5.0) return 5.0;
+    if (value > 100.0) return 100.0;
+    return value;
+  }
+
+  Future<void> setDeleteSwipePercentage(double percentage) async {
+    _deleteSwipePercentage = _sanitizeDeleteSwipePercentage(percentage);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kDeleteSwipePercentageKey, _deleteSwipePercentage);
+    notifyListeners();
+  }
+
+  Future<void> loadDeleteSwipePercentageFromDatabase(
+      ApiService apiService) async {
+    try {
+      final param = await apiService
+          .getParametro('porcentaje_desplazamiento_para_eliminacion');
+      if (param == null) return;
+
+      final rawValue = param['valor']?.toString() ?? '';
+      if (rawValue.trim().isEmpty) return;
+
+      final parsed = double.tryParse(rawValue.replaceAll(',', '.'));
+      if (parsed == null) return;
+
+      await setDeleteSwipePercentage(parsed);
+    } catch (_) {
+      // Mantener el valor local si hay error de red/servidor.
+    }
   }
 }

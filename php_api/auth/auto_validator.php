@@ -5,6 +5,8 @@
  * Simplifica la lógica en los endpoints
  */
 
+require_once __DIR__ . '/token_validator.php';
+
 class AutoValidator {
     private $db;
     private $token_validator;
@@ -136,8 +138,18 @@ class AutoValidator {
     private function logSession($codigo_usuario = null, $estado = 'OK') {
         try {
             $query = "INSERT INTO sesion 
-                      (codigousuario, fecha, hora, estado, ip_publica) 
-                      VALUES (:codigousuario, CURDATE(), CURTIME(), :estado, :ip_publica)";
+                      (codigousuario, fecha, hora, estado, ip_publica)
+                      SELECT :codigousuario, CURDATE(), CURTIME(), :estado, :ip_publica
+                      FROM DUAL
+                      WHERE NOT EXISTS (
+                          SELECT 1
+                          FROM sesion
+                          WHERE codigousuario <=> :codigousuario_check
+                            AND estado = :estado_check
+                            AND ip_publica <=> :ip_publica_check
+                            AND TIMESTAMP(fecha, hora) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)
+                          LIMIT 1
+                      )";
             
             $stmt = $this->db->prepare($query);
             $stmt->bindParam(':codigousuario', $codigo_usuario);
@@ -145,6 +157,9 @@ class AutoValidator {
             
             $ip_publica = $this->getClientIP();
             $stmt->bindParam(':ip_publica', $ip_publica);
+            $stmt->bindParam(':codigousuario_check', $codigo_usuario);
+            $stmt->bindParam(':estado_check', $estado);
+            $stmt->bindParam(':ip_publica_check', $ip_publica);
             
             $stmt->execute();
         } catch (Exception $e) {

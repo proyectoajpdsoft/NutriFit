@@ -15,6 +15,14 @@ class Usuario {
   int? codigoPaciente;
   int? edad;
   int? altura;
+  int? premiumPeriodoMeses;
+  DateTime? premiumExpiraFecha;
+  DateTime? premiumDesdeFecha;
+  DateTime? premiumHastaFecha;
+  int? premiumPeriodoMesesSolicitado;
+  String? premiumFormaPagoSolicitada;
+  String? premiumSolicitudPendiente;
+  DateTime? premiumFechaSolicitud;
   String? imgPerfil; // Base64 de la imagen de perfil
 
   Usuario({
@@ -29,6 +37,14 @@ class Usuario {
     this.codigoPaciente,
     this.edad,
     this.altura,
+    this.premiumPeriodoMeses,
+    this.premiumExpiraFecha,
+    this.premiumDesdeFecha,
+    this.premiumHastaFecha,
+    this.premiumPeriodoMesesSolicitado,
+    this.premiumFormaPagoSolicitada,
+    this.premiumSolicitudPendiente,
+    this.premiumFechaSolicitud,
     this.imgPerfil,
   });
 
@@ -53,6 +69,25 @@ class Usuario {
       altura: json["altura"] is int
           ? json["altura"]
           : int.tryParse(json["altura"]?.toString() ?? ''),
+      premiumPeriodoMeses: json["premium_periodo_meses"] is int
+          ? json["premium_periodo_meses"]
+          : int.tryParse(json["premium_periodo_meses"]?.toString() ?? ''),
+      premiumExpiraFecha:
+          DateTime.tryParse(json["premium_expira_fecha"]?.toString() ?? ''),
+      premiumDesdeFecha:
+          DateTime.tryParse(json["premium_desde_fecha"]?.toString() ?? ''),
+      premiumHastaFecha:
+          DateTime.tryParse(json["premium_hasta_fecha"]?.toString() ?? ''),
+      premiumPeriodoMesesSolicitado:
+          json["premium_periodo_meses_solicitado"] is int
+              ? json["premium_periodo_meses_solicitado"]
+              : int.tryParse(
+                  json["premium_periodo_meses_solicitado"]?.toString() ?? ''),
+      premiumFormaPagoSolicitada: json["premium_forma_pago_solicitada"],
+      premiumSolicitudPendiente: json["premium_solicitud_pendiente"],
+      premiumFechaSolicitud: DateTime.tryParse(
+        json["premium_fecha_solicitud"]?.toString() ?? '',
+      ),
       imgPerfil: json["img_perfil"],
     );
   }
@@ -69,6 +104,14 @@ class Usuario {
         "codigo_paciente": codigoPaciente?.toString(),
         "edad": edad,
         "altura": altura,
+        "premium_periodo_meses": premiumPeriodoMeses,
+        "premium_expira_fecha": premiumExpiraFecha?.toIso8601String(),
+        "premium_desde_fecha": premiumDesdeFecha?.toIso8601String(),
+        "premium_hasta_fecha": premiumHastaFecha?.toIso8601String(),
+        "premium_periodo_meses_solicitado": premiumPeriodoMesesSolicitado,
+        "premium_forma_pago_solicitada": premiumFormaPagoSolicitada,
+        "premium_solicitud_pendiente": premiumSolicitudPendiente,
+        "premium_fecha_solicitud": premiumFechaSolicitud?.toIso8601String(),
         "img_perfil": imgPerfil,
       };
 }

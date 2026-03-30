@@ -28,6 +28,9 @@ class _CobrosListScreenState extends State<CobrosListScreen> {
   @override
   void initState() {
     super.initState();
+    context
+        .read<ConfigService>()
+        .loadDeleteSwipePercentageFromDatabase(_apiService);
     _refreshCobros();
   }
 
@@ -98,6 +101,35 @@ class _CobrosListScreenState extends State<CobrosListScreen> {
         );
       },
     );
+  }
+
+  Future<void> _openCobroMenu(Cobro cobro) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Editar'),
+              onTap: () => Navigator.pop(context, 'edit'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Eliminar'),
+              onTap: () => Navigator.pop(context, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (action == 'edit') {
+      _navigateToEditScreen(cobro);
+    } else if (action == 'delete') {
+      _showDeleteConfirmation(cobro);
+    }
   }
 
   double _sumSince(List<Cobro> cobros, DateTime fromDate) {
@@ -203,47 +235,52 @@ class _CobrosListScreenState extends State<CobrosListScreen> {
     }
 
     return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 80),
       itemCount: cobros.length,
       itemBuilder: (context, index) {
         final cobro = cobros[index];
-        return Card(
-          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          elevation: 2,
-          child: Padding(
-            padding: const EdgeInsets.all(12.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+        return Dismissible(
+          key: ValueKey('cobro_${cobro.codigo}_$index'),
+          direction: DismissDirection.startToEnd,
+          dismissThresholds: {
+            DismissDirection.startToEnd:
+                context.watch<ConfigService>().deleteSwipeDismissThreshold,
+          },
+          background: Container(
+            color: Colors.red.shade600,
+            alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: const Row(
               children: [
-                Text(
-                  '${_formatAmount(cobro.importe)} - ${cobro.nombrePaciente ?? cobro.nombreCliente ?? '-'}',
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  DateFormat('dd/MM/yyyy').format(cobro.fecha),
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.start,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.edit),
-                      color: Colors.blue,
-                      iconSize: 28,
-                      onPressed: () => _navigateToEditScreen(cobro),
-                      tooltip: 'Editar',
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete),
-                      color: Colors.red,
-                      iconSize: 28,
-                      onPressed: () => _showDeleteConfirmation(cobro),
-                      tooltip: 'Eliminar',
-                    ),
-                  ],
-                ),
+                Icon(Icons.delete_outline, color: Colors.white, size: 20),
+                SizedBox(width: 8),
+                Text('Eliminar', style: TextStyle(color: Colors.white)),
               ],
+            ),
+          ),
+          confirmDismiss: (_) async {
+            _showDeleteConfirmation(cobro);
+            return false;
+          },
+          child: Card(
+            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            elevation: 2,
+            child: ListTile(
+              title: Text(
+                '${_formatAmount(cobro.importe)} - ${cobro.nombrePaciente ?? cobro.nombreCliente ?? '-'}',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              subtitle: Text(
+                DateFormat('dd/MM/yyyy').format(cobro.fecha),
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+              trailing: IconButton(
+                icon: const Icon(Icons.more_vert),
+                tooltip: 'Más opciones',
+                onPressed: () => _openCobroMenu(cobro),
+              ),
+              onTap: () => _navigateToEditScreen(cobro),
+              onLongPress: () => _openCobroMenu(cobro),
             ),
           ),
         );
@@ -455,6 +492,7 @@ class _CobrosListScreenState extends State<CobrosListScreen> {
         ),
         Expanded(
           child: TabBarView(
+            physics: const NeverScrollableScrollPhysics(),
             children: [
               _buildCobrosList(cobros),
               _buildTotalsTab(cobros),

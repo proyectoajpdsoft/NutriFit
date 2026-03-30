@@ -33,7 +33,10 @@ class _CobroEditScreenState extends State<CobroEditScreen> {
 
   Future<bool> _confirmDiscardChanges() async {
     if (!_hasChanges) return true;
-    return showUnsavedChangesDialog(context);
+    return showUnsavedChangesDialog(
+      context,
+      onSave: () => _saveForm(closeOnSuccess: false),
+    );
   }
 
   Future<void> _handleBack() async {
@@ -98,7 +101,11 @@ class _CobroEditScreenState extends State<CobroEditScreen> {
     super.dispose();
   }
 
-  Future<void> _submitForm() async {
+  void _submitForm() {
+    _saveForm(closeOnSuccess: true);
+  }
+
+  Future<bool> _saveForm({required bool closeOnSuccess}) async {
     if (_formKey.currentState!.validate()) {
       _formKey.currentState!.save();
 
@@ -121,6 +128,7 @@ class _CobroEditScreenState extends State<CobroEditScreen> {
           success = await _apiService.createCobro(cobroData);
         }
         if (success) {
+          _hasChanges = false;
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -130,8 +138,11 @@ class _CobroEditScreenState extends State<CobroEditScreen> {
                 backgroundColor: Colors.green,
               ),
             );
-            Navigator.of(context).pop(true);
+            if (closeOnSuccess) {
+              Navigator.of(context).pop(true);
+            }
           }
+          return true;
         } else {
           // Si el servidor indica que no fue exitoso pero no lanzó una excepción, manejamos aquí.
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -145,6 +156,7 @@ class _CobroEditScreenState extends State<CobroEditScreen> {
             backgroundColor: Colors.red));
       }
     }
+    return false;
   }
 
   @override
@@ -184,6 +196,7 @@ class _CobroEditScreenState extends State<CobroEditScreen> {
                           lastDate: DateTime(2101));
                       if (pickedDate != null) {
                         setState(() => _fecha = pickedDate);
+                        _markDirty();
                       }
                     },
                   ),
@@ -197,10 +210,13 @@ class _CobroEditScreenState extends State<CobroEditScreen> {
                           title: const Text('Paciente'),
                           value: OrigenCobro.paciente,
                           groupValue: _origen,
-                          onChanged: (value) => setState(() {
-                            _origen = value!;
-                            _selectedClienteId = null;
-                          }),
+                          onChanged: (value) {
+                            setState(() {
+                              _origen = value!;
+                              _selectedClienteId = null;
+                            });
+                            _markDirty();
+                          },
                         ),
                       ),
                       Expanded(
@@ -208,10 +224,13 @@ class _CobroEditScreenState extends State<CobroEditScreen> {
                           title: const Text('Cliente'),
                           value: OrigenCobro.cliente,
                           groupValue: _origen,
-                          onChanged: (value) => setState(() {
-                            _origen = value!;
-                            _selectedPacienteId = null;
-                          }),
+                          onChanged: (value) {
+                            setState(() {
+                              _origen = value!;
+                              _selectedPacienteId = null;
+                            });
+                            _markDirty();
+                          },
                         ),
                       ),
                     ],
@@ -263,7 +282,10 @@ class _CobroEditScreenState extends State<CobroEditScreen> {
               .map((paciente) => DropdownMenuItem(
                   value: paciente.codigo, child: Text(paciente.nombre)))
               .toList(),
-          onChanged: (value) => setState(() => _selectedPacienteId = value),
+          onChanged: (value) {
+            setState(() => _selectedPacienteId = value);
+            _markDirty();
+          },
           validator: (value) => value == null ? 'Selecciona un paciente' : null,
         );
       },
@@ -284,7 +306,10 @@ class _CobroEditScreenState extends State<CobroEditScreen> {
               .map((cliente) => DropdownMenuItem(
                   value: cliente.codigo, child: Text(cliente.nombre)))
               .toList(),
-          onChanged: (value) => setState(() => _selectedClienteId = value),
+          onChanged: (value) {
+            setState(() => _selectedClienteId = value);
+            _markDirty();
+          },
           validator: (value) => value == null ? 'Selecciona un cliente' : null,
         );
       },

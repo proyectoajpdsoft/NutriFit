@@ -9,6 +9,29 @@ class TokenValidator {
     private $db;
     private $current_user = null;
     private $token = null;
+
+    private function getUsuarioColumnsMap() {
+        static $cache = null;
+        if ($cache !== null) {
+            return $cache;
+        }
+
+        $cache = array();
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM usuario");
+            $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : array();
+            foreach ($rows as $row) {
+                $field = strtolower(trim((string)($row['Field'] ?? '')));
+                if ($field !== '') {
+                    $cache[$field] = true;
+                }
+            }
+        } catch (Exception $e) {
+            $cache = array();
+        }
+
+        return $cache;
+    }
     
     public function __construct($database) {
         $this->db = $database;
@@ -118,7 +141,27 @@ class TokenValidator {
      * Valida el token contra la base de datos
      */
     private function validateTokenInDatabase() {
-        $query = "SELECT codigo, nick, tipo, administrador, codigo_paciente, token_expiracion, activo, accesoweb 
+        $columns = $this->getUsuarioColumnsMap();
+
+        $selectFields = array(
+            "codigo",
+            "nick",
+            "tipo",
+            "administrador",
+            "codigo_paciente",
+            "token_expiracion",
+            "activo",
+            "accesoweb",
+        );
+
+        if (isset($columns['premium_expira_fecha'])) {
+            $selectFields[] = "premium_expira_fecha";
+        }
+        if (isset($columns['premium_periodo_meses'])) {
+            $selectFields[] = "premium_periodo_meses";
+        }
+
+        $query = "SELECT " . implode(', ', $selectFields) . "
                   FROM usuario 
                   WHERE token = :token 
                   AND (token_expiracion IS NULL OR token_expiracion > NOW()) 
@@ -144,6 +187,8 @@ class TokenValidator {
                     "tipo" => $user['tipo'],
                     "administrador" => $user['administrador'],
                     "codigo_paciente" => $user['codigo_paciente'],
+                    "premium_expira_fecha" => $user['premium_expira_fecha'] ?? null,
+                    "premium_periodo_meses" => $user['premium_periodo_meses'] ?? null,
                     "es_guest" => false,
                     "token" => $this->token
                 );
@@ -169,8 +214,19 @@ class TokenValidator {
     private function logSession($codigo_usuario = null, $estado = 'OK', $codigo_ejercicio = null) {
         try {
             $query = "INSERT INTO sesion 
-                      (codigousuario, fecha, hora, estado, codigoejercicio, ip_publica) 
-                      VALUES (:codigousuario, CURDATE(), CURTIME(), :estado, :codigoejercicio, :ip_publica)";
+                      (codigousuario, fecha, hora, estado, codigoejercicio, ip_publica)
+                      SELECT :codigousuario, CURDATE(), CURTIME(), :estado, :codigoejercicio, :ip_publica
+                      FROM DUAL
+                      WHERE NOT EXISTS (
+                          SELECT 1
+                          FROM sesion
+                          WHERE codigousuario <=> :codigousuario_check
+                            AND estado = :estado_check
+                            AND codigoejercicio <=> :codigoejercicio_check
+                            AND ip_publica <=> :ip_publica_check
+                            AND TIMESTAMP(fecha, hora) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)
+                          LIMIT 1
+                      )";
             
             $stmt = $this->db->prepare($query);
             $stmt->bindParam(':codigousuario', $codigo_usuario);
@@ -180,6 +236,10 @@ class TokenValidator {
             // Obtener IP pública
             $ip_publica = $this->getClientIP();
             $stmt->bindParam(':ip_publica', $ip_publica);
+            $stmt->bindParam(':codigousuario_check', $codigo_usuario);
+            $stmt->bindParam(':estado_check', $estado);
+            $stmt->bindParam(':codigoejercicio_check', $codigo_ejercicio);
+            $stmt->bindParam(':ip_publica_check', $ip_publica);
             
             $stmt->execute();
         } catch (Exception $e) {

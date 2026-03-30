@@ -7,7 +7,6 @@ import 'package:nutri_app/models/paciente.dart';
 import 'package:nutri_app/models/revision.dart';
 import 'package:nutri_app/screens/revisiones/revision_edit_screen.dart';
 import 'package:nutri_app/services/api_service.dart';
-import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/services/config_service.dart';
 import 'package:nutri_app/services/revisiones_pdf_service.dart';
 import 'package:provider/provider.dart';
@@ -1093,9 +1092,6 @@ class _RevisionesListScreenState extends State<RevisionesListScreen> {
     String modificacionDieta,
   ) async {
     try {
-      final authService = context.read<AuthService>();
-      final codusuario = authService.userCode;
-
       // Crear una copia actualizada de la revisión
       final revisionActualizada = Revision(
         codigo: revision.codigo,

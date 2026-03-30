@@ -12,6 +12,7 @@ class EntrenamientoEjercicio {
   int? codigoEjercicioCatalogo;
   String nombre;
   String? instrucciones;
+  String? instruccionesDetalladas;
   String? urlVideo;
   String? fotoBase64;
   String? fotoNombre;
@@ -40,6 +41,7 @@ class EntrenamientoEjercicio {
     this.codigoEjercicioCatalogo,
     required this.nombre,
     this.instrucciones,
+    this.instruccionesDetalladas,
     this.urlVideo,
     this.fotoBase64,
     this.fotoNombre,
@@ -78,6 +80,7 @@ class EntrenamientoEjercicio {
           : int.tryParse(json['codigo_ejercicio_catalogo']?.toString() ?? ''),
       nombre: json['nombre']?.toString() ?? '',
       instrucciones: json['instrucciones']?.toString(),
+      instruccionesDetalladas: json['instrucciones_detalladas']?.toString(),
       urlVideo: json['url_video']?.toString(),
       fotoBase64: json['foto']?.toString(),
       fotoNombre: json['foto_nombre']?.toString(),
@@ -139,6 +142,7 @@ class EntrenamientoEjercicio {
         'codigo_ejercicio_catalogo': codigoEjercicioCatalogo,
         'nombre': nombre,
         'instrucciones': instrucciones,
+        'instrucciones_detalladas': instruccionesDetalladas,
         'url_video': urlVideo,
         'foto': fotoBase64,
         'foto_nombre': fotoNombre,

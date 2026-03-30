@@ -1,6 +1,6 @@
 <?php
-error_reporting(E_ALL); 
-ini_set('display_errors', 1); 
+error_reporting(E_ALL);
+ini_set('display_errors', 0);
 ob_start(); // Iniciar el buffer de salida
 
 // Headers para permitir el acceso desde cualquier origen (CORS)
@@ -97,7 +97,7 @@ function get_total_planes($codigo_paciente = null) {
 
 function get_planes_por_paciente($codigo_paciente) {
     global $db;
-    $query = "SELECT p.codigo, p.codigo_paciente, p.desde, p.hasta, p.semanas, p.completado, p.codigo_entrevista, p.plan_documento_nombre, p.plan_indicaciones, p.plan_indicaciones_visible_usuario, p.url, p.fechaa, pa.nombre as nombre_paciente FROM nu_plan_nutricional p LEFT JOIN nu_paciente pa ON p.codigo_paciente = pa.codigo WHERE p.codigo_paciente = :codigo_paciente ORDER BY p.desde DESC";
+    $query = "SELECT p.codigo, p.codigo_paciente, p.titulo_plan, p.objetivo_plan, p.desde, p.hasta, p.semanas, p.total_semanas, p.usa_estructura_detallada, p.completado, p.codigo_entrevista, p.plan_documento_nombre, p.plan_indicaciones, p.plan_indicaciones_visible_usuario, p.url, p.fechaa, pa.nombre as nombre_paciente FROM nu_plan_nutricional p LEFT JOIN nu_paciente pa ON p.codigo_paciente = pa.codigo WHERE p.codigo_paciente = :codigo_paciente ORDER BY p.desde DESC";
     
     $stmt = $db->prepare($query);
     $stmt->bindParam(':codigo_paciente', $codigo_paciente);
@@ -119,7 +119,7 @@ function get_planes_por_paciente($codigo_paciente) {
 
 function get_todos_planes() {
     global $db;
-    $query = "SELECT p.codigo, p.codigo_paciente, p.desde, p.hasta, p.semanas, p.completado, p.codigo_entrevista, p.plan_documento_nombre, p.plan_indicaciones, p.plan_indicaciones_visible_usuario, p.url, p.fechaa, pa.nombre as nombre_paciente FROM nu_plan_nutricional p LEFT JOIN nu_paciente pa ON p.codigo_paciente = pa.codigo ORDER BY p.desde DESC";
+    $query = "SELECT p.codigo, p.codigo_paciente, p.titulo_plan, p.objetivo_plan, p.desde, p.hasta, p.semanas, p.total_semanas, p.usa_estructura_detallada, p.completado, p.codigo_entrevista, p.plan_documento_nombre, p.plan_indicaciones, p.plan_indicaciones_visible_usuario, p.url, p.fechaa, pa.nombre as nombre_paciente FROM nu_plan_nutricional p LEFT JOIN nu_paciente pa ON p.codigo_paciente = pa.codigo ORDER BY p.desde DESC";
     
     $stmt = $db->prepare($query);
     
@@ -164,12 +164,16 @@ function download_plan($codigo) {
 function create_plan() {
     global $db;
     
-    error_log("CREATE_PLAN: recibido $_POST. Archivos: " . json_encode($_FILES));
+    error_log('CREATE_PLAN: payload=' . json_encode($_POST) . ' archivos=' . json_encode($_FILES));
     
     $codigo_paciente = !empty($_POST['codigo_paciente']) ? intval($_POST['codigo_paciente']) : null;
+    $titulo_plan = !empty($_POST['titulo_plan']) ? $_POST['titulo_plan'] : null;
+    $objetivo_plan = !empty($_POST['objetivo_plan']) ? $_POST['objetivo_plan'] : null;
     $desde = !empty($_POST['fecha_inicio']) ? $_POST['fecha_inicio'] : null;
     $hasta = !empty($_POST['fecha_fin']) ? $_POST['fecha_fin'] : null;
     $semanas = !empty($_POST['semanas']) ? $_POST['semanas'] : null;
+    $total_semanas = !empty($_POST['total_semanas']) ? intval($_POST['total_semanas']) : null;
+    $usa_estructura_detallada = !empty($_POST['usa_estructura_detallada']) ? $_POST['usa_estructura_detallada'] : 'N';
     $completado = !empty($_POST['completado']) ? $_POST['completado'] : null;
     $codigo_entrevista = !empty($_POST['codigo_entrevista']) ? intval($_POST['codigo_entrevista']) : null;
     $plan_indicaciones = !empty($_POST['descripcion']) ? $_POST['descripcion'] : null;
@@ -193,14 +197,18 @@ function create_plan() {
         error_log("CREATE_PLAN: Archivo multipart recibido: $plan_documento_nombre, tamaño=" . strlen($plan_documento));
     }
 
-    $query = "INSERT INTO nu_plan_nutricional (codigo_paciente, desde, hasta, semanas, completado, codigo_entrevista, plan_documento, plan_documento_nombre, plan_indicaciones, plan_indicaciones_visible_usuario, url, fechaa, codusuarioa) VALUES (:codigo_paciente, :desde, :hasta, :semanas, :completado, :codigo_entrevista, :plan_documento, :plan_documento_nombre, :plan_indicaciones, :plan_indicaciones_visible_usuario, :url, NOW(), :codusuarioa)";
+    $query = "INSERT INTO nu_plan_nutricional (codigo_paciente, titulo_plan, objetivo_plan, desde, hasta, semanas, total_semanas, usa_estructura_detallada, completado, codigo_entrevista, plan_documento, plan_documento_nombre, plan_indicaciones, plan_indicaciones_visible_usuario, url, fechaa, codusuarioa) VALUES (:codigo_paciente, :titulo_plan, :objetivo_plan, :desde, :hasta, :semanas, :total_semanas, :usa_estructura_detallada, :completado, :codigo_entrevista, :plan_documento, :plan_documento_nombre, :plan_indicaciones, :plan_indicaciones_visible_usuario, :url, NOW(), :codusuarioa)";
     
     $stmt = $db->prepare($query);
 
     $stmt->bindParam(":codigo_paciente", $codigo_paciente, PDO::PARAM_INT);
+    $stmt->bindParam(":titulo_plan", $titulo_plan);
+    $stmt->bindParam(":objetivo_plan", $objetivo_plan);
     $stmt->bindParam(":desde", $desde);
     $stmt->bindParam(":hasta", $hasta);
     $stmt->bindParam(":semanas", $semanas);
+    $stmt->bindParam(":total_semanas", $total_semanas, PDO::PARAM_INT);
+    $stmt->bindParam(":usa_estructura_detallada", $usa_estructura_detallada);
     $stmt->bindParam(":completado", $completado);
     $stmt->bindParam(":codigo_entrevista", $codigo_entrevista, PDO::PARAM_INT);
     $stmt->bindParam(":plan_documento", $plan_documento, PDO::PARAM_LOB);
@@ -211,8 +219,9 @@ function create_plan() {
     $stmt->bindParam(":codusuarioa", $codusuarioa);
 
     if ($stmt->execute()) {
+        $codigo_nuevo = intval($db->lastInsertId());
         http_response_code(201);
-        echo json_encode(array("message" => "Plan creado."));
+        echo json_encode(array("message" => "Plan creado.", "codigo" => $codigo_nuevo));
     } else {
         http_response_code(503);
         echo json_encode(array(
@@ -225,7 +234,7 @@ function create_plan() {
 function update_plan() {
     global $db;
     
-    error_log("UPDATE_PLAN: recibido $_POST. Archivos: " . json_encode($_FILES));
+    error_log('UPDATE_PLAN: payload=' . json_encode($_POST) . ' archivos=' . json_encode($_FILES));
     
     $codigo = !empty($_POST['codigo']) ? intval($_POST['codigo']) : null;
     if (is_null($codigo)) {
@@ -235,9 +244,13 @@ function update_plan() {
     }
 
     $codigo_paciente = !empty($_POST['codigo_paciente']) ? intval($_POST['codigo_paciente']) : null;
+    $titulo_plan = !empty($_POST['titulo_plan']) ? $_POST['titulo_plan'] : null;
+    $objetivo_plan = !empty($_POST['objetivo_plan']) ? $_POST['objetivo_plan'] : null;
     $desde = !empty($_POST['fecha_inicio']) ? $_POST['fecha_inicio'] : null;
     $hasta = !empty($_POST['fecha_fin']) ? $_POST['fecha_fin'] : null;
     $semanas = !empty($_POST['semanas']) ? $_POST['semanas'] : null;
+    $total_semanas = !empty($_POST['total_semanas']) ? intval($_POST['total_semanas']) : null;
+    $usa_estructura_detallada = !empty($_POST['usa_estructura_detallada']) ? $_POST['usa_estructura_detallada'] : 'N';
     $completado = !empty($_POST['completado']) ? $_POST['completado'] : null;
     $codigo_entrevista = !empty($_POST['codigo_entrevista']) ? intval($_POST['codigo_entrevista']) : null;
     $plan_indicaciones = !empty($_POST['descripcion']) ? $_POST['descripcion'] : null;
@@ -249,9 +262,13 @@ function update_plan() {
     
     $set_clauses = [
         "codigo_paciente = :codigo_paciente",
+        "titulo_plan = :titulo_plan",
+        "objetivo_plan = :objetivo_plan",
         "desde = :desde",
         "hasta = :hasta",
         "semanas = :semanas",
+        "total_semanas = :total_semanas",
+        "usa_estructura_detallada = :usa_estructura_detallada",
         "completado = :completado",
         "codigo_entrevista = :codigo_entrevista",
         "plan_indicaciones = :plan_indicaciones",
@@ -262,9 +279,13 @@ function update_plan() {
     ];
     $bind_params = [
         ':codigo_paciente' => $codigo_paciente,
+        ':titulo_plan' => $titulo_plan,
+        ':objetivo_plan' => $objetivo_plan,
         ':desde' => $desde,
         ':hasta' => $hasta,
         ':semanas' => $semanas,
+        ':total_semanas' => $total_semanas,
+        ':usa_estructura_detallada' => $usa_estructura_detallada,
         ':completado' => $completado,
         ':codigo_entrevista' => $codigo_entrevista,
         ':plan_indicaciones' => $plan_indicaciones,
@@ -291,6 +312,10 @@ function update_plan() {
         $bind_params[':plan_documento'] = $plan_documento;
         $bind_params[':plan_documento_nombre'] = $plan_documento_nombre;
         error_log("UPDATE_PLAN: Archivo multipart recibido: $plan_documento_nombre, tamaño=" . strlen($plan_documento));
+    } elseif (array_key_exists('plan_documento_nombre', $_POST) && trim((string)$_POST['plan_documento_nombre']) === '') {
+        $set_clauses[] = "plan_documento = NULL";
+        $set_clauses[] = "plan_documento_nombre = NULL";
+        error_log("UPDATE_PLAN: Eliminando documento existente (plan_documento y plan_documento_nombre a NULL)");
     }
 
     $query = "UPDATE nu_plan_nutricional SET " . implode(", ", $set_clauses) . " WHERE codigo = :codigo";

@@ -35,6 +35,7 @@ dependencies:
 
   # Acceder a las rutas del sistema de ficheros (para guardar los PDFs)
   path_provider: ^2.1.3
+  share_plus: ^10.1.2
 
   # Almacenamiento seguro para el token de autenticación
   flutter_secure_storage: ^10.0.0
@@ -45,6 +46,7 @@ dependencies:
 
   # Selector de imágenes (cámara y galería)
   image_picker: ^1.0.7
+  camera: ^0.11.0+2
   google_mlkit_text_recognition: ^0.14.0
   google_mlkit_barcode_scanning: ^0.13.0
 
@@ -63,13 +65,17 @@ dependencies:
   # Generación de PDFs
   pdf: ^3.11.0
   printing: ^5.14.2
+  # Generación de Word (.docx)
+  archive: ^3.6.1
   fl_chart: ^1.1.1
+  qr_flutter: ^4.1.0
 
   # Mantener pantalla encendida durante el temporizador
   wakelock_plus: ^1.2.0
 
   # Audio para el metrónomo
   audioplayers: ^6.0.0
+  record: ^6.2.0
 
   # Gestion de ventana en escritorio (guardar/restaurar tamaño)
   window_manager: ^0.4.2
@@ -79,10 +85,15 @@ dependencies:
   super_native_extensions: ^0.8.0
   auto_size_text: ^3.0.0
   url_launcher: ^6.3.1
+  video_player: ^2.9.2
+  chewie: ^1.8.5
   firebase_core: ^3.8.0
   firebase_messaging: ^15.1.5
   flutter_local_notifications: ^18.0.1
   local_notifier: ^0.1.6
+  ftpconnect: ^2.0.10
+  encrypt: ^5.0.3
+  crypto: ^3.0.7
 
 
 dev_dependencies:
@@ -103,6 +114,7 @@ flutter:
   # Para añadir assets a tu aplicación, descomenta esta sección:
   assets:
     - assets/
+    - assets/fonts/
     - assets/sounds/
     - assets/mediciones/
 

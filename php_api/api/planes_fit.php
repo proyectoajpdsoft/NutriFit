@@ -298,6 +298,10 @@ function update_plan_fit() {
         $set_clauses[] = "plan_documento = :plan_documento";
         $bind_params[':plan_documento'] = $plan_documento_blob;
         error_log("UPDATE_PLAN_FIT: Archivo multipart recibido, tamaño=" . strlen($plan_documento_blob));
+    } elseif (array_key_exists('plan_documento_nombre', $_POST) && trim((string)$_POST['plan_documento_nombre']) === '') {
+        $set_clauses[] = "plan_documento = NULL";
+        $set_clauses[] = "plan_documento_nombre = NULL";
+        error_log("UPDATE_PLAN_FIT: Eliminando documento existente (plan_documento y plan_documento_nombre a NULL)");
     }
 
     if (empty($set_clauses)) {

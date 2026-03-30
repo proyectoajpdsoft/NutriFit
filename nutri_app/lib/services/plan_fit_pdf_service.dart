@@ -667,7 +667,7 @@ class PlanFitPdfService {
     if (title.isEmpty) {
       return 'Día ${dia.numeroDia}';
     }
-    return 'Día ${dia.numeroDia} - $title';
+    return title;
   }
 
   static pw.Widget _buildExercisesTable({

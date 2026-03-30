@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:nutri_app/services/api_service.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -14,6 +15,7 @@ class ConsejoRecetaPdfService {
   static final RegExp _imageTokenRegex = RegExp(r'\[\[img:(\d+)\]\]');
   static final RegExp _nonPdfTokenRegex =
       RegExp(r'\[\[(documento|enlace):(\d+)\]\]');
+  static pw.Font? _cachedEmojiFont;
 
   static Future<void> generatePdf({
     required BuildContext context,
@@ -24,6 +26,13 @@ class ConsejoRecetaPdfService {
     String? imagenPortadaBase64,
     Map<int, String>? imagenesInlineById,
     String? fileName,
+    String? subtitulo,
+    String? alimentoOrigen,
+    String? sustitutoPrincipal,
+    String? equivalenciaTexto,
+    String? objetivoMacro,
+    bool preserveEmojis = false,
+    bool isAditivosList = false,
   }) async {
     try {
       // Obtener parámetros del nutricionista
@@ -91,19 +100,37 @@ class ConsejoRecetaPdfService {
 
       final pdf = pw.Document();
 
-      final tituloTipo = tipo == 'receta' ? 'RECETA' : 'CONSEJO';
+      final tituloTipo = tipo == 'receta'
+          ? 'RECETA'
+          : (tipo == 'sustitucion'
+              ? 'SUSTITUCIÓN SALUDABLE'
+              : (tipo == 'suplemento'
+                  ? 'SUPLEMENTO'
+                  : (tipo == 'aditivo'
+                      ? (isAditivosList
+                          ? 'ADITIVOS ALIMENTARIOS'
+                          : 'ADITIVO ALIMENTARIO')
+                      : 'CONSEJO')));
 
-      // Limpiar emojis del contenido
-      final contenidoSinEmojis = _removeEmojis(contenido);
-      final tituloSinEmojis = _removeEmojis(titulo);
+      final contenidoProcesado = preserveEmojis
+          ? contenido.replaceAll('\r\n', '\n').trim()
+          : _removeEmojisKeepingPointers(contenido);
+      final tituloProcesado = preserveEmojis ? titulo : _removeEmojis(titulo);
+      final subtituloProcesado =
+          preserveEmojis ? (subtitulo ?? '') : _removeEmojis(subtitulo ?? '');
       final portadaImage = _decodePdfImage(imagenPortadaBase64);
 
       final logoSize = _parseLogoSize(logoSizeStr);
+
+      final emojiFont = preserveEmojis ? await _loadEmojiFont() : null;
 
       pdf.addPage(
         pw.MultiPage(
           pageFormat: PdfPageFormat.a4,
           margin: const pw.EdgeInsets.fromLTRB(24, 16, 24, 24),
+          theme: (emojiFont != null)
+              ? pw.ThemeData.withFont(fontFallback: [emojiFont])
+              : null,
           header: (context) => _buildHeader(
             nutricionistaNombre: nutricionistaNombre,
             nutricionistaSubtitulo: nutricionistaSubtitulo,
@@ -120,96 +147,142 @@ class ConsejoRecetaPdfService {
             accentColor: accentColor,
             titulo_tipo: tituloTipo,
           ),
-          build: (context) => [
-            pw.Center(
-              child: pw.Text(
-                tituloSinEmojis,
-                style:
-                    pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
-              ),
-            ),
-            pw.SizedBox(height: 12),
-            if (portadaImage != null) ...[
+          build: (context) {
+            final contentWidgets = <pw.Widget>[
               pw.Center(
-                child: pw.Container(
-                  width: double.infinity,
-                  height: 190,
-                  child: pw.Image(
-                    portadaImage,
-                    fit: pw.BoxFit.contain,
-                    alignment: pw.Alignment.center,
-                  ),
+                child: pw.Text(
+                  tituloProcesado,
+                  style: pw.TextStyle(
+                      fontSize: 16, fontWeight: pw.FontWeight.bold),
                 ),
               ),
-              pw.SizedBox(height: 14),
-            ],
-            ..._buildFlowingContent(
-              contenidoSinEmojis,
-              imagenesInlineById: imagenesInlineById,
-            ),
-            pw.SizedBox(height: 12),
-            pw.Divider(),
-            pw.Container(
-              width: double.infinity,
-              padding: const pw.EdgeInsets.all(8),
-              decoration: pw.BoxDecoration(color: accentColor),
-              child: pw.Table(
-                columnWidths: const {
-                  0: pw.FlexColumnWidth(),
-                  1: pw.FlexColumnWidth(),
-                  2: pw.FlexColumnWidth(),
-                },
-                children: [
-                  pw.TableRow(
-                    children: [
-                      _buildInfoCell(
-                        label: 'Email',
-                        iconText: '@',
-                        value: nutricionistaEmail,
-                      ),
-                      _buildInfoCell(
-                        label: 'Telegram',
-                        iconText: 'TG',
-                        value: nutricionistaTelegram,
-                      ),
-                      _buildLinkCell(
-                        label: 'Web',
-                        iconText: 'W',
-                        url: nutricionistaWebUrl,
-                        text: nutricionistaWebLabel,
-                      ),
-                    ],
+              if (subtituloProcesado.trim().isNotEmpty) ...[
+                pw.SizedBox(height: 6),
+                pw.Center(
+                  child: pw.Text(
+                    subtituloProcesado.trim(),
+                    textAlign: pw.TextAlign.center,
+                    style: pw.TextStyle(
+                      fontSize: 12,
+                      color: PdfColors.grey700,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
                   ),
-                  pw.TableRow(
-                    children: [
-                      _buildLinkCell(
-                        label: 'Instagram',
-                        iconText: 'IG',
-                        url: nutricionistaInstagramUrl,
-                        text: nutricionistaInstagramLabel,
-                      ),
-                      _buildLinkCell(
-                        label: 'Facebook',
-                        iconText: 'FB',
-                        url: nutricionistaFacebookUrl,
-                        text: nutricionistaFacebookLabel,
-                      ),
-                      pw.SizedBox(),
-                    ],
+                ),
+              ],
+              pw.SizedBox(height: 12),
+              if (portadaImage != null) ...[
+                pw.Center(
+                  child: pw.Container(
+                    width: double.infinity,
+                    height: 190,
+                    child: pw.Image(
+                      portadaImage,
+                      fit: pw.BoxFit.contain,
+                      alignment: pw.Alignment.center,
+                    ),
                   ),
-                ],
+                ),
+                pw.SizedBox(height: 14),
+              ],
+            ];
+
+            if (tipo == 'sustitucion') {
+              contentWidgets.addAll(
+                _buildSustitucionContent(
+                  contenido: contenidoProcesado,
+                  alimentoOrigen: alimentoOrigen ?? '',
+                  sustitutoPrincipal: sustitutoPrincipal ?? '',
+                  equivalenciaTexto: equivalenciaTexto ?? '',
+                  objetivoMacro: objetivoMacro ?? '',
+                ),
+              );
+            } else if (isAditivosList && tipo == 'aditivo') {
+              contentWidgets.addAll(
+                _buildAditivosListContent(
+                  contenidoProcesado,
+                  imagenesInlineById: imagenesInlineById,
+                ),
+              );
+            } else {
+              contentWidgets.addAll(
+                _buildFlowingContent(
+                  contenidoProcesado,
+                  imagenesInlineById: imagenesInlineById,
+                ),
+              );
+            }
+
+            contentWidgets.addAll([
+              pw.SizedBox(height: 12),
+              pw.Divider(),
+              pw.Container(
+                width: double.infinity,
+                padding: const pw.EdgeInsets.all(8),
+                decoration: pw.BoxDecoration(color: accentColor),
+                child: pw.Table(
+                  columnWidths: const {
+                    0: pw.FlexColumnWidth(),
+                    1: pw.FlexColumnWidth(),
+                    2: pw.FlexColumnWidth(),
+                  },
+                  children: [
+                    pw.TableRow(
+                      children: [
+                        _buildInfoCell(
+                          label: 'Email',
+                          iconText: '@',
+                          value: nutricionistaEmail,
+                        ),
+                        _buildInfoCell(
+                          label: 'Telegram',
+                          iconText: 'TG',
+                          value: nutricionistaTelegram,
+                        ),
+                        _buildLinkCell(
+                          label: 'Web',
+                          iconText: 'W',
+                          url: nutricionistaWebUrl,
+                          text: nutricionistaWebLabel,
+                        ),
+                      ],
+                    ),
+                    pw.TableRow(
+                      children: [
+                        _buildLinkCell(
+                          label: 'Instagram',
+                          iconText: 'IG',
+                          url: nutricionistaInstagramUrl,
+                          text: nutricionistaInstagramLabel,
+                        ),
+                        _buildLinkCell(
+                          label: 'Facebook',
+                          iconText: 'FB',
+                          url: nutricionistaFacebookUrl,
+                          text: nutricionistaFacebookLabel,
+                        ),
+                        pw.SizedBox(),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ]);
+
+            return contentWidgets;
+          },
         ),
       );
 
       final bytes = await pdf.save();
       final safeFileName =
-          tituloSinEmojis.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]+'), '_');
-      final resolvedFileName = (fileName != null && fileName.trim().isNotEmpty)
+          tituloProcesado.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]+'), '_');
+      final baseFileName = (fileName != null && fileName.trim().isNotEmpty)
           ? fileName.trim()
-          : '${tipo}_${safeFileName.toLowerCase()}.pdf';
+          : '${tipo}_${safeFileName.toLowerCase()}';
+      final resolvedFileName = baseFileName.toLowerCase().endsWith('.pdf')
+          ? baseFileName
+          : '$baseFileName.pdf';
 
       await Printing.sharePdf(bytes: bytes, filename: resolvedFileName);
     } catch (e) {
@@ -340,6 +413,17 @@ class ConsejoRecetaPdfService {
     return const PdfPoint(42, 30);
   }
 
+  static Future<pw.Font?> _loadEmojiFont() async {
+    if (_cachedEmojiFont != null) return _cachedEmojiFont;
+    try {
+      final data = await rootBundle.load('assets/fonts/NotoEmoji-Regular.ttf');
+      _cachedEmojiFont = pw.Font.ttf(data.buffer.asByteData());
+      return _cachedEmojiFont;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static PdfColor? _parsePdfColor(String? value) {
     if (value == null) return null;
     var raw = value.trim();
@@ -379,6 +463,298 @@ class ConsejoRecetaPdfService {
     return lines;
   }
 
+  static String _removeEmojisKeepingPointers(String text) {
+    const openToken = '__POINTER_OPEN__';
+    const closeToken = '__POINTER_CLOSE__';
+    final protectedText =
+        text.replaceAll('👉', openToken).replaceAll('👈', closeToken);
+    return _removeEmojis(protectedText)
+        .replaceAll(openToken, '👉')
+        .replaceAll(closeToken, '👈');
+  }
+
+  static List<pw.Widget> _buildSustitucionContent({
+    required String contenido,
+    required String alimentoOrigen,
+    required String sustitutoPrincipal,
+    required String equivalenciaTexto,
+    required String objetivoMacro,
+  }) {
+    final widgets = <pw.Widget>[];
+
+    widgets.add(
+      pw.Container(
+        width: double.infinity,
+        padding: const pw.EdgeInsets.all(12),
+        decoration: pw.BoxDecoration(
+          color: PdfColor.fromHex('#E8F5E9'),
+          borderRadius: pw.BorderRadius.circular(10),
+          border: pw.Border.all(color: PdfColor.fromHex('#C8E6C9')),
+        ),
+        child: pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Text(
+              'Cambio recomendado',
+              style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
+            ),
+            pw.SizedBox(height: 8),
+            _buildSustitucionDetailRow('Si no tienes', alimentoOrigen),
+            pw.SizedBox(height: 6),
+            _buildSustitucionDetailRow('Usa', sustitutoPrincipal),
+            if (equivalenciaTexto.trim().isNotEmpty) ...[
+              pw.SizedBox(height: 6),
+              _buildSustitucionDetailRow('Equivalencia', equivalenciaTexto),
+            ],
+            if (objetivoMacro.trim().isNotEmpty) ...[
+              pw.SizedBox(height: 6),
+              _buildSustitucionDetailRow('Objetivo', objetivoMacro),
+            ],
+          ],
+        ),
+      ),
+    );
+
+    final notas = contenido.trim();
+    if (notas.isNotEmpty) {
+      widgets.addAll([
+        pw.SizedBox(height: 14),
+        pw.Text(
+          'Notas y contexto',
+          style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold),
+        ),
+        pw.SizedBox(height: 8),
+      ]);
+      widgets.addAll(_buildEnhancedContextParagraphWidgets(notas));
+    }
+
+    return widgets;
+  }
+
+  static pw.Widget _buildSustitucionDetailRow(String label, String value) {
+    return pw.RichText(
+      text: pw.TextSpan(
+        children: [
+          pw.TextSpan(
+            text: '$label: ',
+            style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
+          ),
+          pw.TextSpan(
+            text: value.trim().isEmpty ? '-' : value.trim(),
+            style: const pw.TextStyle(fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static List<pw.Widget> _buildAditivosListContent(
+    String text, {
+    Map<int, String>? imagenesInlineById,
+  }) {
+    final normalized = text.replaceAll('\r\n', '\n').trim();
+    final items = normalized.split(RegExp(r'\n{2,}---\n{2,}'));
+
+    final widgets = <pw.Widget>[];
+
+    for (var i = 0; i < items.length; i++) {
+      final item = items[i].trim();
+      if (item.isEmpty) continue;
+
+      // Separar líneas
+      final lines = item.split('\n');
+      if (lines.isEmpty) continue;
+
+      // Primera línea es el nombre del aditivo
+      final nombre = lines[0].trim();
+      String tipo = '';
+      String peligrosidad = '';
+      final descripcionLines = <String>[];
+
+      // Procesar líneas restantes
+      for (var j = 1; j < lines.length; j++) {
+        final line = lines[j].trim();
+        if (line.startsWith('Tipo:')) {
+          tipo = line.replaceFirst('Tipo:', '').trim();
+        } else if (line.startsWith('Peligrosidad:')) {
+          peligrosidad = line.replaceFirst('Peligrosidad:', '').trim();
+        } else if (line.isNotEmpty) {
+          descripcionLines.add(line);
+        }
+      }
+
+      final descripcion = descripcionLines.join('\n');
+
+      // Agregar nombre en negrita y más grande
+      widgets.add(
+        pw.Text(
+          nombre,
+          style: pw.TextStyle(
+            fontSize: 14,
+            fontWeight: pw.FontWeight.bold,
+            color: PdfColors.black,
+          ),
+        ),
+      );
+
+      // Agregar tipo y peligrosidad
+      if (tipo.isNotEmpty || peligrosidad.isNotEmpty) {
+        widgets.add(pw.SizedBox(height: 4));
+        final metaLines = <String>[];
+        if (tipo.isNotEmpty) metaLines.add('Tipo: $tipo');
+        if (peligrosidad.isNotEmpty)
+          metaLines.add('Peligrosidad: $peligrosidad');
+
+        widgets.add(
+          pw.Text(
+            metaLines.join(' • '),
+            style: pw.TextStyle(
+              fontSize: 10,
+              color: PdfColors.grey700,
+            ),
+          ),
+        );
+      }
+
+      // Agregar descripción
+      if (descripcion.isNotEmpty) {
+        widgets.add(pw.SizedBox(height: 6));
+        widgets.addAll(_buildEnhancedContextParagraphWidgets(descripcion));
+      }
+
+      // Separador entre aditivos
+      if (i < items.length - 1) {
+        widgets.add(pw.SizedBox(height: 12));
+        widgets.add(
+          pw.Divider(
+            color: PdfColors.grey300,
+            thickness: 0.5,
+          ),
+        );
+        widgets.add(pw.SizedBox(height: 8));
+      }
+    }
+
+    return widgets.isEmpty ? [pw.Text('')] : widgets;
+  }
+
+  static List<pw.Widget> _buildEnhancedContextParagraphWidgets(String text) {
+    final normalized = _normalizeContextForVisualSections(text)
+        .replaceAll('\r\n', '\n')
+        .trim();
+    if (normalized.isEmpty) return [];
+
+    final paragraphs = normalized
+        .split(RegExp(r'\n{2,}'))
+        .map((p) => p.trim())
+        .where((p) => p.isNotEmpty)
+        .toList();
+
+    final widgets = <pw.Widget>[];
+    final markerOnlyRegex = RegExp(r'^👉\s*([^👈]+?)\s*👈$');
+    final tokenRegex = RegExp(
+      r'(👉\s*[^👈]+?\s*👈|#[\wáéíóúÁÉÍÓÚñÑüÜ]+)',
+      caseSensitive: false,
+    );
+
+    for (var i = 0; i < paragraphs.length; i++) {
+      final paragraph = paragraphs[i];
+      final markerOnlyMatch = markerOnlyRegex.firstMatch(paragraph);
+
+      if (markerOnlyMatch != null) {
+        final titleText = (markerOnlyMatch.group(1) ?? '').trim();
+        widgets.add(
+          pw.Text(
+            titleText,
+            style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
+          ),
+        );
+      } else {
+        final spans = <pw.InlineSpan>[];
+        var cursor = 0;
+        for (final match in tokenRegex.allMatches(paragraph)) {
+          if (match.start > cursor) {
+            spans.add(
+              pw.TextSpan(
+                text: paragraph.substring(cursor, match.start),
+                style: const pw.TextStyle(fontSize: 11, height: 1.5),
+              ),
+            );
+          }
+          final token = match.group(0) ?? '';
+          if (token.startsWith('👉') && token.endsWith('👈')) {
+            final heading =
+                token.replaceAll('👉', '').replaceAll('👈', '').trim();
+            spans.add(
+              pw.TextSpan(
+                text: heading,
+                style: pw.TextStyle(
+                  fontSize: 14,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+            );
+          } else {
+            spans.add(
+              pw.TextSpan(
+                text: token,
+                style: pw.TextStyle(
+                  fontSize: 13,
+                  fontWeight: pw.FontWeight.bold,
+                  color: PdfColors.blue700,
+                ),
+              ),
+            );
+          }
+          cursor = match.end;
+        }
+
+        if (cursor < paragraph.length) {
+          spans.add(
+            pw.TextSpan(
+              text: paragraph.substring(cursor),
+              style: const pw.TextStyle(fontSize: 11, height: 1.5),
+            ),
+          );
+        }
+
+        widgets.add(
+          pw.RichText(
+            text: pw.TextSpan(children: spans),
+            textAlign: pw.TextAlign.justify,
+          ),
+        );
+      }
+
+      if (i < paragraphs.length - 1) {
+        widgets.add(pw.SizedBox(height: 10));
+      }
+    }
+
+    return widgets;
+  }
+
+  static String _normalizeContextForVisualSections(String text) {
+    final lines = text.replaceAll('\r\n', '\n').split('\n');
+    final output = <String>[];
+    final sectionLineRegex = RegExp(r'(^\s*👉\s*[^👈]+\s*👈\s*$)|(^\s*#)');
+
+    for (final rawLine in lines) {
+      final line = rawLine.trimRight();
+      final trimmed = line.trim();
+      final isSectionLine =
+          trimmed.isNotEmpty && sectionLineRegex.hasMatch(trimmed);
+
+      if (isSectionLine && output.isNotEmpty && output.last.trim().isNotEmpty) {
+        output.add('');
+      }
+
+      output.add(line);
+    }
+
+    return output.join('\n').trim();
+  }
+
   static List<pw.Widget> _buildFlowingContent(
     String text, {
     Map<int, String>? imagenesInlineById,
@@ -399,7 +775,8 @@ class ConsejoRecetaPdfService {
     final imageMap = imagenesInlineById ?? const <int, String>{};
     if (imageMap.isEmpty ||
         !_imageTokenRegex.hasMatch(normalizedWithoutDocumentTokens)) {
-      return _buildParagraphWidgets(normalizedWithoutDocumentTokens);
+      return _buildEnhancedContextParagraphWidgets(
+          normalizedWithoutDocumentTokens);
     }
 
     final widgets = <pw.Widget>[];
@@ -410,7 +787,7 @@ class ConsejoRecetaPdfService {
       if (match.start > cursor) {
         final textChunk =
             normalizedWithoutDocumentTokens.substring(cursor, match.start);
-        widgets.addAll(_buildParagraphWidgets(textChunk));
+        widgets.addAll(_buildEnhancedContextParagraphWidgets(textChunk));
       }
 
       final imageId = int.tryParse(match.group(1) ?? '');
@@ -431,19 +808,8 @@ class ConsejoRecetaPdfService {
             ),
           ),
         );
-      } else {
-        final tokenText = match.group(0) ?? '[[img:?]]';
-        widgets.add(
-          pw.Text(
-            tokenText,
-            style: pw.TextStyle(
-              fontSize: 10,
-              color: PdfColors.grey700,
-              fontStyle: pw.FontStyle.italic,
-            ),
-          ),
-        );
       }
+      // Si la imagen no se encontró en el mapa, se omite silenciosamente.
 
       widgets.add(pw.SizedBox(height: 8));
       cursor = match.end;
@@ -451,7 +817,7 @@ class ConsejoRecetaPdfService {
 
     if (cursor < normalizedWithoutDocumentTokens.length) {
       widgets.addAll(
-        _buildParagraphWidgets(
+        _buildEnhancedContextParagraphWidgets(
             normalizedWithoutDocumentTokens.substring(cursor)),
       );
     }

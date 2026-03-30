@@ -136,13 +136,25 @@ try {
         throw new Exception("No se pudo guardar el token guest en la base de datos");
     }
     
-    // También registrar sesión guest en tabla sesion para auditoría
-    $query_sesion = "INSERT INTO sesion 
-                     (codigousuario, fecha, hora, estado, ip_publica) 
-                     VALUES (NULL, CURDATE(), CURTIME(), 'OK_GUEST_LOGIN', :ip_publica)";
+        // También registrar sesión guest en tabla sesion para auditoría
+        // evitando duplicados masivos en una misma sesión de uso.
+        $query_sesion = "INSERT INTO sesion 
+                                         (codigousuario, fecha, hora, estado, ip_publica)
+                                         SELECT NULL, CURDATE(), CURTIME(), 'OK_GUEST_LOGIN', :ip_publica
+                                         FROM DUAL
+                                         WHERE NOT EXISTS (
+                                                SELECT 1
+                                                FROM sesion
+                                                WHERE codigousuario IS NULL
+                                                    AND estado = 'OK_GUEST_LOGIN'
+                                                    AND ip_publica <=> :ip_publica_check
+                                                    AND TIMESTAMP(fecha, hora) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)
+                                                LIMIT 1
+                                         )";
     
     $stmt_sesion = $db->prepare($query_sesion);
     $stmt_sesion->bindParam(':ip_publica', $ip_publica);
+    $stmt_sesion->bindParam(':ip_publica_check', $ip_publica);
     if (!$stmt_sesion->execute()) {
         $sql_error = $stmt_sesion->errorInfo();
         error_log("[guest_login.php] Fallo insert sesion guest: " . json_encode($sql_error));

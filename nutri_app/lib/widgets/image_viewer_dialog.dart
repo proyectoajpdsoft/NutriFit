@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:super_clipboard/super_clipboard.dart';
 
 class ImageViewerDialog extends StatefulWidget {
@@ -102,6 +103,11 @@ class _ImageViewerDialogState extends State<ImageViewerDialog> {
     return value.trim().replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
   }
 
+  bool get _isDesktopPlatform =>
+      Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+
+  bool get _isMobilePlatform => Platform.isAndroid || Platform.isIOS;
+
   void _showMessage(String message) {
     if (!mounted) {
       return;
@@ -147,28 +153,56 @@ class _ImageViewerDialogState extends State<ImageViewerDialog> {
     final timestamp = DateTime.now().toIso8601String().replaceAll(':', '-');
     final fileName = '$safeName-$timestamp.$extension';
 
-    if (Platform.isAndroid || Platform.isIOS) {
-      final dir = await getApplicationDocumentsDirectory();
-      final file = File('${dir.path}/$fileName');
-      await file.writeAsBytes(bytes);
-      _showMessage('Imagen guardada en Documentos');
-      return;
-    }
+    try {
+      if (_isMobilePlatform) {
+        final dir = await getTemporaryDirectory();
+        final file = File('${dir.path}/$fileName');
+        await file.writeAsBytes(bytes, flush: true);
+        await Share.shareXFiles(
+          [XFile(file.path, mimeType: _detectImageMime(bytes), name: fileName)],
+          text: widget.title?.trim().isNotEmpty == true
+              ? widget.title!.trim()
+              : 'Imagen',
+        );
+        return;
+      }
 
-    final path = await FilePicker.platform.saveFile(
-      dialogTitle: 'Guardar imagen',
-      fileName: fileName,
-      type: FileType.custom,
-      allowedExtensions: [extension],
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: 'Guardar imagen',
+        fileName: fileName,
+        type: FileType.custom,
+        allowedExtensions: [extension],
+      );
+
+      if (path == null) {
+        return;
+      }
+
+      final file = File(path);
+      await file.writeAsBytes(bytes, flush: true);
+    } catch (e) {
+      _showMessage('No se pudo guardar/compartir la imagen: $e');
+    }
+  }
+
+  Widget _buildToolbarIconButton({
+    required BuildContext context,
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onPressed,
+  }) {
+    return IconButton(
+      tooltip: tooltip,
+      icon: Icon(icon, size: 18),
+      onPressed: onPressed,
+      style: IconButton.styleFrom(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        minimumSize: const Size(36, 36),
+        padding: EdgeInsets.zero,
+        backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+        foregroundColor: Theme.of(context).colorScheme.onSurface,
+      ),
     );
-
-    if (path == null) {
-      return;
-    }
-
-    final file = File(path);
-    await file.writeAsBytes(bytes);
-    _showMessage('Imagen guardada');
   }
 
   @override
@@ -178,8 +212,10 @@ class _ImageViewerDialogState extends State<ImageViewerDialog> {
       final media = MediaQuery.of(context);
       final maxWidth = media.size.width - 32;
       final maxHeight = media.size.height - 160;
+      final canCopy = _isDesktopPlatform;
 
       return Dialog(
+        backgroundColor: Colors.transparent,
         insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 40),
         child: SafeArea(
           child: ConstrainedBox(
@@ -187,86 +223,122 @@ class _ImageViewerDialogState extends State<ImageViewerDialog> {
               maxWidth: maxWidth,
               maxHeight: maxHeight,
             ),
-            child: SizedBox(
-              width: maxWidth,
-              height: maxHeight,
-              child: Column(
-                children: [
-                  Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            widget.title ?? '',
-                            style: Theme.of(context).textTheme.titleSmall,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: 'Cerrar',
-                          icon: const Icon(Icons.close),
-                          onPressed: () => Navigator.pop(context),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Divider(height: 1),
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: InteractiveViewer(
-                        transformationController: _transformationController,
-                        boundaryMargin: const EdgeInsets.all(20),
-                        minScale: 1.0,
-                        maxScale: 4.0,
-                        child: Image.memory(
-                          imageBytes,
-                          fit: BoxFit.contain,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Material(
+                color: Theme.of(context).dialogBackgroundColor,
+                child: SizedBox(
+                  width: maxWidth,
+                  height: maxHeight,
+                  child: Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 10, 8, 0),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                widget.title?.trim().isNotEmpty == true
+                                    ? widget.title!.trim()
+                                    : 'Visualizar imagen',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleMedium
+                                    ?.copyWith(fontWeight: FontWeight.w600),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Cerrar',
+                              icon: const Icon(Icons.close, size: 18),
+                              onPressed: () => Navigator.pop(context),
+                              style: IconButton.styleFrom(
+                                shape: const CircleBorder(),
+                                minimumSize: const Size(32, 32),
+                                padding: EdgeInsets.zero,
+                                backgroundColor: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
-                    child: Wrap(
-                      alignment: WrapAlignment.center,
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        IconButton(
-                          tooltip: 'Ajustar',
-                          icon: const Icon(Icons.fit_screen),
-                          onPressed: _resetZoom,
-                        ),
-                        IconButton(
-                          tooltip: 'Zoom +',
-                          icon: const Icon(Icons.zoom_in),
-                          onPressed: () => _zoomBy(0.1),
-                        ),
-                        IconButton(
-                          tooltip: 'Zoom -',
-                          icon: const Icon(Icons.zoom_out),
-                          onPressed: () => _zoomBy(-0.1),
-                        ),
-                        if (Platform.isWindows ||
-                            Platform.isMacOS ||
-                            Platform.isLinux)
-                          IconButton(
-                            tooltip: 'Copiar imagen',
-                            icon: const Icon(Icons.content_copy),
-                            onPressed: () => _copyImageToClipboard(imageBytes),
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+                          child: Container(
+                            width: double.infinity,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: InteractiveViewer(
+                              transformationController:
+                                  _transformationController,
+                              boundaryMargin: const EdgeInsets.all(20),
+                              minScale: 1.0,
+                              maxScale: 4.0,
+                              child: Center(
+                                child: Image.memory(
+                                  imageBytes,
+                                  fit: BoxFit.contain,
+                                ),
+                              ),
+                            ),
                           ),
-                        IconButton(
-                          tooltip: 'Guardar imagen',
-                          icon: const Icon(Icons.save_alt),
-                          onPressed: () => _saveImageToFile(imageBytes),
                         ),
-                      ],
-                    ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+                        child: Wrap(
+                          alignment: WrapAlignment.center,
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            _buildToolbarIconButton(
+                              context: context,
+                              icon: Icons.fit_screen,
+                              tooltip: 'Ajustar',
+                              onPressed: _resetZoom,
+                            ),
+                            _buildToolbarIconButton(
+                              context: context,
+                              icon: Icons.zoom_in,
+                              tooltip: 'Zoom +',
+                              onPressed: () => _zoomBy(0.1),
+                            ),
+                            _buildToolbarIconButton(
+                              context: context,
+                              icon: Icons.zoom_out,
+                              tooltip: 'Zoom -',
+                              onPressed: () => _zoomBy(-0.1),
+                            ),
+                            if (canCopy)
+                              _buildToolbarIconButton(
+                                context: context,
+                                icon: Icons.content_copy,
+                                tooltip: 'Copiar imagen',
+                                onPressed: () =>
+                                    _copyImageToClipboard(imageBytes),
+                              ),
+                            _buildToolbarIconButton(
+                              context: context,
+                              icon: _isMobilePlatform
+                                  ? Icons.ios_share
+                                  : Icons.save_alt,
+                              tooltip: _isMobilePlatform
+                                  ? 'Compartir imagen'
+                                  : 'Guardar imagen',
+                              onPressed: () => _saveImageToFile(imageBytes),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ),

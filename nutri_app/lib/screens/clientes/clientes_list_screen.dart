@@ -20,6 +20,9 @@ class _ClientesListScreenState extends State<ClientesListScreen> {
   @override
   void initState() {
     super.initState();
+    context
+        .read<ConfigService>()
+        .loadDeleteSwipePercentageFromDatabase(_apiService);
     _refreshClientes();
   }
 
@@ -60,6 +63,35 @@ class _ClientesListScreenState extends State<ClientesListScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
       );
+    }
+  }
+
+  Future<void> _openClienteMenu(Cliente cliente) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Editar'),
+              onTap: () => Navigator.pop(context, 'edit'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Eliminar'),
+              onTap: () => Navigator.pop(context, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (action == 'edit') {
+      _navigateToEditScreen(cliente);
+    } else if (action == 'delete') {
+      _showDeleteConfirmation(cliente);
     }
   }
 
@@ -106,30 +138,52 @@ class _ClientesListScreenState extends State<ClientesListScreen> {
             itemCount: clientes.length,
             itemBuilder: (context, index) {
               final cliente = clientes[index];
-              return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                elevation: 2,
-                child: ListTile(
-                  leading: CircleAvatar(
-                      child: Text(cliente.nombre.isNotEmpty
-                          ? cliente.nombre[0].toUpperCase()
-                          : '?')),
-                  title: Text(cliente.nombre),
-                  subtitle: Text(cliente.email ?? 'Sin email'),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
+              return Dismissible(
+                key: ValueKey('cliente_${cliente.codigo}_$index'),
+                direction: DismissDirection.startToEnd,
+                dismissThresholds: {
+                  DismissDirection.startToEnd: context
+                      .watch<ConfigService>()
+                      .deleteSwipeDismissThreshold,
+                },
+                background: Container(
+                  color: Colors.red.shade600,
+                  alignment: Alignment.centerLeft,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: const Row(
                     children: [
-                      IconButton(
-                        icon: const Icon(Icons.edit, color: Colors.blue),
-                        onPressed: () => _navigateToEditScreen(cliente),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete, color: Colors.red),
-                        onPressed: () => _showDeleteConfirmation(cliente),
+                      Icon(Icons.delete_outline, color: Colors.white, size: 20),
+                      SizedBox(width: 8),
+                      Text(
+                        'Eliminar',
+                        style: TextStyle(color: Colors.white),
                       ),
                     ],
                   ),
-                  onTap: () => _navigateToEditScreen(cliente),
+                ),
+                confirmDismiss: (_) async {
+                  _showDeleteConfirmation(cliente);
+                  return false;
+                },
+                child: Card(
+                  margin:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  elevation: 2,
+                  child: ListTile(
+                    leading: CircleAvatar(
+                        child: Text(cliente.nombre.isNotEmpty
+                            ? cliente.nombre[0].toUpperCase()
+                            : '?')),
+                    title: Text(cliente.nombre),
+                    subtitle: Text(cliente.email ?? 'Sin email'),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.more_vert),
+                      tooltip: 'Más opciones',
+                      onPressed: () => _openClienteMenu(cliente),
+                    ),
+                    onTap: () => _navigateToEditScreen(cliente),
+                    onLongPress: () => _openClienteMenu(cliente),
+                  ),
                 ),
               );
             },

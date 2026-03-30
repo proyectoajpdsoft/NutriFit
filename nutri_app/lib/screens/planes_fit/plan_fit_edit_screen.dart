@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:collection/collection.dart';
@@ -21,6 +22,7 @@ import 'package:nutri_app/widgets/image_viewer_dialog.dart'
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nutri_app/screens/planes_fit/plan_fit_ejercicios_catalog_screen.dart';
 import 'package:url_launcher/url_launcher_string.dart';
+import 'package:open_filex/open_filex.dart';
 
 class _PlanFitPdfOptions {
   final bool fichaPorDias;
@@ -87,12 +89,14 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
   bool _didOpenExerciseDialog = false;
   bool _hasChanges = false;
   PlatformFile? _pickedFile;
+  bool _removeExistingPdf = false;
   bool _completado = false;
   int? _selectedPacienteId;
   late TextEditingController _semanasController;
   late TextEditingController _urlController;
   late TextEditingController _rondasController;
-  final Set<int> _selectedEjerciciosCodigo = {};
+  Map<String, bool> _cardExpanded = {};
+  static const _cardPrefsPrefix = 'plan_fit_card_';
 
   bool get _isEditing => widget.plan != null;
 
@@ -137,6 +141,35 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
         );
       }
     }
+    _loadCardStates();
+  }
+
+  Future<void> _loadCardStates() async {
+    final prefs = await SharedPreferences.getInstance();
+    const keys = [
+      'paciente',
+      'semanas',
+      'consejos_generales',
+      'recomendaciones',
+      'indicaciones',
+      'indicaciones_paciente',
+      'dias',
+      'ejercicios_plan',
+      'entrevista_fit',
+      'url',
+      'pdf_plan',
+    ];
+    final map = <String, bool>{};
+    for (final k in keys) {
+      final val = prefs.getBool('$_cardPrefsPrefix$k');
+      if (val != null) map[k] = val;
+    }
+    if (mounted) setState(() => _cardExpanded = map);
+  }
+
+  Future<void> _saveCardState(String key, bool expanded) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('$_cardPrefsPrefix$key', expanded);
   }
 
   void _loadDefaultValues() {
@@ -198,7 +231,86 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
       }
       setState(() {
         _pickedFile = file;
+        _removeExistingPdf = false;
       });
+      _markDirty();
+    }
+  }
+
+  String? _effectivePlanDocumentoNombre() {
+    if (_pickedFile != null) return _pickedFile!.name;
+    if (_removeExistingPdf) return null;
+    return widget.plan?.planDocumentoNombre;
+  }
+
+  void _removePlanPdf() {
+    final hadPickedFile = _pickedFile != null;
+    final hadExistingFile = (widget.plan?.planDocumentoNombre ?? '').isNotEmpty;
+    if (!hadPickedFile && !hadExistingFile) return;
+    setState(() {
+      _pickedFile = null;
+      if (hadExistingFile) {
+        _removeExistingPdf = true;
+      }
+    });
+    _markDirty();
+  }
+
+  Future<void> _openPlanPdf() async {
+    final localPath = _pickedFile?.path;
+    if (localPath != null && localPath.isNotEmpty) {
+      final result = await OpenFilex.open(localPath);
+      if (result.type != ResultType.done && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('No se pudo abrir el archivo: ${result.message}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (_removeExistingPdf || !_isEditing) return;
+
+    final existingName = widget.plan?.planDocumentoNombre;
+    if ((existingName ?? '').isEmpty) return;
+
+    try {
+      final downloadedPath = await _apiService.downloadPlanFit(
+        widget.plan!.codigo,
+        existingName!,
+      );
+      if (downloadedPath == null || downloadedPath.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No se pudo descargar el PDF adjunto'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      final result = await OpenFilex.open(downloadedPath);
+      if (result.type != ResultType.done && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('No se pudo abrir el archivo: ${result.message}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al abrir el PDF: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -512,6 +624,194 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
     }
   }
 
+  bool get _isDesktopTarget {
+    return defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.linux;
+  }
+
+  Widget _buildCountCircleBadge(int count, {VoidCallback? onTap}) {
+    final hasValue = count > 0;
+    final color = hasValue ? Colors.green : Colors.grey;
+    final badge = Container(
+      width: 26,
+      height: 26,
+      decoration: BoxDecoration(color: color.shade100, shape: BoxShape.circle),
+      alignment: Alignment.center,
+      child: Text(
+        '$count',
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          color: color.shade800,
+        ),
+      ),
+    );
+    if (onTap == null) return badge;
+    return InkWell(
+      borderRadius: BorderRadius.circular(40),
+      onTap: onTap,
+      child: badge,
+    );
+  }
+
+  Widget _buildCountTagBadge(int count, {VoidCallback? onTap}) {
+    final hasValue = count > 0;
+    final color = hasValue ? Colors.green : Colors.grey;
+    final badge = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      constraints: const BoxConstraints(minWidth: 36, minHeight: 22),
+      height: 22,
+      decoration: BoxDecoration(
+        color: color.shade100,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.shade300),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        '$count',
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          color: color.shade800,
+        ),
+      ),
+    );
+    if (onTap == null) return badge;
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: badge,
+    );
+  }
+
+  Widget _buildExpandableCard({
+    required String title,
+    required String cardKey,
+    String? subtitle,
+    required Widget child,
+    List<Widget> titleActions = const [],
+    Widget? trailingBadge,
+  }) {
+    final saved = _cardExpanded[cardKey];
+    final effectiveInitiallyExpanded = saved ?? _isDesktopTarget;
+    return Card(
+      child: ExpansionTile(
+        key: ValueKey('plan_fit_card_${cardKey}_$effectiveInitiallyExpanded'),
+        initiallyExpanded: effectiveInitiallyExpanded,
+        onExpansionChanged: (expanded) {
+          setState(() => _cardExpanded[cardKey] = expanded);
+          _saveCardState(cardKey, expanded);
+        },
+        tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+            if ((subtitle ?? '').trim().isNotEmpty)
+              Text(
+                subtitle!.trim(),
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+              ),
+          ],
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ...titleActions,
+            if (trailingBadge != null) ...[
+              const SizedBox(width: 8),
+              trailingBadge,
+            ],
+            const SizedBox(width: 4),
+            const Icon(Icons.expand_more),
+          ],
+        ),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: child,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteEjercicio(PlanFitEjercicio ejercicio) async {
+    try {
+      await _apiService.deletePlanFitEjercicio(ejercicio.codigo);
+      await _loadEjerciciosPlanFit();
+      await _loadDiasPlanFit();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al eliminar ejercicio: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleEjercicioMenuAction(
+    String action,
+    PlanFitEjercicio ejercicio,
+  ) async {
+    if (action == 'url') {
+      await _launchUrlExternal(ejercicio.urlVideo ?? '');
+      return;
+    }
+    if (action == 'edit') {
+      await _showEjercicioDialog(ejercicio: ejercicio);
+      return;
+    }
+    if (action == 'delete') {
+      await _deleteEjercicio(ejercicio);
+    }
+  }
+
+  Future<void> _showEjercicioActionsMenu(PlanFitEjercicio ejercicio) async {
+    final hasUrl = (ejercicio.urlVideo ?? '').trim().isNotEmpty;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: Text(
+                ejercicio.nombre,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            if (hasUrl)
+              ListTile(
+                leading: const Icon(Icons.open_in_browser),
+                title: const Text('Visitar URL'),
+                onTap: () => Navigator.pop(context, 'url'),
+              ),
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Editar'),
+              onTap: () => Navigator.pop(context, 'edit'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text(
+                'Eliminar',
+                style: TextStyle(color: Colors.red),
+              ),
+              onTap: () => Navigator.pop(context, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (action == null) return;
+    await _handleEjercicioMenuAction(action, ejercicio);
+  }
+
   Widget _buildMetricTag(IconData icon, String text) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -622,118 +922,115 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
     int min = 0,
     int max = 9999,
     IconData? labelIcon,
-    TextEditingController? controller,
-    FocusNode? focusNode,
+    required TextEditingController controller,
   }) {
-    return TextFormField(
+    int getValue() => int.tryParse(controller.text) ?? min;
+
+    void setValue(int nextValue) {
+      final next = _clampInt(nextValue, min, max);
+      controller.text = next.toString();
+      controller.selection = TextSelection.fromPosition(
+        TextPosition(offset: controller.text.length),
+      );
+      onChanged(next);
+    }
+
+    Widget buildStepperButton({
+      required IconData icon,
+      required VoidCallback onTap,
+      required VoidCallback onLongPressStart,
+    }) {
+      return GestureDetector(
+        onTap: onTap,
+        onLongPressStart: (_) => onLongPressStart(),
+        onLongPressEnd: (_) => _stopTimers(),
+        onLongPressCancel: _stopTimers,
+        child: Container(
+          width: 38,
+          height: 34,
+          decoration: BoxDecoration(
+            color: Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey.shade300),
+          ),
+          alignment: Alignment.center,
+          child: Icon(icon, size: 12),
+        ),
+      );
+    }
+
+    return TextField(
       controller: controller,
-      focusNode: focusNode,
-      initialValue: controller == null ? value.toString() : null,
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+      textAlign: TextAlign.center,
       keyboardType: TextInputType.number,
       decoration: InputDecoration(
-        labelText: labelIcon == null ? label : null,
-        label: labelIcon == null
-            ? null
-            : Tooltip(message: label, child: Icon(labelIcon, size: 18)),
+        labelText: label.isNotEmpty ? label : null,
+        prefixIcon: labelIcon != null ? Icon(labelIcon, size: 18) : null,
         border: const OutlineInputBorder(),
+        floatingLabelBehavior: FloatingLabelBehavior.auto,
         isDense: true,
+        prefixIconConstraints:
+            const BoxConstraints(minWidth: 36, minHeight: 36),
         suffixIconConstraints:
-            const BoxConstraints(minWidth: 32, minHeight: 56),
-        suffixIcon: SizedBox(
-          width: 32,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            const BoxConstraints(minWidth: 92, minHeight: 40),
+        suffixIcon: Padding(
+          padding: const EdgeInsets.only(right: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              GestureDetector(
+              buildStepperButton(
+                icon: Icons.remove,
                 onTap: () {
-                  final current =
-                      int.tryParse(controller?.text ?? value.toString()) ??
-                          value;
-                  final next = _clampInt(current + 1, min, max);
-                  onChanged(next);
-                  if (controller != null) {
-                    controller.text = next.toString();
-                  }
+                  final next = getValue() - 1;
+                  setValue(next < min ? min : next);
                 },
-                onLongPressStart: (_) {
-                  _stopTimers();
-                  _incrementTimer = Timer.periodic(
-                    const Duration(milliseconds: 80),
-                    (timer) {
-                      final current =
-                          int.tryParse(controller?.text ?? value.toString()) ??
-                              value;
-                      if (current < max) {
-                        final next = _clampInt(current + 1, min, max);
-                        onChanged(next);
-                        if (controller != null) {
-                          controller.text = next.toString();
-                        }
-                      } else {
-                        timer.cancel();
-                      }
-                    },
-                  );
-                },
-                onLongPressEnd: (_) => _stopTimers(),
-                onLongPressCancel: () => _stopTimers(),
-                child: const IconButton(
-                  icon: Icon(Icons.add),
-                  iconSize: 16,
-                  padding: EdgeInsets.zero,
-                  constraints: BoxConstraints(minWidth: 28, minHeight: 24),
-                  onPressed: null,
-                ),
-              ),
-              GestureDetector(
-                onTap: () {
-                  final current =
-                      int.tryParse(controller?.text ?? value.toString()) ??
-                          value;
-                  final next = _clampInt(current - 1, min, max);
-                  onChanged(next);
-                  if (controller != null) {
-                    controller.text = next.toString();
-                  }
-                },
-                onLongPressStart: (_) {
+                onLongPressStart: () {
                   _stopTimers();
                   _decrementTimer = Timer.periodic(
                     const Duration(milliseconds: 80),
                     (timer) {
-                      final current =
-                          int.tryParse(controller?.text ?? value.toString()) ??
-                              value;
-                      if (current > min) {
-                        final next = _clampInt(current - 1, min, max);
-                        onChanged(next);
-                        if (controller != null) {
-                          controller.text = next.toString();
-                        }
-                      } else {
-                        timer.cancel();
-                      }
+                      final next = getValue() - 1;
+                      setValue(next < min ? min : next);
                     },
                   );
                 },
-                onLongPressEnd: (_) => _stopTimers(),
-                onLongPressCancel: () => _stopTimers(),
-                child: const IconButton(
-                  icon: Icon(Icons.remove),
-                  iconSize: 16,
-                  padding: EdgeInsets.zero,
-                  constraints: BoxConstraints(minWidth: 28, minHeight: 24),
-                  onPressed: null,
-                ),
+              ),
+              const SizedBox(width: 4),
+              buildStepperButton(
+                icon: Icons.add,
+                onTap: () {
+                  final next = getValue() + 1;
+                  setValue(next > max ? max : next);
+                },
+                onLongPressStart: () {
+                  _stopTimers();
+                  _incrementTimer = Timer.periodic(
+                    const Duration(milliseconds: 80),
+                    (timer) {
+                      final next = getValue() + 1;
+                      setValue(next > max ? max : next);
+                    },
+                  );
+                },
               ),
             ],
           ),
         ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       ),
       onChanged: (text) {
-        final parsed = int.tryParse(text) ?? value;
-        onChanged(_clampInt(parsed, min, max));
+        if (text.isEmpty) {
+          return;
+        }
+        final parsed = int.tryParse(text);
+        if (parsed == null) {
+          return;
+        }
+        setValue(parsed);
       },
+      onSubmitted: (_) => setValue(getValue()),
+      onTapOutside: (_) => setValue(getValue()),
     );
   }
 
@@ -959,7 +1256,6 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
       setState(() {
         _ejercicios = ejercicios;
         _loadingEjercicios = false;
-        _selectedEjerciciosCodigo.clear(); // Limpiar selección al cambiar vista
       });
     } catch (e) {
       setState(() => _loadingEjercicios = false);
@@ -1072,7 +1368,25 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(isEditing ? 'Editar día' : 'Añadir día'),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                isEditing ? 'Editar día' : 'Añadir día',
+                style: const TextStyle(fontSize: 16),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, size: 20),
+              onPressed: () => Navigator.pop(context),
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.grey.shade200,
+                padding: const EdgeInsets.all(4),
+                minimumSize: const Size(32, 32),
+              ),
+            ),
+          ],
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1095,10 +1409,6 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
           ],
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
-          ),
           ElevatedButton(
             onPressed: () async {
               final etiqueta = tituloController.text.trim();
@@ -1400,70 +1710,6 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
     }
   }
 
-  Future<void> _deleteSelectedEjercicios() async {
-    if (_selectedEjerciciosCodigo.isEmpty) return;
-
-    final count = _selectedEjerciciosCodigo.length;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Confirmar eliminación'),
-        content: Text(
-          '¿Eliminar $count ejercicio${count > 1 ? 's' : ''} seleccionado${count > 1 ? 's' : ''}?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Eliminar'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      try {
-        // Eliminar todos los ejercicios seleccionados
-        for (final codigo in _selectedEjerciciosCodigo) {
-          await _apiService.deletePlanFitEjercicio(codigo);
-        }
-
-        // Limpiar selección
-        setState(() {
-          _selectedEjerciciosCodigo.clear();
-        });
-
-        // Recargar listas
-        await _loadEjerciciosPlanFit();
-        await _loadDiasPlanFit();
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '$count ejercicio${count > 1 ? 's eliminados' : ' eliminado'}',
-              ),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error al eliminar ejercicios: $e'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
-    }
-  }
-
   Future<void> _showEjercicioDialog({
     PlanFitEjercicio? ejercicio,
     PlanFitDia? dia,
@@ -1507,26 +1753,7 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
 
     Future<bool> confirmDiscardChanges() async {
       if (!hasChanges) return true;
-      final shouldClose = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Descartar cambios'),
-          content: const Text(
-            'Tienes cambios sin guardar. ¿Quieres cerrar sin guardar?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancelar'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Descartar'),
-            ),
-          ],
-        ),
-      );
-      return shouldClose == true;
+      return showUnsavedChangesDialog(context);
     }
 
     await showDialog(
@@ -1535,26 +1762,49 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
       builder: (context) => StatefulBuilder(
         builder: (context, setStateDialog) {
           var isSaving = false;
+          final isDesktopMetrics = _isDesktopTarget;
           return WillPopScope(
             onWillPop: confirmDiscardChanges,
             child: AlertDialog(
               scrollable: true,
-              title: Text(isEditing ? 'Editar ejercicio' : 'Nuevo ejercicio'),
+              title: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      isEditing ? 'Editar ejercicio' : 'Nuevo ejercicio',
+                      style: const TextStyle(fontSize: 16),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 20),
+                    onPressed: () async {
+                      if (await confirmDiscardChanges()) {
+                        if (context.mounted) {
+                          Navigator.pop(context);
+                        }
+                      }
+                    },
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.grey.shade200,
+                      padding: const EdgeInsets.all(4),
+                      minimumSize: const Size(32, 32),
+                    ),
+                  ),
+                ],
+              ),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextField(
-                    controller: nombreController,
-                    readOnly: true,
-                    decoration: InputDecoration(
-                      labelText: 'Nombre del ejercicio',
-                      border: const OutlineInputBorder(),
-                      errorText: showNombreError
-                          ? 'Selecciona un ejercicio del catálogo'
-                          : null,
-                      suffixIcon: IconButton(
+                  _buildExpandableCard(
+                    title: 'Ejercicio',
+                    cardKey: 'ejercicio_dialog_ejercicio',
+                    trailingBadge:
+                        showNombreError ? _buildCountCircleBadge(0) : null,
+                    titleActions: [
+                      IconButton(
                         tooltip: 'Seleccionar ejercicio',
                         icon: const Icon(Icons.list_alt),
+                        visualDensity: VisualDensity.compact,
                         onPressed: () async {
                           final selected = await _showCatalogSelector();
                           if (selected == null) return;
@@ -1584,6 +1834,7 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
 
                           setStateDialog(() {
                             hasChanges = true;
+                            showNombreError = false;
                             nombreController.text = selected.nombre;
                             instruccionesController.text =
                                 selected.instrucciones ?? '';
@@ -1603,95 +1854,180 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
                           });
                         },
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: instruccionesController,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      labelText: 'Instrucciones',
-                      border: OutlineInputBorder(),
-                    ),
-                    onChanged: (_) => setStateDialog(() => hasChanges = true),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: urlController,
-                    decoration: const InputDecoration(
-                      labelText: 'URL del vídeo',
-                      border: OutlineInputBorder(),
-                    ),
-                    onChanged: (_) => setStateDialog(() => hasChanges = true),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildCompactNumberInput(
-                          label: 'Tiempo (s)',
-                          labelIcon: Icons.timer_outlined,
-                          value: tiempo,
-                          min: 0,
-                          max: 3600,
-                          controller: tiempoController,
-                          onChanged: (value) => setStateDialog(() {
-                            hasChanges = true;
-                            tiempo = value;
-                          }),
-                        ),
+                    ],
+                    child: TextField(
+                      controller: nombreController,
+                      readOnly: true,
+                      minLines: 2,
+                      maxLines: 3,
+                      decoration: InputDecoration(
+                        border: const OutlineInputBorder(),
+                        errorText: showNombreError
+                            ? 'Selecciona un ejercicio del catálogo'
+                            : null,
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _buildCompactNumberInput(
-                          label: 'Descanso (s)',
-                          labelIcon: Icons.bedtime_outlined,
-                          value: descanso,
-                          min: 0,
-                          max: 3600,
-                          controller: descansoController,
-                          onChanged: (value) => setStateDialog(() {
-                            hasChanges = true;
-                            descanso = value;
-                          }),
-                        ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildExpandableCard(
+                    title: 'Instrucciones',
+                    cardKey: 'ejercicio_dialog_instrucciones',
+                    trailingBadge: _buildCountCircleBadge(
+                      instruccionesController.text.trim().length,
+                    ),
+                    child: TextField(
+                      controller: instruccionesController,
+                      maxLines: 4,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (_) => setStateDialog(() => hasChanges = true),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildExpandableCard(
+                    title: 'URL del vídeo',
+                    cardKey: 'ejercicio_dialog_url',
+                    titleActions: [
+                      IconButton(
+                        tooltip: 'Abrir URL',
+                        icon: const Icon(Icons.open_in_new),
+                        visualDensity: VisualDensity.compact,
+                        onPressed: (urlController.text.trim().isEmpty)
+                            ? null
+                            : () => _launchUrlExternal(urlController.text),
                       ),
                     ],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildCompactNumberInput(
-                          label: 'Repeticiones',
-                          labelIcon: Icons.repeat,
-                          value: repeticiones,
-                          min: 0,
-                          max: 500,
-                          controller: repeticionesController,
-                          onChanged: (value) => setStateDialog(() {
-                            hasChanges = true;
-                            repeticiones = value;
-                          }),
-                        ),
+                    child: TextField(
+                      controller: urlController,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _buildCompactNumberInput(
-                          label: 'Kilos',
-                          labelIcon: Icons.fitness_center,
-                          value: kilos,
-                          min: 0,
-                          max: 1000,
-                          controller: kilosController,
-                          onChanged: (value) => setStateDialog(() {
-                            hasChanges = true;
-                            kilos = value;
-                          }),
-                        ),
-                      ),
-                    ],
+                      onChanged: (_) => setStateDialog(() => hasChanges = true),
+                    ),
                   ),
+                  const SizedBox(height: 8),
+                  if (!isDesktopMetrics) ...[
+                    _buildCompactNumberInput(
+                      label: 'Tiempo (s)',
+                      labelIcon: Icons.timer_outlined,
+                      value: tiempo,
+                      min: 0,
+                      max: 3600,
+                      controller: tiempoController,
+                      onChanged: (value) => setStateDialog(() {
+                        hasChanges = true;
+                        tiempo = value;
+                      }),
+                    ),
+                    const SizedBox(height: 8),
+                    _buildCompactNumberInput(
+                      label: 'Descanso (s)',
+                      labelIcon: Icons.bedtime_outlined,
+                      value: descanso,
+                      min: 0,
+                      max: 3600,
+                      controller: descansoController,
+                      onChanged: (value) => setStateDialog(() {
+                        hasChanges = true;
+                        descanso = value;
+                      }),
+                    ),
+                    const SizedBox(height: 8),
+                    _buildCompactNumberInput(
+                      label: 'Repeticiones',
+                      labelIcon: Icons.repeat,
+                      value: repeticiones,
+                      min: 0,
+                      max: 500,
+                      controller: repeticionesController,
+                      onChanged: (value) => setStateDialog(() {
+                        hasChanges = true;
+                        repeticiones = value;
+                      }),
+                    ),
+                    const SizedBox(height: 8),
+                    _buildCompactNumberInput(
+                      label: 'Kilos',
+                      labelIcon: Icons.fitness_center,
+                      value: kilos,
+                      min: 0,
+                      max: 1000,
+                      controller: kilosController,
+                      onChanged: (value) => setStateDialog(() {
+                        hasChanges = true;
+                        kilos = value;
+                      }),
+                    ),
+                  ] else ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildCompactNumberInput(
+                            label: 'Tiempo (s)',
+                            labelIcon: Icons.timer_outlined,
+                            value: tiempo,
+                            min: 0,
+                            max: 3600,
+                            controller: tiempoController,
+                            onChanged: (value) => setStateDialog(() {
+                              hasChanges = true;
+                              tiempo = value;
+                            }),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _buildCompactNumberInput(
+                            label: 'Descanso (s)',
+                            labelIcon: Icons.bedtime_outlined,
+                            value: descanso,
+                            min: 0,
+                            max: 3600,
+                            controller: descansoController,
+                            onChanged: (value) => setStateDialog(() {
+                              hasChanges = true;
+                              descanso = value;
+                            }),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildCompactNumberInput(
+                            label: 'Repeticiones',
+                            labelIcon: Icons.repeat,
+                            value: repeticiones,
+                            min: 0,
+                            max: 500,
+                            controller: repeticionesController,
+                            onChanged: (value) => setStateDialog(() {
+                              hasChanges = true;
+                              repeticiones = value;
+                            }),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _buildCompactNumberInput(
+                            label: 'Kilos',
+                            labelIcon: Icons.fitness_center,
+                            value: kilos,
+                            min: 0,
+                            max: 1000,
+                            controller: kilosController,
+                            onChanged: (value) => setStateDialog(() {
+                              hasChanges = true;
+                              kilos = value;
+                            }),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   _buildPhotoThumbnailEdit(
                     hasFoto: (catalogFotoBase64 ?? '').isNotEmpty ||
@@ -1711,16 +2047,6 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
                 ],
               ),
               actions: [
-                TextButton(
-                  onPressed: () async {
-                    if (await confirmDiscardChanges()) {
-                      if (context.mounted) {
-                        Navigator.pop(context);
-                      }
-                    }
-                  },
-                  child: const Text('Cancelar'),
-                ),
                 ElevatedButton(
                   onPressed: isSaving
                       ? null
@@ -1904,8 +2230,7 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
         planIndicaciones: _indicaciones,
         planIndicacionesVisibleUsuario: _indicacionesUsuario,
         url: _url,
-        planDocumentoNombre:
-            _pickedFile?.name ?? widget.plan?.planDocumentoNombre,
+        planDocumentoNombre: _effectivePlanDocumentoNombre(),
         completado: _completado ? 'S' : 'N',
         rondas: _rondas,
         consejos: _consejos,
@@ -1929,6 +2254,16 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
           );
         }
         if (success) {
+          if (mounted) {
+            setState(() {
+              _hasChanges = false;
+              _pickedFile = null;
+              _removeExistingPdf = false;
+            });
+            if (_isEditing) {
+              widget.plan!.planDocumentoNombre = planData.planDocumentoNombre;
+            }
+          }
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -1993,45 +2328,52 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildPacientesDropdown(),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildDatePicker(
-                          icon: Icons.calendar_month,
-                          selectedDate: _desde,
-                          onChanged: (newDate) {
-                            setState(() => _desde = newDate);
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _buildDatePicker(
-                          icon: Icons.event_available,
-                          selectedDate: _hasta,
-                          onChanged: (newDate) {
-                            setState(() => _hasta = newDate);
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _semanasController,
-                    decoration: const InputDecoration(
-                      labelText: 'Semanas',
-                      border: OutlineInputBorder(),
+                  const SizedBox(height: 8),
+                  _buildExpandableCard(
+                    title: 'Semanas',
+                    cardKey: 'semanas',
+                    subtitle:
+                        '${_desde != null ? DateFormat('dd/MM/yyyy').format(_desde!) : '-'} - ${_hasta != null ? DateFormat('dd/MM/yyyy').format(_hasta!) : '-'}',
+                    trailingBadge: _buildCountCircleBadge(
+                      _completado ? 1 : 0,
                     ),
-                    onSaved: (value) => _semanasController.text = value ?? '',
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        flex: 1,
-                        child: _buildCompactNumberInput(
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildDatePicker(
+                                icon: Icons.calendar_month,
+                                selectedDate: _desde,
+                                onChanged: (newDate) {
+                                  setState(() => _desde = newDate);
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _buildDatePicker(
+                                icon: Icons.event_available,
+                                selectedDate: _hasta,
+                                onChanged: (newDate) {
+                                  setState(() => _hasta = newDate);
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: _semanasController,
+                          decoration: const InputDecoration(
+                            labelText: 'Semanas',
+                            border: OutlineInputBorder(),
+                          ),
+                          onSaved: (value) =>
+                              _semanasController.text = value ?? '',
+                        ),
+                        const SizedBox(height: 12),
+                        _buildCompactNumberInput(
                           label: 'Rondas',
                           labelIcon: Icons.repeat,
                           value: _rondas,
@@ -2043,11 +2385,8 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
                             _rondasController.text = value.toString();
                           },
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        flex: 2,
-                        child: Container(
+                        const SizedBox(height: 12),
+                        Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8),
                           decoration: BoxDecoration(
                             border: Border.all(color: Colors.grey.shade400),
@@ -2066,520 +2405,586 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
                             ],
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    initialValue: _consejos,
-                    decoration: const InputDecoration(
-                      labelText: 'Consejos generales',
-                      border: OutlineInputBorder(),
-                    ),
-                    maxLines: 3,
-                    onSaved: (value) => _consejos = value ?? '',
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    initialValue: _recomendaciones,
-                    decoration: const InputDecoration(
-                      labelText: 'Recomendaciones',
-                      border: OutlineInputBorder(),
-                    ),
-                    maxLines: 3,
-                    onSaved: (value) => _recomendaciones = value ?? '',
-                  ),
-                  const SizedBox(height: 16),
-                  _buildEntrevistasDropdown(),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    initialValue: _indicaciones,
-                    decoration: const InputDecoration(
-                      labelText: 'Indicaciones (para el profesional)',
-                      border: OutlineInputBorder(),
-                    ),
-                    maxLines: 3,
-                    onSaved: (value) => _indicaciones = value ?? '',
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    initialValue: _indicacionesUsuario,
-                    decoration: const InputDecoration(
-                      labelText: 'Indicaciones (visibles para el usuario)',
-                      border: OutlineInputBorder(),
-                    ),
-                    maxLines: 3,
-                    onSaved: (value) => _indicacionesUsuario = value ?? '',
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _urlController,
-                    decoration: InputDecoration(
-                      labelText: 'URL',
-                      border: const OutlineInputBorder(),
-                      suffixIcon: IconButton(
-                        tooltip: 'Visitar URL',
-                        icon: const Icon(Icons.open_in_new),
-                        onPressed: () =>
-                            _launchUrlExternal(_urlController.text),
-                      ),
-                    ),
-                    onChanged: (value) => _url = value,
-                    onSaved: (value) => _url = value ?? '',
-                  ),
-                  const SizedBox(height: 16),
-                  if (_isEditing) ...[
-                    const Divider(),
-                    const SizedBox(height: 16),
-                    // Sección de días
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Días',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        Row(
-                          children: [
-                            IconButton(
-                              tooltip: 'Todos',
-                              icon: const Icon(Icons.list_alt),
-                              onPressed: () {
-                                setState(() {
-                                  _diaSeleccionado = null;
-                                });
-                                _loadEjerciciosPlanFit();
-                              },
-                            ),
-                            ElevatedButton.icon(
-                              onPressed: () => _showDiaDialog(),
-                              icon: const Icon(Icons.add),
-                              label: const Text('Día'),
-                            ),
-                            const SizedBox(width: 8),
-                            ElevatedButton.icon(
-                              onPressed: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) =>
-                                      const PlanFitEjerciciosCatalogScreen(
-                                    openCreateDialog: true,
-                                  ),
-                                ),
-                              ),
-                              icon: const Icon(Icons.fitness_center),
-                              label: const Text('+ Ejerc.'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor:
-                                    const Color.fromARGB(255, 157, 238, 162),
-                              ),
-                            ),
-                          ],
-                        ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    if (_loadingDias)
-                      const Center(child: CircularProgressIndicator())
-                    else if (_dias.isEmpty)
-                      const Text('No hay días en este plan.')
-                    else
-                      SizedBox(
-                        height: 76,
-                        child: ListView.builder(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: _dias.length,
-                          itemBuilder: (context, index) {
-                            final dia = _dias[index];
-                            final isSelected =
-                                _diaSeleccionado?.codigo == dia.codigo;
-                            return Card(
-                              elevation: isSelected ? 8 : 2,
-                              color: isSelected
-                                  ? Theme.of(
-                                      context,
-                                    ).colorScheme.primaryContainer
-                                  : null,
-                              child: InkWell(
-                                onTap: () {
-                                  setState(() {
-                                    _diaSeleccionado = dia;
-                                  });
-                                  _loadEjerciciosPlanFit();
-                                },
-                                onLongPress: () {
-                                  final displayTitle =
-                                      (dia.titulo ?? '').trim().isNotEmpty
-                                          ? dia.titulo!.trim()
-                                          : 'Día ${dia.numeroDia}';
-                                  showDialog(
-                                    context: context,
-                                    builder: (context) => AlertDialog(
-                                      title: Text(displayTitle),
-                                      content: const Text('¿Qué deseas hacer?'),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () {
-                                            Navigator.pop(context);
-                                            _showDiaDialog(dia: dia);
+                  ),
+                  const SizedBox(height: 8),
+                  _buildExpandableCard(
+                    title: 'Consejos generales',
+                    cardKey: 'consejos_generales',
+                    trailingBadge: _buildCountTagBadge(_consejos.length),
+                    child: TextFormField(
+                      initialValue: _consejos,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                      ),
+                      maxLines: 4,
+                      onChanged: (value) => setState(() => _consejos = value),
+                      onSaved: (value) => _consejos = value ?? '',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildExpandableCard(
+                    title: 'Recomendaciones',
+                    cardKey: 'recomendaciones',
+                    trailingBadge: _buildCountTagBadge(
+                      _recomendaciones.length,
+                    ),
+                    child: TextFormField(
+                      initialValue: _recomendaciones,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                      ),
+                      maxLines: 4,
+                      onChanged: (value) =>
+                          setState(() => _recomendaciones = value),
+                      onSaved: (value) => _recomendaciones = value ?? '',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildExpandableCard(
+                    title: 'Indicaciones',
+                    cardKey: 'indicaciones',
+                    trailingBadge: _buildCountTagBadge(_indicaciones.length),
+                    child: TextFormField(
+                      initialValue: _indicaciones,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                      ),
+                      maxLines: 4,
+                      onChanged: (value) =>
+                          setState(() => _indicaciones = value),
+                      onSaved: (value) => _indicaciones = value ?? '',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildExpandableCard(
+                    title: 'Indicaciones (paciente)',
+                    cardKey: 'indicaciones_paciente',
+                    trailingBadge: _buildCountTagBadge(
+                      _indicacionesUsuario.length,
+                    ),
+                    child: TextFormField(
+                      initialValue: _indicacionesUsuario,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                      ),
+                      maxLines: 4,
+                      onChanged: (value) =>
+                          setState(() => _indicacionesUsuario = value),
+                      onSaved: (value) => _indicacionesUsuario = value ?? '',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (_isEditing) ...[
+                    const SizedBox(height: 8),
+                    _buildExpandableCard(
+                      title: 'Días',
+                      cardKey: 'dias',
+                      titleActions: [
+                        IconButton(
+                          tooltip: 'Añadir día',
+                          icon: const Icon(Icons.add),
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () => _showDiaDialog(),
+                        ),
+                        IconButton(
+                          tooltip: 'Añadir ejercicio',
+                          icon: const Icon(Icons.fitness_center),
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  const PlanFitEjerciciosCatalogScreen(
+                                openCreateDialog: true,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                      trailingBadge: _buildCountCircleBadge(
+                        _dias.length,
+                        onTap: () {
+                          setState(() {
+                            _diaSeleccionado = null;
+                          });
+                          _loadEjerciciosPlanFit();
+                        },
+                      ),
+                      child: _loadingDias
+                          ? const Center(child: CircularProgressIndicator())
+                          : _dias.isEmpty
+                              ? const Text('No hay días en este plan.')
+                              : SizedBox(
+                                  height: 76,
+                                  child: ListView.builder(
+                                    scrollDirection: Axis.horizontal,
+                                    itemCount: _dias.length,
+                                    itemBuilder: (context, index) {
+                                      final dia = _dias[index];
+                                      final isSelected =
+                                          _diaSeleccionado?.codigo ==
+                                              dia.codigo;
+                                      return Card(
+                                        elevation: isSelected ? 8 : 2,
+                                        color: isSelected
+                                            ? Theme.of(
+                                                context,
+                                              ).colorScheme.primaryContainer
+                                            : null,
+                                        child: InkWell(
+                                          onTap: () {
+                                            setState(() {
+                                              _diaSeleccionado = dia;
+                                            });
+                                            _loadEjerciciosPlanFit();
                                           },
-                                          child: const Text('Editar'),
-                                        ),
-                                        TextButton(
-                                          onPressed: () {
-                                            Navigator.pop(context);
-                                            _eliminarDia(dia);
-                                          },
-                                          child: const Text(
-                                            'Eliminar',
-                                            style: TextStyle(color: Colors.red),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                                child: Container(
-                                  width: 110,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 4,
-                                    vertical: 4,
-                                  ),
-                                  child: Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.center,
-                                    children: [
-                                      Expanded(
-                                        child: Column(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.center,
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              (dia.titulo ?? '')
-                                                      .trim()
-                                                      .isNotEmpty
-                                                  ? dia.titulo!.trim()
-                                                  : 'Día',
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .titleSmall
-                                                  ?.copyWith(
-                                                    fontWeight: FontWeight.bold,
-                                                    fontSize: 12,
+                                          onLongPress: () {
+                                            final displayTitle =
+                                                (dia.titulo ?? '')
+                                                        .trim()
+                                                        .isNotEmpty
+                                                    ? dia.titulo!.trim()
+                                                    : 'Día ${dia.numeroDia}';
+                                            showDialog(
+                                              context: context,
+                                              builder: (context) => AlertDialog(
+                                                title: Text(displayTitle),
+                                                content: const Text(
+                                                    '¿Qué deseas hacer?'),
+                                                actions: [
+                                                  TextButton(
+                                                    onPressed: () {
+                                                      Navigator.pop(context);
+                                                      _showDiaDialog(dia: dia);
+                                                    },
+                                                    child: const Text('Editar'),
                                                   ),
-                                              overflow: TextOverflow.ellipsis,
-                                              maxLines: 1,
+                                                  TextButton(
+                                                    onPressed: () {
+                                                      Navigator.pop(context);
+                                                      _eliminarDia(dia);
+                                                    },
+                                                    child: const Text(
+                                                      'Eliminar',
+                                                      style: TextStyle(
+                                                          color: Colors.red),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            );
+                                          },
+                                          child: Container(
+                                            width: 110,
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 4,
+                                              vertical: 4,
                                             ),
-                                            const SizedBox(height: 1),
-                                            Row(
+                                            child: Row(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.center,
                                               children: [
-                                                Icon(
-                                                  Icons.fitness_center,
-                                                  size: 12,
-                                                  color: Colors.grey.shade600,
+                                                Expanded(
+                                                  child: Column(
+                                                    mainAxisAlignment:
+                                                        MainAxisAlignment
+                                                            .center,
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
+                                                    children: [
+                                                      Text(
+                                                        (dia.titulo ?? '')
+                                                                .trim()
+                                                                .isNotEmpty
+                                                            ? dia.titulo!.trim()
+                                                            : 'Día',
+                                                        style: Theme.of(context)
+                                                            .textTheme
+                                                            .titleSmall
+                                                            ?.copyWith(
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .bold,
+                                                              fontSize: 12,
+                                                            ),
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        maxLines: 1,
+                                                      ),
+                                                      const SizedBox(height: 1),
+                                                      Row(
+                                                        children: [
+                                                          Icon(
+                                                            Icons
+                                                                .fitness_center,
+                                                            size: 12,
+                                                            color: Colors
+                                                                .grey.shade600,
+                                                          ),
+                                                          const SizedBox(
+                                                              width: 3),
+                                                          Text(
+                                                            '${dia.totalEjercicios ?? 0}',
+                                                            style: Theme.of(
+                                                                    context)
+                                                                .textTheme
+                                                                .bodySmall
+                                                                ?.copyWith(
+                                                                    fontSize:
+                                                                        11),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ],
+                                                  ),
                                                 ),
-                                                const SizedBox(width: 3),
-                                                Text(
-                                                  '${dia.totalEjercicios ?? 0}',
-                                                  style: Theme.of(context)
-                                                      .textTheme
-                                                      .bodySmall
-                                                      ?.copyWith(fontSize: 11),
+                                                const SizedBox(width: 4),
+                                                Container(
+                                                  width: 24,
+                                                  height: 24,
+                                                  decoration: BoxDecoration(
+                                                    color:
+                                                        Colors.green.shade100,
+                                                    shape: BoxShape.circle,
+                                                  ),
+                                                  alignment: Alignment.center,
+                                                  child: Text(
+                                                    '${dia.numeroDia}',
+                                                    style: TextStyle(
+                                                      fontSize: 10,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      color:
+                                                          Colors.green.shade800,
+                                                    ),
+                                                  ),
                                                 ),
                                               ],
                                             ),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                    ),
+                    const SizedBox(height: 8),
+                    _buildExpandableCard(
+                      title: 'Ejercicios del plan',
+                      cardKey: 'ejercicios_plan',
+                      subtitle: _diaSeleccionado != null
+                          ? 'Día ${(_diaSeleccionado!.titulo ?? '').trim().isNotEmpty ? _diaSeleccionado!.titulo! : _diaSeleccionado!.numeroDia}'
+                          : 'Todos los días',
+                      titleActions: [
+                        IconButton(
+                          tooltip: 'Añadir ejercicio',
+                          icon: const Icon(Icons.add),
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () =>
+                              _showEjercicioDialog(dia: _diaSeleccionado),
+                        ),
+                      ],
+                      trailingBadge: _buildCountCircleBadge(
+                        _ejercicios.length,
+                        onTap: _diaSeleccionado != null
+                            ? () => _showMultipleEjerciciosSelector()
+                            : null,
+                      ),
+                      child: _loadingEjercicios
+                          ? const Center(child: CircularProgressIndicator())
+                          : _ejercicios.isEmpty
+                              ? const Text('No hay ejercicios añadidos.')
+                              : ListView.separated(
+                                  shrinkWrap: true,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  itemCount: _ejercicios.length,
+                                  separatorBuilder: (_, __) => const Divider(),
+                                  itemBuilder: (context, index) {
+                                    final ejercicio = _ejercicios[index];
+                                    final tiempo = ejercicio.tiempo ?? 0;
+                                    final reps = ejercicio.repeticiones ?? 0;
+                                    final kilos = ejercicio.kilos ?? 0;
+                                    final tags = <Widget>[];
+                                    if (tiempo > 0) {
+                                      tags.add(
+                                        _buildMetricTag(
+                                          Icons.timer_outlined,
+                                          '${tiempo}s',
+                                        ),
+                                      );
+                                    }
+                                    if (reps > 0) {
+                                      tags.add(_buildMetricTag(
+                                          Icons.repeat, '$reps'));
+                                    }
+                                    if (kilos > 0) {
+                                      tags.add(
+                                        _buildMetricTag(
+                                            Icons.fitness_center, '$kilos'),
+                                      );
+                                    }
+                                    return Dismissible(
+                                      key: ValueKey('ej_${ejercicio.codigo}'),
+                                      direction: DismissDirection.startToEnd,
+                                      background: Container(
+                                        alignment: Alignment.centerLeft,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 16),
+                                        color: Colors.red.shade400,
+                                        child: const Icon(Icons.delete,
+                                            color: Colors.white),
+                                      ),
+                                      confirmDismiss: (_) async {
+                                        final confirmed =
+                                            await showDialog<bool>(
+                                          context: context,
+                                          builder: (context) => AlertDialog(
+                                            title: const Text(
+                                                'Eliminar ejercicio'),
+                                            content: Text(
+                                              '¿Eliminar "${ejercicio.nombre}"?',
+                                            ),
+                                            actions: [
+                                              TextButton(
+                                                onPressed: () => Navigator.pop(
+                                                    context, false),
+                                                child: const Text('Cancelar'),
+                                              ),
+                                              ElevatedButton(
+                                                onPressed: () => Navigator.pop(
+                                                    context, true),
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor: Colors.red,
+                                                ),
+                                                child: const Text('Eliminar'),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                        return confirmed == true;
+                                      },
+                                      onDismissed: (_) =>
+                                          _deleteEjercicio(ejercicio),
+                                      child: ListTile(
+                                        leading:
+                                            _buildEjercicioThumbnail(ejercicio),
+                                        title: Text(ejercicio.nombre),
+                                        onTap: () => _showEjercicioDialog(
+                                          ejercicio: ejercicio,
+                                        ),
+                                        onLongPress: () =>
+                                            _showEjercicioActionsMenu(
+                                                ejercicio),
+                                        trailing: IconButton(
+                                          icon: const Icon(Icons.more_vert),
+                                          tooltip: 'Más opciones',
+                                          onPressed: () =>
+                                              _showEjercicioActionsMenu(
+                                                  ejercicio),
+                                        ),
+                                        subtitle: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            if (_diaSeleccionado == null &&
+                                                ejercicio.codigoDia != null)
+                                              Padding(
+                                                padding: const EdgeInsets.only(
+                                                    bottom: 4),
+                                                child: Text(
+                                                  _getDiaText(
+                                                      ejercicio.codigoDia),
+                                                  style: const TextStyle(
+                                                    fontSize: 11,
+                                                    color: Colors.blue,
+                                                  ),
+                                                ),
+                                              ),
+                                            if (tags.isNotEmpty)
+                                              Wrap(
+                                                spacing: 6,
+                                                runSpacing: 6,
+                                                children: tags,
+                                              ),
                                           ],
                                         ),
                                       ),
-                                      const SizedBox(width: 4),
-                                      Container(
-                                        width: 24,
-                                        height: 24,
-                                        decoration: BoxDecoration(
-                                          color: Colors.green.shade100,
-                                          shape: BoxShape.circle,
-                                        ),
-                                        alignment: Alignment.center,
-                                        child: Text(
-                                          '${dia.numeroDia}',
-                                          style: TextStyle(
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.green.shade800,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                                    );
+                                  },
                                 ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    const Divider(),
-                    const SizedBox(height: 16),
-                    // Sección de ejercicios
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _diaSeleccionado != null
-                              ? 'Ejercicios del ${(_diaSeleccionado!.titulo ?? '').trim().isNotEmpty ? _diaSeleccionado!.titulo! : 'Día ${_diaSeleccionado!.numeroDia}'}'
-                              : 'Ejercicios del Plan',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            if (_diaSeleccionado != null)
-                              ElevatedButton.icon(
-                                onPressed: () =>
-                                    _showMultipleEjerciciosSelector(),
-                                icon: const Icon(Icons.add_circle_outline),
-                                label: const Text('+ Varios'),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.green.shade100,
-                                ),
-                              ),
-                            ElevatedButton.icon(
-                              onPressed: () =>
-                                  _showEjercicioDialog(dia: _diaSeleccionado),
-                              icon: const Icon(Icons.add),
-                              label: const Text('Ejercicio'),
-                            ),
-                          ],
-                        ),
-                      ],
                     ),
-                    const SizedBox(height: 8),
-                    if (_loadingEjercicios)
-                      const Center(child: CircularProgressIndicator())
-                    else if (_ejercicios.isEmpty)
-                      const Text('No hay ejercicios añadidos.')
-                    else
-                      ListView.separated(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: _ejercicios.length,
-                        separatorBuilder: (_, __) => const Divider(),
-                        itemBuilder: (context, index) {
-                          final ejercicio = _ejercicios[index];
-                          final tiempo = ejercicio.tiempo ?? 0;
-                          final reps = ejercicio.repeticiones ?? 0;
-                          final kilos = ejercicio.kilos ?? 0;
-                          final tags = <Widget>[];
-                          if (tiempo > 0) {
-                            tags.add(
-                              _buildMetricTag(
-                                Icons.timer_outlined,
-                                '${tiempo}s',
-                              ),
-                            );
-                          }
-                          if (reps > 0) {
-                            tags.add(_buildMetricTag(Icons.repeat, '$reps'));
-                          }
-                          if (kilos > 0) {
-                            tags.add(
-                              _buildMetricTag(Icons.fitness_center, '$kilos'),
-                            );
-                          }
-                          final isSelected = _selectedEjerciciosCodigo.contains(
-                            ejercicio.codigo,
-                          );
-                          final hasSelections =
-                              _selectedEjerciciosCodigo.isNotEmpty;
-
-                          return Container(
-                            color: isSelected ? Colors.blue.shade50 : null,
-                            child: ListTile(
-                              leading: hasSelections
-                                  ? Checkbox(
-                                      value: isSelected,
-                                      onChanged: (checked) {
-                                        setState(() {
-                                          if (checked == true) {
-                                            _selectedEjerciciosCodigo.add(
-                                              ejercicio.codigo,
-                                            );
-                                          } else {
-                                            _selectedEjerciciosCodigo.remove(
-                                              ejercicio.codigo,
-                                            );
-                                          }
-                                        });
-                                      },
-                                    )
-                                  : _buildEjercicioThumbnail(ejercicio),
-                              title: Text(ejercicio.nombre),
-                              onTap: hasSelections
-                                  ? () {
-                                      setState(() {
-                                        if (isSelected) {
-                                          _selectedEjerciciosCodigo.remove(
-                                            ejercicio.codigo,
-                                          );
-                                        } else {
-                                          _selectedEjerciciosCodigo.add(
-                                            ejercicio.codigo,
-                                          );
-                                        }
-                                      });
-                                    }
-                                  : null,
-                              onLongPress: () {
-                                setState(() {
-                                  if (_selectedEjerciciosCodigo.contains(
-                                    ejercicio.codigo,
-                                  )) {
-                                    _selectedEjerciciosCodigo.remove(
-                                      ejercicio.codigo,
-                                    );
-                                  } else {
-                                    _selectedEjerciciosCodigo.add(
-                                      ejercicio.codigo,
-                                    );
-                                  }
-                                });
-                              },
-                              subtitle: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  // Mostrar día si se está viendo todos los ejercicios y tiene día asignado
-                                  if (_diaSeleccionado == null &&
-                                      ejercicio.codigoDia != null)
-                                    Padding(
-                                      padding: const EdgeInsets.only(bottom: 4),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 2,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.blue.shade100,
-                                          borderRadius: BorderRadius.circular(
-                                            12,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          _getDiaText(ejercicio.codigoDia),
-                                          style: const TextStyle(
-                                            fontSize: 12,
-                                            fontStyle: FontStyle.italic,
-                                            color: Colors.blue,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  if (tags.isNotEmpty)
-                                    Wrap(
-                                      spacing: 6,
-                                      runSpacing: 6,
-                                      children: tags,
-                                    ),
-                                  const SizedBox(height: 6),
-                                  Wrap(
-                                    spacing: 4,
-                                    children: [
-                                      if ((ejercicio.urlVideo ?? '').isNotEmpty)
-                                        IconButton(
-                                          tooltip: 'Abrir URL',
-                                          icon: const Icon(
-                                            Icons.open_in_browser,
-                                          ),
-                                          onPressed: () => _launchUrlExternal(
-                                            ejercicio.urlVideo ?? '',
-                                          ),
-                                        ),
-                                      IconButton(
-                                        icon: const Icon(Icons.edit),
-                                        onPressed: () => _showEjercicioDialog(
-                                          ejercicio: ejercicio,
-                                        ),
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.delete,
-                                          color: Colors.red,
-                                        ),
-                                        onPressed: () async {
-                                          try {
-                                            await _apiService
-                                                .deletePlanFitEjercicio(
-                                              ejercicio.codigo,
-                                            );
-                                            await _loadEjerciciosPlanFit();
-                                            await _loadDiasPlanFit();
-                                          } catch (e) {
-                                            if (mounted) {
-                                              ScaffoldMessenger.of(
-                                                context,
-                                              ).showSnackBar(
-                                                SnackBar(
-                                                  content: Text(
-                                                    'Error al eliminar ejercicio: $e',
-                                                  ),
-                                                  backgroundColor: Colors.red,
-                                                ),
-                                              );
-                                            }
-                                          }
-                                        },
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      ),
                   ],
-                  const Divider(),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Archivo del Plan',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
                   const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      ElevatedButton.icon(
-                        onPressed: _pickFile,
-                        icon: const Icon(Icons.attach_file),
-                        label: const Text('Seleccionar'),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          _pickedFile?.name ??
-                              widget.plan?.planDocumentoNombre ??
-                              'Ningún archivo seleccionado',
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                  _buildEntrevistasDropdown(),
+                  const SizedBox(height: 8),
+                  _buildExpandableCard(
+                    title: 'URL',
+                    cardKey: 'url',
+                    titleActions: [
+                      IconButton(
+                        tooltip: 'Visitar URL',
+                        icon: const Icon(Icons.open_in_new),
+                        visualDensity: VisualDensity.compact,
+                        onPressed: _urlController.text.trim().isEmpty
+                            ? null
+                            : () => _launchUrlExternal(_urlController.text),
                       ),
                     ],
+                    child: TextFormField(
+                      controller: _urlController,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (value) => setState(() => _url = value),
+                      onSaved: (value) => _url = value ?? '',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildExpandableCard(
+                    title: 'PDF del plan',
+                    cardKey: 'pdf_plan',
+                    titleActions: [
+                      IconButton(
+                        tooltip: 'Abrir PDF adjunto',
+                        icon: const Icon(Icons.open_in_new),
+                        visualDensity: VisualDensity.compact,
+                        onPressed: ((_pickedFile?.path?.isNotEmpty ?? false) ||
+                                ((_effectivePlanDocumentoNombre() ?? '')
+                                    .isNotEmpty))
+                            ? _openPlanPdf
+                            : null,
+                      ),
+                      IconButton(
+                        tooltip: 'Seleccionar archivo',
+                        icon: const Icon(Icons.attach_file),
+                        visualDensity: VisualDensity.compact,
+                        onPressed: _pickFile,
+                      ),
+                      if (((_effectivePlanDocumentoNombre() ?? '')
+                              .isNotEmpty) ||
+                          ((_pickedFile?.path?.isNotEmpty ?? false)))
+                        IconButton(
+                          tooltip: 'Quitar archivo',
+                          icon: const Icon(Icons.delete_outline),
+                          visualDensity: VisualDensity.compact,
+                          onPressed: _removePlanPdf,
+                        ),
+                    ],
+                    child: Text(
+                      _effectivePlanDocumentoNombre() ??
+                          'Ningún archivo seleccionado',
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 ],
               ),
             ),
           ),
         ),
-        floatingActionButton: _selectedEjerciciosCodigo.isNotEmpty
-            ? FloatingActionButton.extended(
-                onPressed: _deleteSelectedEjercicios,
-                backgroundColor: Colors.red,
-                icon: const Icon(Icons.delete),
-                label: Text('Eliminar (${_selectedEjerciciosCodigo.length})'),
-              )
-            : null,
       ),
     );
+  }
+
+  Future<void> _showPacienteSelectorDialog(List<Paciente> pacientes) async {
+    int? tempSelected = _selectedPacienteId;
+    final searchController = TextEditingController();
+
+    final selected = await showDialog<int?>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setStateDialog) {
+          final query = searchController.text.trim().toLowerCase();
+          final filtered = pacientes.where((p) {
+            if (query.isEmpty) return true;
+            return p.nombre.toLowerCase().contains(query);
+          }).toList();
+
+          return AlertDialog(
+            title: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Seleccionar paciente',
+                    style: TextStyle(fontSize: 16),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 20),
+                  onPressed: () => Navigator.pop(dialogContext),
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.grey.shade200,
+                    padding: const EdgeInsets.all(4),
+                    minimumSize: const Size(32, 32),
+                  ),
+                ),
+              ],
+            ),
+            content: SizedBox(
+              width: 520,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: searchController,
+                    decoration: const InputDecoration(
+                      hintText: 'Buscar paciente...',
+                      prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (_) => setStateDialog(() {}),
+                  ),
+                  const SizedBox(height: 10),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 380),
+                    child: filtered.isEmpty
+                        ? const Center(child: Text('Sin resultados'))
+                        : ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: filtered.length,
+                            separatorBuilder: (_, __) =>
+                                const Divider(height: 1),
+                            itemBuilder: (context, index) {
+                              final paciente = filtered[index];
+                              return ListTile(
+                                dense: true,
+                                onTap: () => setStateDialog(
+                                  () => tempSelected = paciente.codigo,
+                                ),
+                                leading: Radio<int>(
+                                  value: paciente.codigo,
+                                  groupValue: tempSelected,
+                                  onChanged: (value) => setStateDialog(
+                                    () => tempSelected = value,
+                                  ),
+                                ),
+                                title: Text(paciente.nombre),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              ElevatedButton(
+                onPressed: () => Navigator.pop(dialogContext, tempSelected),
+                child: const Text('Aplicar'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (!mounted || selected == null) return;
+    setState(() {
+      _selectedPacienteId = selected;
+      _entrevistasFuture = _apiService.getEntrevistasFit(selected);
+      _codigoEntrevista = null;
+    });
   }
 
   Widget _buildPacientesDropdown() {
@@ -2590,56 +2995,63 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
           return const Center(child: CircularProgressIndicator());
         }
         if (snapshot.hasError) {
-          return Text("Error al cargar pacientes: ${snapshot.error}");
+          return Text('Error al cargar pacientes: ${snapshot.error}');
         }
         if (!snapshot.hasData || snapshot.data!.isEmpty) {
-          return const Text("No hay pacientes disponibles.");
+          return const Text('No hay pacientes disponibles.');
         }
 
         final pacientes = snapshot.data!;
-        return DropdownButtonFormField<int>(
-          initialValue: _selectedPacienteId,
-          decoration: const InputDecoration(labelText: 'Paciente'),
-          items: pacientes
-              .map(
-                (paciente) => DropdownMenuItem(
-                  value: paciente.codigo,
-                  child: Text(paciente.nombre),
-                ),
-              )
-              .toList(),
-          onChanged: (value) {
-            setState(() {
-              _selectedPacienteId = value;
-              if (value != null) {
-                _entrevistasFuture = _apiService.getEntrevistasFit(value);
-                _codigoEntrevista = null;
-              } else {
-                _entrevistasFuture = null;
-                _codigoEntrevista = null;
-              }
-            });
-          },
-          validator: (value) => value == null ? 'Selecciona un paciente' : null,
+        final selectedPaciente = pacientes.firstWhereOrNull(
+          (p) => p.codigo == _selectedPacienteId,
+        );
+
+        return _buildExpandableCard(
+          title: 'Paciente',
+          cardKey: 'paciente',
+          titleActions: [
+            IconButton(
+              tooltip: 'Seleccionar paciente',
+              icon: const Icon(Icons.person_search),
+              visualDensity: VisualDensity.compact,
+              onPressed: () => _showPacienteSelectorDialog(pacientes),
+            ),
+          ],
+          child: TextFormField(
+            readOnly: true,
+            initialValue: selectedPaciente?.nombre ?? '',
+            decoration: const InputDecoration(
+              hintText: 'Selecciona un paciente',
+              border: OutlineInputBorder(),
+            ),
+            validator: (_) =>
+                _selectedPacienteId == null ? 'Selecciona un paciente' : null,
+          ),
         );
       },
     );
   }
 
   Widget _buildEntrevistasDropdown() {
+    Widget content;
     if (_selectedPacienteId == null || _entrevistasFuture == null) {
-      return DropdownButtonFormField<int?>(
+      content = DropdownButtonFormField<int?>(
         initialValue: null,
         decoration: const InputDecoration(
-          labelText: 'Entrevista Fit Relacionada (opcional)',
           hintText: 'Selecciona primero un paciente',
+          border: OutlineInputBorder(),
         ),
         items: const [DropdownMenuItem(value: null, child: Text('Ninguna'))],
         onChanged: null,
       );
+      return _buildExpandableCard(
+        title: 'Entrevista Fit Relacionada',
+        cardKey: 'entrevista_fit',
+        child: content,
+      );
     }
 
-    return FutureBuilder<List<EntrevistaFit>>(
+    content = FutureBuilder<List<EntrevistaFit>>(
       future: _entrevistasFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -2649,8 +3061,8 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
           return DropdownButtonFormField<int?>(
             initialValue: null,
             decoration: const InputDecoration(
-              labelText: 'Entrevista Fit Relacionada (opcional)',
               errorText: 'Error al cargar entrevistas',
+              border: OutlineInputBorder(),
             ),
             items: const [
               DropdownMenuItem(value: null, child: Text('Ninguna')),
@@ -2661,9 +3073,7 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
         if (!snapshot.hasData || snapshot.data!.isEmpty) {
           return DropdownButtonFormField<int?>(
             initialValue: _codigoEntrevista,
-            decoration: const InputDecoration(
-              labelText: 'Entrevista Fit Relacionada (opcional)',
-            ),
+            decoration: const InputDecoration(border: OutlineInputBorder()),
             items: const [
               DropdownMenuItem(value: null, child: Text('Ninguna')),
             ],
@@ -2675,9 +3085,7 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
 
         return DropdownButtonFormField<int?>(
           initialValue: _codigoEntrevista,
-          decoration: const InputDecoration(
-            labelText: 'Entrevista Fit Relacionada (opcional)',
-          ),
+          decoration: const InputDecoration(border: OutlineInputBorder()),
           items: [
             const DropdownMenuItem(value: null, child: Text('Ninguna')),
             ...todasLasEntrevistas
@@ -2694,6 +3102,12 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
           onChanged: (value) => setState(() => _codigoEntrevista = value),
         );
       },
+    );
+
+    return _buildExpandableCard(
+      title: 'Entrevista Fit Relacionada',
+      cardKey: 'entrevista_fit',
+      child: content,
     );
   }
 

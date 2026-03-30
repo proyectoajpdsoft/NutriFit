@@ -103,6 +103,12 @@ if (empty($data->nick) || empty($data->contrasena)) {
 $query_fields = [
     "codigo", "nick", "contrasena", "administrador", "tipo", "activo", "accesoweb", "codigo_paciente", "edad", "altura"
 ];
+if (isset($usuario_columns['premium_expira_fecha'])) {
+    $query_fields[] = "premium_expira_fecha";
+}
+if (isset($usuario_columns['premium_periodo_meses'])) {
+    $query_fields[] = "premium_periodo_meses";
+}
 if ($has_two_factor_enabled_col) {
     $query_fields[] = "two_factor_enabled";
 }
@@ -138,6 +144,8 @@ if ($num > 0) {
     $codigo_paciente = $row['codigo_paciente'];
     $edad = $row['edad'];
     $altura = $row['altura'];
+    $premium_expira_fecha = $row['premium_expira_fecha'] ?? null;
+    $premium_periodo_meses = $row['premium_periodo_meses'] ?? null;
     $two_factor_enabled = strtoupper(trim((string)($row['two_factor_enabled'] ?? 'N')));
     if ($two_factor_enabled !== 'S') {
         $two_factor_enabled = 'N';
@@ -334,7 +342,9 @@ if ($num > 0) {
                     "tipo" => $tipo,
                     "codigo_paciente" => $codigo_paciente,
                     "edad" => $edad,
-                    "altura" => $altura
+                    "altura" => $altura,
+                    "premium_expira_fecha" => $premium_expira_fecha,
+                    "premium_periodo_meses" => $premium_periodo_meses
                 )
             ));
         } else {
@@ -374,9 +384,19 @@ function log_session($db, $codigo_usuario, $estado, $tipo_dispositivo = null) {
     $fecha = date('Y-m-d');
     $hora = date('H:i:s');
 
-    // Insertar en la tabla sesion con fecha, hora, IPs y tipo de dispositivo
+    // Evitar duplicados masivos: un solo registro equivalente por ventana de tiempo.
     $query = "INSERT INTO sesion (codigousuario, fecha, hora, estado, ip_local, ip_publica, tipo)
-              VALUES (:codigousuario, :fecha, :hora, :estado, :ip_local, :ip_publica, :tipo)";
+              SELECT :codigousuario, :fecha, :hora, :estado, :ip_local, :ip_publica, :tipo
+              FROM DUAL
+              WHERE NOT EXISTS (
+                  SELECT 1
+                  FROM sesion
+                  WHERE codigousuario <=> :codigousuario_check
+                    AND estado = :estado_check
+                    AND ip_publica <=> :ip_publica_check
+                    AND TIMESTAMP(fecha, hora) >= DATE_SUB(NOW(), INTERVAL 20 MINUTE)
+                  LIMIT 1
+              )";
     try {
         $stmt = $db->prepare($query);
         $stmt->bindParam(':codigousuario', $codigo_usuario);
@@ -386,6 +406,9 @@ function log_session($db, $codigo_usuario, $estado, $tipo_dispositivo = null) {
         $stmt->bindParam(':ip_local', $ip_local);
         $stmt->bindParam(':ip_publica', $ip_publica);
         $stmt->bindParam(':tipo', $tipo_dispositivo);
+        $stmt->bindParam(':codigousuario_check', $codigo_usuario);
+        $stmt->bindParam(':estado_check', $estado);
+        $stmt->bindParam(':ip_publica_check', $ip_publica);
         $stmt->execute();
     } catch (Exception $e) {
         // Manejo de errores silencioso para no interrumpir el login

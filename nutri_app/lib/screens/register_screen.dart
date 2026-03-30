@@ -2,6 +2,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:nutri_app/services/config_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
+import 'package:nutri_app/services/api_service.dart';
+import 'package:nutri_app/widgets/password_requirements_checklist.dart';
 import 'package:provider/provider.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -13,6 +15,7 @@ class RegisterScreen extends StatefulWidget {
 
 class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
+  final ApiService _apiService = ApiService();
   final _nickController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
@@ -24,85 +27,42 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _passwordVisible = false;
   bool _confirmPasswordVisible = false;
   bool _optionalDataExpanded = false;
-  bool _showPasswordRequirements = false;
 
-  Widget _buildRequirement(String text, bool isMet) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Row(
-        children: [
-          Icon(
-            isMet ? Icons.check_circle : Icons.cancel,
-            color: isMet ? Colors.green : Colors.grey,
-            size: 20,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            text,
-            style: TextStyle(
-              color: isMet ? Colors.green : Colors.grey,
-              fontSize: 13,
-            ),
-          ),
-        ],
-      ),
-    );
+  @override
+  void initState() {
+    super.initState();
+    _refreshPasswordPolicies();
   }
 
-  Widget _buildPasswordRequirementsList() {
+  Future<void> _refreshPasswordPolicies() async {
     final configService = context.read<ConfigService>();
-    final minLength = configService.passwordMinLength;
-    final requireUpperLower = configService.passwordRequireUpperLower;
-    final requireNumbers = configService.passwordRequireNumbers;
-    final requireSpecialChars = configService.passwordRequireSpecialChars;
-    final password = _passwordController.text;
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.blue.shade50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.blue.shade200),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Requisitos de contraseña:',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: Colors.blue.shade900,
-            ),
-          ),
-          const SizedBox(height: 8),
-          if (minLength > 0)
-            _buildRequirement(
-              'Mínimo $minLength caracteres',
-              password.length >= minLength,
-            ),
-          if (requireUpperLower)
-            _buildRequirement(
-              'Mayúsculas y minúsculas',
-              password.contains(RegExp(r'[A-Z]')) &&
-                  password.contains(RegExp(r'[a-z]')),
-            ),
-          if (requireNumbers)
-            _buildRequirement(
-              'Contener números',
-              password.contains(RegExp(r'[0-9]')),
-            ),
-          if (requireSpecialChars)
-            _buildRequirement(
-              'Caracteres especiales (*,.+-#\$?¿!¡_()/\\%&)',
-              password.contains(RegExp(r'[*,.+\-#$?¿!¡_()\/\\%&]')),
-            ),
-        ],
-      ),
-    );
+    await configService.loadPasswordPoliciesFromDatabase(_apiService);
+    if (!mounted) return;
+    setState(() {});
   }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+
+    final email = _emailController.text.trim();
+    if (email.isNotEmpty) {
+      try {
+        final exists = await _apiService.checkEmailExists(email);
+        if (exists) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content:
+                  Text('Esta cuenta de email no puede usarse, indique otra'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+      } catch (_) {
+        // Si falla esta comprobación puntual, el backend validará en registro.
+      }
+    }
 
     if (_passwordController.text != _confirmPasswordController.text) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -174,6 +134,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final configService = context.watch<ConfigService>();
+    final policy = PasswordPolicyRequirements.fromConfig(configService);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Iniciar registro'),
@@ -256,7 +219,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
                       decoration: const InputDecoration(
-                        labelText: 'Email (opcional)',
+                        labelText: 'Email',
                         border: OutlineInputBorder(),
                         prefixIcon: Icon(Icons.email_outlined),
                       ),
@@ -407,20 +370,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         return configService.validatePassword(value);
                       },
                       onChanged: (value) {
-                        setState(() {
-                          if (value.isNotEmpty && !_showPasswordRequirements) {
-                            _showPasswordRequirements = true;
-                          } else if (value.isEmpty) {
-                            _showPasswordRequirements = false;
-                          }
-                        });
+                        setState(() {});
                       },
                     ),
                     const SizedBox(height: 12),
-                    if (_showPasswordRequirements) ...[
-                      _buildPasswordRequirementsList(),
-                      const SizedBox(height: 16),
-                    ],
+                    PasswordRequirementsChecklist(
+                      policy: policy,
+                      password: _passwordController.text,
+                    ),
                     const SizedBox(height: 16),
                     TextFormField(
                       controller: _confirmPasswordController,

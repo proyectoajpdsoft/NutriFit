@@ -1,0 +1,64 @@
+# ============================================================
+# .htaccess para php_api/med/
+# Permite peticiones Range (byte-range) requeridas por
+# ExoPlayer (Android) y otros reproductores de video.
+#
+# El servidor devuelve 403 en peticiones GET con cabecera
+# Range aunque HEAD devuelve 200. Esto impide el streaming
+# de video en la app Flutter (video_player/ExoPlayer).
+# ============================================================
+
+# --- 1. Desactivar ModSecurity en este directorio ----------
+# ModSecurity suele bloquear peticiones Range con reglas WAF.
+# Si AllowOverride no permite SecRuleEngine, contacta con el
+# hosting para añadir una excepción por directorio.
+<IfModule mod_security2.c>
+    SecRuleEngine Off
+</IfModule>
+<IfModule mod_security.c>
+    SecFilterEngine Off
+    SecFilterScanPOST Off
+</IfModule>
+
+# --- 2. Tipos MIME correctos para video --------------------
+<IfModule mod_mime.c>
+    AddType video/mp4        .mp4 .m4v
+    AddType video/webm       .webm
+    AddType video/ogg        .ogv .ogg
+    AddType video/quicktime  .mov
+    AddType video/x-msvideo  .avi
+    AddType video/x-matroska .mkv
+</IfModule>
+
+# --- 3. Cabeceras para streaming ----------------------------
+<IfModule mod_headers.c>
+    <FilesMatch "\.(mp4|m4v|webm|ogv|ogg|mov|avi|mkv)$">
+        # Confirmar soporte de rangos al cliente
+        Header set Accept-Ranges "bytes"
+
+        # Caché moderada para videos estáticos
+        Header set Cache-Control "public, max-age=86400"
+
+        # CORS: necesario si el player carga el video desde
+        # un origen distinto (ej. WebView o Flutter web)
+        Header set Access-Control-Allow-Origin "*"
+        Header set Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
+        Header set Access-Control-Allow-Headers "Range, Content-Range, Content-Type, Accept"
+        Header set Access-Control-Expose-Headers "Content-Range, Content-Length, Accept-Ranges"
+    </FilesMatch>
+</IfModule>
+
+# --- 4. Sin compresión para archivos de video --------------
+# Los MP4 ya están comprimidos; gzip/deflate los rompe.
+<IfModule mod_deflate.c>
+    SetEnvIfNoCase Request_URI "\.(mp4|m4v|webm|ogv|ogg|mov|avi|mkv)$" no-gzip dont-vary
+</IfModule>
+<IfModule mod_brotli.c>
+    SetEnvIfNoCase Request_URI "\.(mp4|m4v|webm|ogv|ogg|mov|avi|mkv)$" no-brotli
+</IfModule>
+
+# --- 5. Asegurar que OPTIONS no sea bloqueado --------------
+# Algunos WAF bloquean OPTIONS antes de las reglas de CORS.
+<LimitExcept GET HEAD OPTIONS>
+    Require all denied
+</LimitExcept>

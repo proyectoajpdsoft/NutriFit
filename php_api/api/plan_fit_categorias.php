@@ -19,9 +19,20 @@ $db = $database->getConnection();
 // Validar token
 $validator = new TokenValidator($db);
 $user = $validator->validateToken();
-PermissionManager::checkPermission($user, 'planes_fit');
 
 $method = $_SERVER['REQUEST_METHOD'];
+
+function is_category_read_request() {
+    return $_SERVER['REQUEST_METHOD'] === 'GET';
+}
+
+if (is_category_read_request()) {
+    if (PermissionManager::getUserType($user) !== PermissionManager::TYPE_PREMIUM) {
+        PermissionManager::checkPermission($user, 'planes_fit');
+    }
+} else {
+    PermissionManager::checkPermission($user, 'planes_fit');
+}
 
 switch ($method) {
     case 'GET':

@@ -480,7 +480,7 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Filtrar periodo',
+                    'Filtrar período',
                     style: TextStyle(
                       fontWeight: FontWeight.w600,
                       color: Colors.purple.shade700,
@@ -527,6 +527,13 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
         0.0,
         (sum, e) =>
             sum + (e.duracionKilometros != null ? e.duracionKilometros! : 0));
+  }
+
+  double _getTotalDesnivel(List<Entrenamiento> entrenamientos) {
+    return entrenamientos.fold(
+        0.0,
+        (sum, e) =>
+            sum + (e.desnivelAcumulado != null ? e.desnivelAcumulado! : 0));
   }
 
   double _getPromedioEsfuerzo(List<Entrenamiento> entrenamientos) {
@@ -695,11 +702,15 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
   Widget _buildEquivalenciasHumorCard({
     required double totalKg,
     required double totalKm,
+    required double totalDesnivel,
   }) {
     final kgMsg = _buildKgEquivalentMessage(totalKg);
     final kmMsg = _buildKmEquivalentMessage(totalKm);
+    final subidaMsg = totalDesnivel > 0
+        ? 'Has subido ${totalDesnivel.toStringAsFixed(0)} m.'
+        : null;
 
-    if (kgMsg == null && kmMsg == null) {
+    if (kgMsg == null && kmMsg == null && subidaMsg == null) {
       return const SizedBox.shrink();
     }
 
@@ -714,6 +725,9 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
             if (kgMsg != null) Text(kgMsg),
             if (kgMsg != null && kmMsg != null) const SizedBox(height: 6),
             if (kmMsg != null) Text(kmMsg),
+            if ((kgMsg != null || kmMsg != null) && subidaMsg != null)
+              const SizedBox(height: 6),
+            if (subidaMsg != null) Text(subidaMsg),
           ],
         ),
       ),
@@ -722,6 +736,11 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
 
   @override
   Widget build(BuildContext context) {
+    final authService = context.watch<AuthService>();
+    final canViewActivityStats = authService.isPremium ||
+        authService.userType == 'Nutricionista' ||
+        authService.userType == 'Administrador';
+
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -828,10 +847,17 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
                     children: [
                       if (_isNutri)
                         const EntrenamientosPacientesPlanFitScreen(),
-                      _buildListView(),
-                      EntrenamientoStatsChart(
-                        entrenamientos: _filtrarEntrenamientos(),
-                      ),
+                      _buildListView(
+                          canViewActivityStats: canViewActivityStats),
+                      canViewActivityStats
+                          ? EntrenamientoStatsChart(
+                              entrenamientos: _filtrarEntrenamientos(),
+                            )
+                          : _buildPremiumOnlyStatsCard(
+                              title: 'Gráfica de actividades Premium',
+                              subtitle:
+                                  'La gráfica de evolución de actividades está disponible solo para usuarios Premium.',
+                            ),
                     ],
                   ),
                 ),
@@ -840,13 +866,14 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
     );
   }
 
-  Widget _buildListView() {
+  Widget _buildListView({required bool canViewActivityStats}) {
     final showEquivalencias =
         context.watch<ConfigService>().showEquivalenciasActividades;
     final entrenamientosFiltrados = _filtrarEntrenamientos();
 
     final totalMinutos = _getTotalMinutos(entrenamientosFiltrados);
     final totalKilometros = _getTotalKilometros(entrenamientosFiltrados);
+    final totalDesnivel = _getTotalDesnivel(entrenamientosFiltrados);
     final promedioEsfuerzo = _getPromedioEsfuerzo(entrenamientosFiltrados);
     final totalKgFuture = _getTotalKgLevantados(entrenamientosFiltrados);
 
@@ -857,24 +884,35 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
         children: [
           // Tarjeta de estadísticas
           if (entrenamientosFiltrados.isNotEmpty) ...[
-            _buildEstadisticasCard(
-              entrenamientosFiltrados,
-              totalMinutos,
-              totalKilometros,
-              promedioEsfuerzo,
-              totalKgFuture,
-            ),
-            if (showEquivalencias && entrenamientosFiltrados.length >= 5) ...[
-              const SizedBox(height: 16),
-              FutureBuilder<double>(
-                future: totalKgFuture,
-                builder: (context, snapshot) {
-                  final totalKg = snapshot.data ?? 0;
-                  return _buildEquivalenciasHumorCard(
-                    totalKg: totalKg,
-                    totalKm: totalKilometros,
-                  );
-                },
+            if (canViewActivityStats) ...[
+              _buildEstadisticasCard(
+                entrenamientosFiltrados,
+                totalMinutos,
+                totalKilometros,
+                totalDesnivel,
+                promedioEsfuerzo,
+                totalKgFuture,
+              ),
+              if (showEquivalencias && entrenamientosFiltrados.length >= 5) ...[
+                const SizedBox(height: 16),
+                FutureBuilder<double>(
+                  future: totalKgFuture,
+                  builder: (context, snapshot) {
+                    final totalKg = snapshot.data ?? 0;
+                    return _buildEquivalenciasHumorCard(
+                      totalKg: totalKg,
+                      totalKm: totalKilometros,
+                      totalDesnivel: totalDesnivel,
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
+              ],
+            ] else ...[
+              _buildPremiumOnlyStatsCard(
+                title: 'Totales de actividades Premium',
+                subtitle:
+                    'El resumen de totales en el listado está disponible solo para usuarios Premium.',
               ),
               const SizedBox(height: 16),
             ],
@@ -896,10 +934,75 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
     );
   }
 
+  Widget _buildPremiumOnlyStatsCard({
+    required String title,
+    required String subtitle,
+  }) {
+    return Card(
+      elevation: 3,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          gradient: LinearGradient(
+            colors: [Colors.purple.shade50, Colors.deepPurple.shade50],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          border: Border.all(color: Colors.purple.shade100),
+        ),
+        child: Column(
+          children: [
+            Icon(
+              Icons.workspace_premium,
+              size: 44,
+              color: Colors.deepPurple.shade400,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                color: Colors.deepPurple.shade700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.deepPurple.shade600,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pushNamed(context, '/premium_info'),
+              icon: const Icon(Icons.workspace_premium),
+              label: const Text('Hazte premium'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.purple,
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildEstadisticasCard(
     List<Entrenamiento> entrenamientos,
     int totalMinutos,
     double totalKilometros,
+    double totalDesnivel,
     double promedioEsfuerzo,
     Future<double> totalKgLevantadosFuture,
   ) {
@@ -984,6 +1087,16 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
                   ),
               ],
             ),
+            if (totalDesnivel > 0) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Has subido ${totalDesnivel.toStringAsFixed(0)} m.',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
           ],
         ),
       ),

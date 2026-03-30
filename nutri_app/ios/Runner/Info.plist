@@ -70,5 +70,7 @@
 	<string>Esta aplicación necesita acceso a la galería para seleccionar fotos de perfil</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Esta aplicación necesita guardar fotos en la galería</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Esta aplicación necesita acceso al micrófono para grabar audio de las diapositivas</string>
 </dict>
 </plist>

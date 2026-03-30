@@ -26,12 +26,14 @@ PermissionManager::checkPermission($user, 'consejos');
 
 switch($request_method) {
     case 'GET':
+        $limit = isset($_GET["limit"]) ? max(1, min(100, intval($_GET["limit"]))) : null;
+        $offset = isset($_GET["offset"]) ? max(0, intval($_GET["offset"])) : 0;
         if(isset($_GET["consejo"])) {
             get_usuarios_by_consejo($_GET["consejo"]);
         } else if(isset($_GET["usuario"]) && isset($_GET["consejo_codigo"])) {
             get_consejo_usuario($_GET["usuario"], $_GET["consejo_codigo"]);
         } else if(isset($_GET["favoritos"]) && isset($_GET["usuario"])) {
-            get_favoritos($_GET["usuario"]);
+            get_favoritos($_GET["usuario"], $limit, $offset);
         }
         break;
     case 'POST':
@@ -279,7 +281,7 @@ function toggle_favorito() {
     }
 }
 
-function get_favoritos($usuario_codigo) {
+function get_favoritos($usuario_codigo, $limit = null, $offset = 0) {
     global $db;
     
     $query = "SELECT c.codigo, c.titulo, c.texto, c.activo, c.fecha_inicio, c.fecha_fin,
@@ -296,9 +298,17 @@ function get_favoritos($usuario_codigo) {
               AND (c.fecha_inicio IS NULL OR c.fecha_inicio <= CURDATE())
               AND (c.fecha_fin IS NULL OR c.fecha_fin >= CURDATE())
               ORDER BY cu.fecha_favorito DESC";
+
+    if ($limit !== null) {
+        $query .= " LIMIT :limit OFFSET :offset";
+    }
     
     $stmt = $db->prepare($query);
     $stmt->bindParam(':usuario', $usuario_codigo);
+    if ($limit !== null) {
+        $stmt->bindValue(':limit', intval($limit), PDO::PARAM_INT);
+        $stmt->bindValue(':offset', intval($offset), PDO::PARAM_INT);
+    }
     $stmt->execute();
     $consejos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     

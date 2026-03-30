@@ -67,11 +67,11 @@ class _EntrenamientoPacienteScreenState
   };
 
   String get _prefsFiltroVisibleKey =>
-      '$_prefsFiltroVisiblePrefix_${widget.paciente.codigo}';
+      '${_prefsFiltroVisiblePrefix}_${widget.paciente.codigo}';
   String get _prefsFiltroPeriodoKey =>
-      '$_prefsFiltroPeriodoPrefix_${widget.paciente.codigo}';
+      '${_prefsFiltroPeriodoPrefix}_${widget.paciente.codigo}';
   String get _prefsFiltroUltimosDiasKey =>
-      '$_prefsFiltroUltimosDiasPrefix_${widget.paciente.codigo}';
+      '${_prefsFiltroUltimosDiasPrefix}_${widget.paciente.codigo}';
 
   @override
   void initState() {
@@ -349,7 +349,7 @@ class _EntrenamientoPacienteScreenState
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Filtrar periodo',
+                    'Filtrar período',
                     style: TextStyle(
                       fontWeight: FontWeight.w600,
                       color: Colors.purple.shade700,
@@ -398,6 +398,14 @@ class _EntrenamientoPacienteScreenState
       0.0,
       (sum, e) =>
           sum + (e.duracionKilometros != null ? e.duracionKilometros! : 0),
+    );
+  }
+
+  double _getTotalDesnivel(List<Entrenamiento> entrenamientos) {
+    return entrenamientos.fold(
+      0.0,
+      (sum, e) =>
+          sum + (e.desnivelAcumulado != null ? e.desnivelAcumulado! : 0),
     );
   }
 
@@ -558,11 +566,15 @@ class _EntrenamientoPacienteScreenState
   Widget _buildEquivalenciasHumorCard({
     required double totalKg,
     required double totalKm,
+    required double totalDesnivel,
   }) {
     final kgMsg = _buildKgEquivalentMessage(totalKg);
     final kmMsg = _buildKmEquivalentMessage(totalKm);
+    final subidaMsg = totalDesnivel > 0
+        ? 'Has subido ${totalDesnivel.toStringAsFixed(0)} m.'
+        : null;
 
-    if (kgMsg == null && kmMsg == null) {
+    if (kgMsg == null && kmMsg == null && subidaMsg == null) {
       return const SizedBox.shrink();
     }
 
@@ -581,6 +593,7 @@ class _EntrenamientoPacienteScreenState
             const SizedBox(height: 8),
             if (kgMsg != null) Text('• $kgMsg'),
             if (kmMsg != null) Text('• $kmMsg'),
+            if (subidaMsg != null) Text('• $subidaMsg'),
           ],
         ),
       ),
@@ -617,6 +630,7 @@ class _EntrenamientoPacienteScreenState
     final entrenamientosFiltrados = _filtrarEntrenamientos();
     final totalMinutos = _getTotalMinutos(entrenamientosFiltrados);
     final totalKilometros = _getTotalKilometros(entrenamientosFiltrados);
+    final totalDesnivel = _getTotalDesnivel(entrenamientosFiltrados);
     final promedioEsfuerzo = _getPromedioEsfuerzo(entrenamientosFiltrados);
     final totalKgFuture = _getTotalKgLevantados(entrenamientosFiltrados);
     final porActividad = _agruparPorActividad(entrenamientosFiltrados);
@@ -661,6 +675,7 @@ class _EntrenamientoPacienteScreenState
                       entrenamientosFiltrados,
                       totalMinutos,
                       totalKilometros,
+                      totalDesnivel,
                       promedioEsfuerzo,
                       totalKgFuture,
                     ),
@@ -672,6 +687,7 @@ class _EntrenamientoPacienteScreenState
                         return _buildEquivalenciasHumorCard(
                           totalKg: totalKg,
                           totalKm: totalKilometros,
+                          totalDesnivel: totalDesnivel,
                         );
                       },
                     ),
@@ -697,6 +713,7 @@ class _EntrenamientoPacienteScreenState
     List<Entrenamiento> entrenamientos,
     int totalMinutos,
     double totalKilometros,
+    double totalDesnivel,
     double promedioEsfuerzo,
     Future<double> totalKgFuture,
   ) {
@@ -782,6 +799,16 @@ class _EntrenamientoPacienteScreenState
                   ),
               ],
             ),
+            if (totalDesnivel > 0) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Has subido ${totalDesnivel.toStringAsFixed(0)} m.',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
           ],
         ),
       ),

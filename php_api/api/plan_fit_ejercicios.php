@@ -19,9 +19,23 @@ $db = $database->getConnection();
 // Validar token
 $validator = new TokenValidator($db);
 $user = $validator->validateToken();
-PermissionManager::checkPermission($user, 'planes_fit');
 
 $method = $_SERVER['REQUEST_METHOD'];
+
+function is_premium_catalog_read_request() {
+    return $_SERVER['REQUEST_METHOD'] === 'GET'
+        && isset($_GET['catalog'])
+        && isset($_GET['premium_visible'])
+        && $_GET['premium_visible'] == '1';
+}
+
+if (is_premium_catalog_read_request()) {
+    if (PermissionManager::getUserType($user) !== PermissionManager::TYPE_PREMIUM) {
+        PermissionManager::checkPermission($user, 'planes_fit');
+    }
+} else {
+    PermissionManager::checkPermission($user, 'planes_fit');
+}
 
 switch ($method) {
     case 'GET':
@@ -34,7 +48,21 @@ switch ($method) {
         } elseif (isset($_GET['catalog'])) {
             $search = isset($_GET['search']) ? $_GET['search'] : null;
             $categoria = isset($_GET['categoria']) ? intval($_GET['categoria']) : null;
-            get_catalog_ejercicios($search, $categoria);
+            $categorias = [];
+            if (isset($_GET['categorias'])) {
+                $categorias_raw = explode(',', $_GET['categorias']);
+                foreach ($categorias_raw as $cat) {
+                    $cat_int = intval(trim($cat));
+                    if ($cat_int > 0) {
+                        $categorias[] = $cat_int;
+                    }
+                }
+                $categorias = array_values(array_unique($categorias));
+            }
+            $premium_visible = isset($_GET['premium_visible']) && $_GET['premium_visible'] == '1';
+            get_catalog_ejercicios($search, $categoria, $premium_visible, $categorias);
+        } elseif (isset($_GET['planes_ejercicio'])) {
+            get_planes_for_ejercicio(intval($_GET['planes_ejercicio']));
         } elseif (isset($_GET['ejercicio_categorias'])) {
             get_ejercicio_categorias(intval($_GET['ejercicio_categorias']));
         } elseif (isset($_GET['codigo_plan_fit'])) {
@@ -94,8 +122,8 @@ function get_ejercicios_plan_fit($codigo_plan_fit, $codigo_dia = null) {
                      e.codigo_ejercicio_catalogo,
                      e.nombre,
                      e.instrucciones,
-                     e.url_video,
-                     c.foto AS foto,
+                     c.instrucciones_detalladas,
+                     COALESCE(NULLIF(e.url_video, ''), c.url_video) AS url_video,
                      c.foto_miniatura AS foto_miniatura,
                      c.foto_nombre AS foto_nombre,
                      e.tiempo,
@@ -123,9 +151,6 @@ function get_ejercicios_plan_fit($codigo_plan_fit, $codigo_dia = null) {
     $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     foreach ($items as &$item) {
-        if (!empty($item['foto'])) {
-            $item['foto'] = base64_encode($item['foto']);
-        }
         if (!empty($item['foto_miniatura'])) {
             $item['foto_miniatura'] = base64_encode($item['foto_miniatura']);
         }
@@ -141,9 +166,11 @@ function ensure_catalog_table() {
         codigo INT AUTO_INCREMENT PRIMARY KEY,
         nombre VARCHAR(255) UNIQUE NOT NULL COLLATE utf8mb4_unicode_ci,
         instrucciones TEXT NULL,
+        instrucciones_detalladas LONGBLOB NULL,
         url_video VARCHAR(500) NULL,
         foto LONGBLOB NULL,
         foto_nombre VARCHAR(255) NULL,
+        visible_premium CHAR(1) DEFAULT 'N',
         tiempo INT NULL,
         descanso INT NULL,
         repeticiones INT NULL,
@@ -154,19 +181,55 @@ function ensure_catalog_table() {
         fecham DATETIME NULL,
         INDEX idx_nombre (nombre)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    try {
+        $db->exec("ALTER TABLE nu_plan_fit_ejercicios_catalogo ADD COLUMN IF NOT EXISTS visible_premium CHAR(1) DEFAULT 'N' AFTER foto_nombre");
+    } catch (Exception $e) {
+        // ignore
+    }
+    try {
+        $db->exec("ALTER TABLE nu_plan_fit_ejercicios_catalogo ADD COLUMN IF NOT EXISTS instrucciones_detalladas LONGBLOB NULL AFTER instrucciones");
+    } catch (Exception $e) {
+        // ignore
+    }
+    try {
+        $db->exec("ALTER TABLE nu_plan_fit_ejercicios_catalogo ADD COLUMN IF NOT EXISTS hashtag VARCHAR(255) NULL AFTER kilos");
+    } catch (Exception $e) {
+        // ignore
+    }
 }
 
-function get_catalog_ejercicios($search = null, $codigo_categoria = null) {
+function get_catalog_ejercicios($search = null, $codigo_categoria = null, $premium_visible = false, $codigos_categorias = []) {
     global $db;
     ensure_catalog_table();
 
-    if ($codigo_categoria !== null) {
+    $usos_subquery = "(SELECT codigo_ejercicio_catalogo, COUNT(*) AS total_usos FROM nu_plan_fit_ejercicio WHERE codigo_ejercicio_catalogo IS NOT NULL GROUP BY codigo_ejercicio_catalogo) uu";
+
+    $has_multi_categorias = is_array($codigos_categorias) && count($codigos_categorias) > 0;
+
+    if ($has_multi_categorias || $codigo_categoria !== null) {
         // Filtrar por categoría - NO incluir foto completa (solo miniatura)
-        $query = "SELECT DISTINCT e.codigo, 0 as codigo_plan_fit, NULL as codigo_dia, e.nombre, e.instrucciones, e.url_video, e.foto_miniatura, e.foto_nombre, e.tiempo, e.descanso, e.repeticiones, e.kilos, 0 as orden
+        $query = "SELECT DISTINCT e.codigo, 0 as codigo_plan_fit, NULL as codigo_dia, e.nombre, e.instrucciones, e.instrucciones_detalladas, e.url_video, e.foto_miniatura, e.foto_nombre, e.visible_premium, e.tiempo, e.descanso, e.repeticiones, e.kilos, e.hashtag, 0 as orden, COALESCE(uu.total_usos, 0) AS total_usos
                   FROM nu_plan_fit_ejercicios_catalogo e
                   INNER JOIN nu_plan_fit_ejercicios_categorias ec ON e.codigo = ec.codigo_ejercicio
-                  WHERE ec.codigo_categoria = :codigo_categoria";
-        $bind = [':codigo_categoria' => $codigo_categoria];
+                  LEFT JOIN $usos_subquery ON uu.codigo_ejercicio_catalogo = e.codigo";
+        $bind = [];
+
+        if ($has_multi_categorias) {
+            $placeholders = [];
+            foreach ($codigos_categorias as $idx => $codigo_cat) {
+                $placeholder = ':codigo_categoria_' . $idx;
+                $placeholders[] = $placeholder;
+                $bind[$placeholder] = intval($codigo_cat);
+            }
+            $query .= " WHERE ec.codigo_categoria IN (" . implode(', ', $placeholders) . ")";
+        } else {
+            $query .= " WHERE ec.codigo_categoria = :codigo_categoria";
+            $bind[':codigo_categoria'] = $codigo_categoria;
+        }
+
+        if ($premium_visible) {
+            $query .= " AND e.visible_premium = 'S'";
+        }
         
         if (!empty($search)) {
             $query .= " AND e.nombre LIKE :search";
@@ -176,14 +239,20 @@ function get_catalog_ejercicios($search = null, $codigo_categoria = null) {
         $query .= " ORDER BY e.nombre";
     } else {
         // NO incluir foto completa (solo miniatura)
-        $query = "SELECT codigo, 0 as codigo_plan_fit, NULL as codigo_dia, nombre, instrucciones, url_video, foto_miniatura, foto_nombre, tiempo, descanso, repeticiones, kilos, 0 as orden
-                  FROM nu_plan_fit_ejercicios_catalogo";
+        $query = "SELECT e.codigo, 0 as codigo_plan_fit, NULL as codigo_dia, e.nombre, e.instrucciones, e.instrucciones_detalladas, e.url_video, e.foto_miniatura, e.foto_nombre, e.visible_premium, e.tiempo, e.descanso, e.repeticiones, e.kilos, e.hashtag, 0 as orden, COALESCE(uu.total_usos, 0) AS total_usos
+                  FROM nu_plan_fit_ejercicios_catalogo e
+                  LEFT JOIN $usos_subquery ON uu.codigo_ejercicio_catalogo = e.codigo";
         $bind = [];
         if (!empty($search)) {
-            $query .= " WHERE nombre LIKE :search";
+            $query .= " WHERE e.nombre LIKE :search";
             $bind[':search'] = '%' . $search . '%';
+            if ($premium_visible) {
+                $query .= " AND e.visible_premium = 'S'";
+            }
+        } elseif ($premium_visible) {
+            $query .= " WHERE e.visible_premium = 'S'";
         }
-        $query .= " ORDER BY nombre";
+        $query .= " ORDER BY e.nombre";
     }
 
     $stmt = $db->prepare($query);
@@ -207,7 +276,7 @@ function get_catalog_ejercicio_with_foto($codigo) {
     global $db;
     ensure_catalog_table();
 
-    $query = "SELECT codigo, 0 as codigo_plan_fit, NULL as codigo_dia, nombre, instrucciones, url_video, foto, foto_miniatura, foto_nombre, tiempo, descanso, repeticiones, kilos, 0 as orden
+    $query = "SELECT codigo, 0 as codigo_plan_fit, NULL as codigo_dia, nombre, instrucciones, instrucciones_detalladas, url_video, foto, foto_miniatura, foto_nombre, visible_premium, tiempo, descanso, repeticiones, kilos, hashtag, 0 as orden
               FROM nu_plan_fit_ejercicios_catalogo
               WHERE codigo = :codigo LIMIT 1";
     
@@ -240,11 +309,34 @@ function get_total_catalog_ejercicios() {
     echo json_encode(["total" => (int)($row['total'] ?? 0)]);
 }
 
+function get_planes_for_ejercicio($codigo_ejercicio) {
+    global $db;
+    $query = "SELECT p.codigo, p.codigo_paciente, p.desde, p.hasta, p.semanas, p.completado,
+                     p.codigo_entrevista, p.plan_documento_nombre, p.plan_indicaciones,
+                     p.plan_indicaciones_visible_usuario, p.url, p.rondas, p.fechaa,
+                     pa.nombre AS nombre_paciente
+              FROM nu_plan_nutricional_fit p
+              LEFT JOIN nu_paciente pa ON pa.codigo = p.codigo_paciente
+              WHERE EXISTS (
+                  SELECT 1
+                  FROM nu_plan_fit_ejercicio e
+                  WHERE e.codigo_plan_fit = p.codigo
+                    AND e.codigo_ejercicio_catalogo = :codigo_ejercicio
+              )
+              ORDER BY p.desde DESC, p.codigo DESC";
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(':codigo_ejercicio', $codigo_ejercicio, PDO::PARAM_INT);
+    $stmt->execute();
+    $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    ob_clean();
+    echo json_encode($items ?? []);
+}
+
 function check_catalog_ejercicio_by_nombre($nombre) {
     global $db;
     ensure_catalog_table();
 
-    $query = "SELECT codigo, 0 as codigo_plan_fit, NULL as codigo_dia, nombre, instrucciones, url_video, foto_miniatura, foto_nombre, tiempo, descanso, repeticiones, kilos, 0 as orden
+    $query = "SELECT codigo, 0 as codigo_plan_fit, NULL as codigo_dia, nombre, instrucciones, instrucciones_detalladas, url_video, foto_miniatura, foto_nombre, visible_premium, tiempo, descanso, repeticiones, kilos, hashtag, 0 as orden
               FROM nu_plan_fit_ejercicios_catalogo
               WHERE LOWER(nombre) = LOWER(:nombre) LIMIT 1";
     
@@ -283,7 +375,11 @@ function create_catalog_ejercicio_multipart() {
     }
 
     $instrucciones = $_POST['descripcion'] ?? null;
+    $instrucciones_detalladas = $_POST['instrucciones_detalladas'] ?? null;
     $url_video = $_POST['url_video'] ?? null;
+    $visible_premium = ($_POST['visible_premium'] ?? 'N') === 'S' ? 'S' : 'N';
+    $hashtag_mp = isset($_POST['hashtag']) ? trim($_POST['hashtag']) : null;
+    if ($hashtag_mp === '') $hashtag_mp = null;
     $codigo_categoria = !empty($_POST['codigo_categoria']) ? intval($_POST['codigo_categoria']) : null;
     $codusuariom = intval($_POST['codusuariom'] ?? $user['codigo']);
 
@@ -301,16 +397,19 @@ function create_catalog_ejercicio_multipart() {
     }
 
     $query = "INSERT INTO nu_plan_fit_ejercicios_catalogo 
-              (nombre, instrucciones, url_video, foto, foto_miniatura, foto_nombre, codusuarioa, fechaa) 
-              VALUES (:nombre, :instrucciones, :url_video, :foto, :foto_miniatura, :foto_nombre, :codusuarioa, NOW())";
+              (nombre, instrucciones, instrucciones_detalladas, url_video, foto, foto_miniatura, foto_nombre, visible_premium, hashtag, codusuarioa, fechaa) 
+              VALUES (:nombre, :instrucciones, :instrucciones_detalladas, :url_video, :foto, :foto_miniatura, :foto_nombre, :visible_premium, :hashtag, :codusuarioa, NOW())";
     
     $stmt = $db->prepare($query);
     $stmt->bindParam(':nombre', $nombre);
     $stmt->bindParam(':instrucciones', $instrucciones);
+    $stmt->bindParam(':instrucciones_detalladas', $instrucciones_detalladas, PDO::PARAM_LOB);
     $stmt->bindParam(':url_video', $url_video);
     $stmt->bindParam(':foto', $foto_blob, PDO::PARAM_LOB);
     $stmt->bindParam(':foto_miniatura', $foto_miniatura_blob, PDO::PARAM_LOB);
     $stmt->bindParam(':foto_nombre', $foto_nombre);
+    $stmt->bindParam(':visible_premium', $visible_premium);
+    $stmt->bindParam(':hashtag', $hashtag_mp);
     $stmt->bindParam(':codusuarioa', $codusuariom);
     $stmt->execute();
 
@@ -387,7 +486,7 @@ function upsert_catalog_ejercicio($data) {
         return;
     }
 
-    $stmt = $db->prepare("SELECT codigo, nombre, instrucciones, url_video, foto, foto_nombre, tiempo, descanso, repeticiones, kilos
+    $stmt = $db->prepare("SELECT codigo, nombre, instrucciones, instrucciones_detalladas, url_video, foto, foto_nombre, tiempo, descanso, repeticiones, kilos
                           FROM nu_plan_fit_ejercicios_catalogo WHERE LOWER(nombre) = LOWER(:nombre) LIMIT 1");
     $stmt->bindParam(':nombre', $nombre);
     $stmt->execute();
@@ -521,12 +620,20 @@ function create_catalog_ejercicio() {
         $instrucciones_trim = trim($data->instrucciones);
         $instrucciones = $instrucciones_trim !== '' ? $instrucciones_trim : null;
     }
+    $instrucciones_detalladas = null;
+    if (isset($data->instrucciones_detalladas)) {
+        $instrucciones_detalladas_trim = trim($data->instrucciones_detalladas);
+        $instrucciones_detalladas = $instrucciones_detalladas_trim !== '' ? $instrucciones_detalladas_trim : null;
+    }
     $url_video = $data->url_video ?? null;
     $tiempo = isset($data->tiempo) && $data->tiempo !== '' ? intval($data->tiempo) : null;
     $descanso = isset($data->descanso) && $data->descanso !== '' ? intval($data->descanso) : null;
     $repeticiones = isset($data->repeticiones) && $data->repeticiones !== '' ? intval($data->repeticiones) : null;
     $kilos = isset($data->kilos) && $data->kilos !== '' ? intval($data->kilos) : null;
+    $visible_premium = isset($data->visible_premium) && $data->visible_premium === 'S' ? 'S' : 'N';
     $codusuarioa = isset($data->codusuarioa) ? intval($data->codusuarioa) : null;
+    $hashtag = isset($data->hashtag) ? trim($data->hashtag) : null;
+    if ($hashtag === '') $hashtag = null;
 
     $foto_blob = null;
     $foto_nombre = null;
@@ -542,19 +649,22 @@ function create_catalog_ejercicio() {
     }
 
     $query = "INSERT INTO nu_plan_fit_ejercicios_catalogo
-              (nombre, instrucciones, url_video, foto, foto_nombre, foto_miniatura, tiempo, descanso, repeticiones, kilos, codusuarioa, fechaa)
-              VALUES (:nombre, :instrucciones, :url_video, :foto, :foto_nombre, :foto_miniatura, :tiempo, :descanso, :repeticiones, :kilos, :codusuarioa, NOW())";
+              (nombre, instrucciones, instrucciones_detalladas, url_video, foto, foto_nombre, foto_miniatura, visible_premium, tiempo, descanso, repeticiones, kilos, hashtag, codusuarioa, fechaa)
+              VALUES (:nombre, :instrucciones, :instrucciones_detalladas, :url_video, :foto, :foto_nombre, :foto_miniatura, :visible_premium, :tiempo, :descanso, :repeticiones, :kilos, :hashtag, :codusuarioa, NOW())";
     $stmt = $db->prepare($query);
     $stmt->bindParam(':nombre', $nombre);
     $stmt->bindParam(':instrucciones', $instrucciones);
+    $stmt->bindParam(':instrucciones_detalladas', $instrucciones_detalladas, PDO::PARAM_LOB);
     $stmt->bindParam(':url_video', $url_video);
     $stmt->bindParam(':foto', $foto_blob, PDO::PARAM_LOB);
     $stmt->bindParam(':foto_nombre', $foto_nombre);
     $stmt->bindParam(':foto_miniatura', $foto_miniatura_blob, PDO::PARAM_LOB);
+    $stmt->bindParam(':visible_premium', $visible_premium);
     $stmt->bindParam(':tiempo', $tiempo);
     $stmt->bindParam(':descanso', $descanso);
     $stmt->bindParam(':repeticiones', $repeticiones);
     $stmt->bindParam(':kilos', $kilos);
+    $stmt->bindParam(':hashtag', $hashtag);
     $stmt->bindParam(':codusuarioa', $codusuarioa);
 
     if ($stmt->execute()) {
@@ -626,6 +736,16 @@ function update_catalog_ejercicio() {
             ? $instrucciones_trim
             : null;
     }
+    if (isset($data->clear_instrucciones_detalladas) && $data->clear_instrucciones_detalladas == '1') {
+        $set[] = "instrucciones_detalladas = :instrucciones_detalladas";
+        $bind[':instrucciones_detalladas'] = null;
+    } elseif (isset($data->instrucciones_detalladas)) {
+        $instrucciones_detalladas_trim = trim($data->instrucciones_detalladas);
+        $set[] = "instrucciones_detalladas = :instrucciones_detalladas";
+        $bind[':instrucciones_detalladas'] = $instrucciones_detalladas_trim !== ''
+            ? $instrucciones_detalladas_trim
+            : null;
+    }
     if (isset($data->url_video)) {
         $set[] = "url_video = :url_video";
         $bind[':url_video'] = $data->url_video;
@@ -645,6 +765,15 @@ function update_catalog_ejercicio() {
     if (isset($data->kilos)) {
         $set[] = "kilos = :kilos";
         $bind[':kilos'] = $data->kilos !== '' ? intval($data->kilos) : null;
+    }
+    if (isset($data->visible_premium)) {
+        $set[] = "visible_premium = :visible_premium";
+        $bind[':visible_premium'] = $data->visible_premium === 'S' ? 'S' : 'N';
+    }
+    if (isset($data->hashtag)) {
+        $hashtag_trim = trim($data->hashtag);
+        $set[] = "hashtag = :hashtag";
+        $bind[':hashtag'] = $hashtag_trim !== '' ? $hashtag_trim : null;
     }
     if (isset($data->codusuariom)) {
         $set[] = "codusuariom = :codusuariom";
@@ -683,7 +812,7 @@ function update_catalog_ejercicio() {
     $query = "UPDATE nu_plan_fit_ejercicios_catalogo SET " . implode(", ", $set) . " WHERE codigo = :codigo";
     $stmt = $db->prepare($query);
     foreach ($bind as $key => &$val) {
-        if ($key === ':foto' || $key === ':foto_miniatura') {
+        if ($key === ':foto' || $key === ':foto_miniatura' || $key === ':instrucciones_detalladas') {
             $stmt->bindParam($key, $val, PDO::PARAM_LOB);
         } else {
             $stmt->bindParam($key, $val);

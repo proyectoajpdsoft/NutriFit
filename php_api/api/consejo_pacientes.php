@@ -26,6 +26,8 @@ PermissionManager::checkPermission($user, 'consejos');
 
 switch($request_method) {
     case 'GET':
+        $limit = isset($_GET["limit"]) ? max(1, min(100, intval($_GET["limit"]))) : null;
+        $offset = isset($_GET["offset"]) ? max(0, intval($_GET["offset"])) : 0;
         if(isset($_GET["consejo"])) {
             get_pacientes_by_consejo($_GET["consejo"]);
         } else if(isset($_GET["paciente"]) && isset($_GET["consejo_codigo"])) {
@@ -41,11 +43,11 @@ switch($request_method) {
         } else if(isset($_GET["count_personalizados_no_leidos"]) && isset($_GET["paciente"])) {
             count_personalizados_no_leidos($_GET["paciente"]);
         } else if(isset($_GET["personalizados_paciente"]) && isset($_GET["paciente"])) {
-            get_personalizados_paciente($_GET["paciente"], $_GET["codigo_usuario"] ?? null);
+            get_personalizados_paciente($_GET["paciente"], $_GET["codigo_usuario"] ?? null, $limit, $offset);
         } else if(isset($_GET["todos_paciente"]) && isset($_GET["paciente"])) {
-            get_todos_consejos_paciente($_GET["paciente"], $_GET["codigo_usuario"] ?? null);
+            get_todos_consejos_paciente($_GET["paciente"], $_GET["codigo_usuario"] ?? null, $limit, $offset);
         } else if(isset($_GET["favoritos"]) && isset($_GET["paciente"])) {
-            get_favoritos($_GET["paciente"]);
+            get_favoritos($_GET["paciente"], $limit, $offset);
         }
         break;
     case 'POST':
@@ -910,7 +912,7 @@ function toggle_favorito() {
     }
 }
 
-function get_favoritos($paciente_codigo) {
+function get_favoritos($paciente_codigo, $limit = null, $offset = 0) {
     global $db;
     
     try {
@@ -946,10 +948,18 @@ function get_favoritos($paciente_codigo) {
                   AND (c.fecha_inicio IS NULL OR c.fecha_inicio <= CURDATE())
                   AND (c.fecha_fin IS NULL OR c.fecha_fin >= CURDATE())
                   ORDER BY cp.fecha_favorito DESC";
+
+        if ($limit !== null) {
+            $query .= " LIMIT :limit OFFSET :offset";
+        }
         
         $stmt = $db->prepare($query);
         $stmt->bindParam(':usuario', $paciente_codigo);
         $stmt->bindParam(':codigo_paciente', $codigo_paciente_usuario);
+        if ($limit !== null) {
+            $stmt->bindValue(':limit', intval($limit), PDO::PARAM_INT);
+            $stmt->bindValue(':offset', intval($offset), PDO::PARAM_INT);
+        }
         $stmt->execute();
         $consejos = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
@@ -968,7 +978,7 @@ function get_favoritos($paciente_codigo) {
     }
 }
 
-function get_personalizados_paciente($paciente_codigo, $codigo_usuario = null) {
+function get_personalizados_paciente($paciente_codigo, $codigo_usuario = null, $limit = null, $offset = 0) {
     global $db;
     
     try {
@@ -1046,9 +1056,17 @@ function get_personalizados_paciente($paciente_codigo, $codigo_usuario = null) {
                   AND (c.fecha_fin IS NULL OR c.fecha_fin >= CURDATE())
                   GROUP BY c.codigo
                   ORDER BY cp.leido ASC, c.fechaa DESC";
+
+        if ($limit !== null) {
+            $query .= " LIMIT :limit OFFSET :offset";
+        }
         
         $stmt = $db->prepare($query);
         $stmt->bindParam(':codigo_paciente', $codigo_paciente_usuario);
+        if ($limit !== null) {
+            $stmt->bindValue(':limit', intval($limit), PDO::PARAM_INT);
+            $stmt->bindValue(':offset', intval($offset), PDO::PARAM_INT);
+        }
         $stmt->execute();
         
         $consejos = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -1071,7 +1089,7 @@ function get_personalizados_paciente($paciente_codigo, $codigo_usuario = null) {
     }
 }
 
-function get_todos_consejos_paciente($paciente_codigo, $codigo_usuario = null) {
+function get_todos_consejos_paciente($paciente_codigo, $codigo_usuario = null, $limit = null, $offset = 0) {
     global $db;
     
     try {
@@ -1117,8 +1135,16 @@ function get_todos_consejos_paciente($paciente_codigo, $codigo_usuario = null) {
                       AND (c.fecha_fin IS NULL OR c.fecha_fin >= CURDATE())
                       GROUP BY c.codigo
                       ORDER BY c.fechaa DESC";
+
+            if ($limit !== null) {
+                $query .= " LIMIT :limit OFFSET :offset";
+            }
             
             $stmt = $db->prepare($query);
+            if ($limit !== null) {
+                $stmt->bindValue(':limit', intval($limit), PDO::PARAM_INT);
+                $stmt->bindValue(':offset', intval($offset), PDO::PARAM_INT);
+            }
             $stmt->execute();
         } else {
             // Para usuarios con código asignado, buscar:
@@ -1161,10 +1187,18 @@ function get_todos_consejos_paciente($paciente_codigo, $codigo_usuario = null) {
                       )
                       GROUP BY c.codigo
                       ORDER BY c.fechaa DESC";
+
+            if ($limit !== null) {
+                $query .= " LIMIT :limit OFFSET :offset";
+            }
             
             $stmt = $db->prepare($query);
             $stmt->bindParam(':usuario', $paciente_codigo);
             $stmt->bindParam(':codigo_paciente', $codigo_paciente_usuario);
+            if ($limit !== null) {
+                $stmt->bindValue(':limit', intval($limit), PDO::PARAM_INT);
+                $stmt->bindValue(':offset', intval($offset), PDO::PARAM_INT);
+            }
             $stmt->execute();
         }
         

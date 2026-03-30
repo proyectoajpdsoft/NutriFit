@@ -819,7 +819,7 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
                                       return Row(
                                         children: [
                                           const Text(
-                                            'Cumplimiento paciente:',
+                                            'Cumplimiento:',
                                             style: TextStyle(
                                               fontWeight: FontWeight.w700,
                                             ),
@@ -1100,7 +1100,7 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Indicaciones (para el profesional):',
+                  'Indicaciones:',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
@@ -1116,7 +1116,7 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
                 ),
                 const SizedBox(height: 16),
                 const Text(
-                  'Indicaciones (visibles para el usuario):',
+                  'Indicaciones (paciente):',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
@@ -1125,7 +1125,7 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
                   maxLines: 4,
                   minLines: 2,
                   decoration: const InputDecoration(
-                    hintText: 'Indicaciones visibles para el usuario...',
+                    hintText: 'Indicaciones para el paciente...',
                     border: OutlineInputBorder(),
                     contentPadding: EdgeInsets.all(12),
                   ),
@@ -1231,6 +1231,8 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
   Future<Paciente?> _mostrarDialogoPacientes() async {
     try {
       final pacientes = await _apiService.getPacientes(activo: 'S');
+      pacientes.sort(
+          (a, b) => a.nombre.toLowerCase().compareTo(b.nombre.toLowerCase()));
 
       if (pacientes.isEmpty) {
         if (mounted) {
@@ -1246,34 +1248,191 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
 
       if (!mounted) return null;
 
-      return await showDialog<Paciente>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Seleccionar paciente'),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: pacientes.length,
-              itemBuilder: (context, index) {
-                final paciente = pacientes[index];
-                return ListTile(
-                  title: Text(paciente.nombre),
-                  subtitle:
-                      paciente.email1 != null ? Text(paciente.email1!) : null,
-                  onTap: () => Navigator.of(context).pop(paciente),
-                );
-              },
-            ),
+      final searchCtrl = TextEditingController();
+      var showSearch = false;
+      var searchText = '';
+
+      String formatPeso(double? peso) {
+        if (peso == null) return '--';
+        final rounded = peso.toStringAsFixed(1);
+        if (rounded.endsWith('.0')) {
+          return '${rounded.substring(0, rounded.length - 2)} kg';
+        }
+        return '$rounded kg';
+      }
+
+      String formatAltura(int? altura) {
+        if (altura == null || altura <= 0) return '--';
+        return '$altura cm';
+      }
+
+      Widget metricTag({
+        required IconData icon,
+        required String text,
+      }) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.blueGrey.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(999),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(null),
-              child: const Text('Cancelar'),
-            ),
-          ],
-        ),
-      );
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14, color: Colors.blueGrey.shade700),
+              const SizedBox(width: 4),
+              Text(
+                text,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.blueGrey.shade700,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        );
+      }
+
+      try {
+        return await showDialog<Paciente>(
+          context: context,
+          builder: (context) => StatefulBuilder(
+            builder: (context, setDialogState) {
+              final filtered = pacientes.where((paciente) {
+                if (searchText.isEmpty) return true;
+                final q = searchText.toLowerCase();
+                final nombre = paciente.nombre.toLowerCase();
+                final email = (paciente.email1 ?? '').toLowerCase();
+                return nombre.contains(q) || email.contains(q);
+              }).toList(growable: false);
+
+              return AlertDialog(
+                titlePadding: const EdgeInsets.fromLTRB(16, 10, 8, 6),
+                contentPadding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                title: Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Seleccionar paciente',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: showSearch ? 'Ocultar búsqueda' : 'Buscar',
+                      onPressed: () {
+                        setDialogState(() {
+                          showSearch = !showSearch;
+                          if (!showSearch) {
+                            searchCtrl.clear();
+                            searchText = '';
+                          }
+                        });
+                      },
+                      icon: Icon(
+                        showSearch ? Icons.search_off_outlined : Icons.search,
+                        size: 18,
+                      ),
+                      style: IconButton.styleFrom(
+                        shape: const CircleBorder(),
+                        padding: EdgeInsets.zero,
+                        minimumSize: const Size(32, 32),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Cerrar',
+                      onPressed: () => Navigator.of(context).pop(null),
+                      icon: const Icon(Icons.close, size: 18),
+                      style: IconButton.styleFrom(
+                        shape: const CircleBorder(),
+                        padding: EdgeInsets.zero,
+                        minimumSize: const Size(32, 32),
+                        backgroundColor: Colors.grey.shade200,
+                      ),
+                    ),
+                  ],
+                ),
+                content: SizedBox(
+                  width: double.maxFinite,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (showSearch) ...[
+                        TextField(
+                          controller: searchCtrl,
+                          autofocus: true,
+                          decoration: const InputDecoration(
+                            hintText: 'Buscar paciente...',
+                            prefixIcon: Icon(Icons.search),
+                            isDense: true,
+                            border: OutlineInputBorder(),
+                          ),
+                          onChanged: (value) =>
+                              setDialogState(() => searchText = value.trim()),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      if (filtered.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 18),
+                          child: Text('No hay pacientes que coincidan.'),
+                        )
+                      else
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 420),
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: filtered.length,
+                            itemBuilder: (context, index) {
+                              final paciente = filtered[index];
+                              final edadText =
+                                  paciente.edad != null && paciente.edad! > 0
+                                      ? '${paciente.edad} años'
+                                      : '--';
+
+                              return ListTile(
+                                dense: true,
+                                title: Text(paciente.nombre),
+                                subtitle: Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Wrap(
+                                    spacing: 6,
+                                    runSpacing: 6,
+                                    children: [
+                                      metricTag(
+                                        icon: Icons.cake_outlined,
+                                        text: edadText,
+                                      ),
+                                      metricTag(
+                                        icon: Icons.monitor_weight_outlined,
+                                        text: formatPeso(paciente.peso),
+                                      ),
+                                      metricTag(
+                                        icon: Icons.height_outlined,
+                                        text: formatAltura(paciente.altura),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                onTap: () =>
+                                    Navigator.of(context).pop(paciente),
+                              );
+                            },
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      } finally {
+        searchCtrl.dispose();
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1293,22 +1452,60 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
       final opcionClonacion = await showDialog<String>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('Clonar plan'),
-          content: const Text('¿Dónde desea clonar el Plan Fit?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(null),
-              child: const Text('Cancelar'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop('mismo'),
-              child: const Text('Mismo paciente'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop('otro'),
-              child: const Text('Otro paciente'),
-            ),
-          ],
+          titlePadding: const EdgeInsets.fromLTRB(20, 16, 12, 0),
+          contentPadding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+          title: Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Clonar plan',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+              ),
+              Material(
+                color: Colors.grey.shade200,
+                shape: const CircleBorder(),
+                child: IconButton(
+                  icon: const Icon(Icons.close, size: 18),
+                  tooltip: 'Cerrar',
+                  onPressed: () => Navigator.of(context).pop(null),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text('¿Dónde desea clonar el Plan Fit?'),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => Navigator.of(context).pop('mismo'),
+                      child: const Text(
+                        'Mismo paciente',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => Navigator.of(context).pop('otro'),
+                      child: const Text(
+                        'Otro paciente',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       );
 

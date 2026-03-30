@@ -21,6 +21,17 @@ class UserSettingsService {
       'user_settings_calendar_nutri_adherence_view';
   static const String _calendarFitAdherenceViewPrefix =
       'user_settings_calendar_fit_adherence_view';
+  static const String _barcodeFrameWidthPrefix =
+      'user_settings_barcode_frame_width';
+  static const String _barcodeFrameHeightPrefix =
+      'user_settings_barcode_frame_height';
+
+  static const double barcodeFrameWidthDefault = 0.8;
+  static const double barcodeFrameHeightDefault = 0.23;
+  static const double barcodeFrameWidthMin = 0.45;
+  static const double barcodeFrameWidthMax = 0.95;
+  static const double barcodeFrameHeightMin = 0.12;
+  static const double barcodeFrameHeightMax = 0.42;
 
   static String buildScopeKey({
     required bool isGuestMode,
@@ -61,6 +72,10 @@ class UserSettingsService {
       '${_calendarNutriAdherenceViewPrefix}_$scope';
   static String _calendarFitAdherenceViewKey(String scope) =>
       '${_calendarFitAdherenceViewPrefix}_$scope';
+  static String _barcodeFrameWidthKey(String scope) =>
+      '${_barcodeFrameWidthPrefix}_$scope';
+  static String _barcodeFrameHeightKey(String scope) =>
+      '${_barcodeFrameHeightPrefix}_$scope';
 
   static String _normalizeCalendarViewMode(String? mode) {
     switch (mode) {
@@ -73,8 +88,23 @@ class UserSettingsService {
     }
   }
 
+  static double _normalizeBarcodeFrameWidth(double? value) {
+    if (value == null) {
+      return barcodeFrameWidthDefault;
+    }
+    return value.clamp(barcodeFrameWidthMin, barcodeFrameWidthMax);
+  }
+
+  static double _normalizeBarcodeFrameHeight(double? value) {
+    if (value == null) {
+      return barcodeFrameHeightDefault;
+    }
+    return value.clamp(barcodeFrameHeightMin, barcodeFrameHeightMax);
+  }
+
   static Future<bool> getNutriPlanBreachNotificationEnabled(
-      String scope) async {
+    String scope,
+  ) async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_nutriNotifKey(scope)) ?? true;
   }
@@ -129,6 +159,20 @@ class UserSettingsService {
     final prefs = await SharedPreferences.getInstance();
     return _normalizeCalendarViewMode(
       prefs.getString(_calendarFitAdherenceViewKey(scope)),
+    );
+  }
+
+  static Future<double> getBarcodeFrameWidthNormalized(String scope) async {
+    final prefs = await SharedPreferences.getInstance();
+    return _normalizeBarcodeFrameWidth(
+      prefs.getDouble(_barcodeFrameWidthKey(scope)),
+    );
+  }
+
+  static Future<double> getBarcodeFrameHeightNormalized(String scope) async {
+    final prefs = await SharedPreferences.getInstance();
+    return _normalizeBarcodeFrameHeight(
+      prefs.getDouble(_barcodeFrameHeightKey(scope)),
     );
   }
 
@@ -221,6 +265,28 @@ class UserSettingsService {
     await prefs.setString(
       _calendarFitAdherenceViewKey(scope),
       _normalizeCalendarViewMode(mode),
+    );
+  }
+
+  static Future<void> setBarcodeFrameWidthNormalized(
+    String scope,
+    double width,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(
+      _barcodeFrameWidthKey(scope),
+      _normalizeBarcodeFrameWidth(width),
+    );
+  }
+
+  static Future<void> setBarcodeFrameHeightNormalized(
+    String scope,
+    double height,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(
+      _barcodeFrameHeightKey(scope),
+      _normalizeBarcodeFrameHeight(height),
     );
   }
 }

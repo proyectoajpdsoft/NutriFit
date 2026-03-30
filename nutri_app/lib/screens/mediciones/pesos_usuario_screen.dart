@@ -1700,7 +1700,7 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Filtrar periodo',
+                    'Filtrar período',
                     style: TextStyle(
                       fontWeight: FontWeight.w600,
                       color: Colors.purple.shade700,
@@ -2666,6 +2666,7 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
   Widget build(BuildContext context) {
     final authService = context.watch<AuthService>();
     final isGuest = authService.isGuestMode;
+    final canViewEvolutionCharts = authService.isPremium;
 
     return Scaffold(
       appBar: AppBar(
@@ -2851,14 +2852,28 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
                                   ),
                                 )
                               : _buildCalendarPesos(medicionesFiltradas),
-                          _buildGraficaPesos(medicionesFiltradas),
+                          canViewEvolutionCharts
+                              ? _buildGraficaPesos(medicionesFiltradas)
+                              : _buildPremiumChartsRequired(
+                                  titulo: 'Evolución de peso Premium',
+                                ),
                           medicionesFiltradas.isEmpty
-                              ? Center(
-                                  child: Text(
-                                    'No hay mediciones para ${_getPeriodoLabel(_periodoFiltro).toLowerCase()}.',
-                                  ),
-                                )
-                              : _buildGraficaPerimetros(medicionesFiltradas),
+                              ? (canViewEvolutionCharts
+                                  ? Center(
+                                      child: Text(
+                                        'No hay mediciones para ${_getPeriodoLabel(_periodoFiltro).toLowerCase()}.',
+                                      ),
+                                    )
+                                  : _buildPremiumChartsRequired(
+                                      titulo: 'Evolución de perímetros Premium',
+                                    ))
+                              : (canViewEvolutionCharts
+                                  ? _buildGraficaPerimetros(
+                                      medicionesFiltradas,
+                                    )
+                                  : _buildPremiumChartsRequired(
+                                      titulo: 'Evolución de perímetros Premium',
+                                    )),
                         ],
                       ),
                     ),
@@ -2866,6 +2881,93 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
                 );
               },
             ),
+    );
+  }
+
+  Widget _buildPremiumChartsRequired({required String titulo}) {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 560),
+          padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 30),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Colors.purple.shade50, Colors.deepPurple.shade50],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: Colors.purple.shade100),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.purple.withValues(alpha: 0.12),
+                blurRadius: 18,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 92,
+                height: 92,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white,
+                  border: Border.all(color: Colors.purple.shade100),
+                ),
+                child: Icon(
+                  Icons.workspace_premium,
+                  size: 52,
+                  color: Colors.deepPurple.shade400,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                titulo,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 27,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.deepPurple.shade700,
+                  height: 1.1,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'Esta gráfica está disponible solo para usuarios Premium. Activa tu cuenta para ver tu evolución completa con indicadores visuales avanzados.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Colors.deepPurple.shade600,
+                  height: 1.35,
+                ),
+              ),
+              const SizedBox(height: 22),
+              ElevatedButton.icon(
+                onPressed: () => Navigator.pushNamed(context, '/premium_info'),
+                icon: const Icon(Icons.workspace_premium),
+                label: const Text('Hazte premium'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.purple,
+                  foregroundColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+                  textStyle: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

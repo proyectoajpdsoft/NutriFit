@@ -26,12 +26,14 @@ PermissionManager::checkPermission($user, 'recetas');
 
 switch($request_method) {
     case 'GET':
+        $limit = isset($_GET["limit"]) ? max(1, min(100, intval($_GET["limit"]))) : null;
+        $offset = isset($_GET["offset"]) ? max(0, intval($_GET["offset"])) : 0;
         if(isset($_GET["receta"])) {
             get_usuarios_by_receta($_GET["receta"]);
         } else if(isset($_GET["usuario"]) && isset($_GET["receta_codigo"])) {
             get_receta_usuario($_GET["usuario"], $_GET["receta_codigo"]);
         } else if(isset($_GET["favoritos"]) && isset($_GET["usuario"])) {
-            get_favoritos($_GET["usuario"]);
+            get_favoritos($_GET["usuario"], $limit, $offset);
         }
         break;
     case 'POST':
@@ -276,7 +278,7 @@ function toggle_favorito() {
     }
 }
 
-function get_favoritos($usuario_codigo) {
+function get_favoritos($usuario_codigo, $limit = null, $offset = 0) {
     global $db;
 
     $query = "SELECT r.codigo, r.titulo, r.texto, r.activo, r.fecha_inicio, r.fecha_fin,
@@ -291,8 +293,16 @@ function get_favoritos($usuario_codigo) {
               AND ru.favorito = 'S'
               ORDER BY r.fechaa DESC";
 
+    if ($limit !== null) {
+        $query .= " LIMIT :limit OFFSET :offset";
+    }
+
     $stmt = $db->prepare($query);
     $stmt->bindParam(':usuario', $usuario_codigo);
+    if ($limit !== null) {
+        $stmt->bindValue(':limit', intval($limit), PDO::PARAM_INT);
+        $stmt->bindValue(':offset', intval($offset), PDO::PARAM_INT);
+    }
     $stmt->execute();
     $recetas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 

@@ -1,23 +1,32 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:nutri_app/models/session.dart';
 import 'package:nutri_app/models/usuario.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/services/config_service.dart';
 import 'package:nutri_app/widgets/profile_image_picker.dart';
 import 'package:nutri_app/screens/register_screen.dart';
 import 'package:nutri_app/screens/contacto_nutricionista_screen.dart';
-import 'package:nutri_app/widgets/unsaved_changes_dialog.dart';
+import 'package:nutri_app/widgets/password_requirements_checklist.dart';
 import 'package:provider/provider.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 
 class PacienteProfileEditScreen extends StatefulWidget {
   final Usuario? usuario;
+  final bool expandEmailVerification;
 
-  const PacienteProfileEditScreen({super.key, this.usuario});
+  const PacienteProfileEditScreen({
+    super.key,
+    this.usuario,
+    this.expandEmailVerification = false,
+  });
 
   @override
   _PacienteProfileEditScreenState createState() =>
@@ -31,6 +40,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _edadController = TextEditingController();
   final TextEditingController _alturaController = TextEditingController();
+  final FocusNode _emailFocusNode = FocusNode();
   int _maxImageWidth = 400;
   int _maxImageHeight = 400;
 
@@ -44,27 +54,127 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   bool _hasChanges = false;
   bool _loadingTwoFactor = false;
   bool _twoFactorEnabled = false;
+  bool _loadingTrustedDevice = false;
+  bool _isCurrentDeviceTrusted = false;
   bool _loadingEmailVerification = false;
+  bool _checkingEmailAvailability = false;
   bool _emailVerified = false;
+  String? _emailAvailabilityError;
+  String? _emailFormatError;
   String? _emailVerificationDate;
+  DateTime? _emailVerificationCodeExpiresAt;
   bool _emailVerificationCardExpanded = false;
   bool _twoFactorCardExpanded = false;
   bool _passwordCardExpanded = false;
   bool _mvpCardExpanded = false;
-  bool _lopdCardExpanded = false;
+  bool _pendingOpenEmailVerification = false;
 
   // Estado de validación de contraseña
   late ConfigService _configService;
-  bool _showPasswordRequirements = false;
 
   @override
   void initState() {
     super.initState();
     _configService = context.read<ConfigService>();
+    _pendingOpenEmailVerification = widget.expandEmailVerification;
+    _refreshPasswordPolicies();
     _loadMaxImageDimensions();
     _loadUserData();
     _loadTwoFactorStatus();
     _loadEmailVerificationStatus();
+  }
+
+  // Validación en tiempo real cuando el email está completo
+  void _validateEmailInRealTime() {
+    final email = _emailController.text.trim();
+    final currentEmail = (_fullUsuario?.email ?? '').trim();
+
+    // Si el email está vacío o no está completo (sin @), marcar como error de formato
+    if (email.isEmpty || !email.contains('@')) {
+      if (_emailFormatError != null || _emailAvailabilityError != null) {
+        setState(() {
+          _emailFormatError = null;
+          _emailAvailabilityError = null;
+        });
+      }
+      return;
+    }
+
+    // Si es el mismo email actual, limpiar errores
+    if (email.toLowerCase() == currentEmail.toLowerCase()) {
+      if (_emailFormatError != null || _emailAvailabilityError != null) {
+        setState(() {
+          _emailFormatError = null;
+          _emailAvailabilityError = null;
+        });
+      }
+      return;
+    }
+
+    // Si no es válido formato, mostrar error de formato
+    if (!_isValidEmailFormat(email)) {
+      if (_emailFormatError == null && mounted) {
+        setState(() {
+          _emailFormatError = 'Email no válido';
+        });
+      }
+      return;
+    }
+
+    // Formato es válido, limpiar error de formato
+    if (_emailFormatError != null && mounted) {
+      setState(() {
+        _emailFormatError = null;
+      });
+    }
+
+    // Ya está validando, no duplicar
+    if (_checkingEmailAvailability) return;
+
+    // Validar en BD de forma asincrónica
+    _checkEmailExistsInBackground(email);
+  }
+
+  void _checkEmailExistsInBackground(String email) {
+    _checkingEmailAvailability = true;
+    _emailExistsInAnotherUser(email).then((exists) {
+      if (!mounted) return;
+
+      if (exists) {
+        setState(() {
+          _emailAvailabilityError =
+              'Esta cuenta de email no puede usarse, indique otra';
+        });
+      } else if (_emailAvailabilityError != null) {
+        setState(() {
+          _emailAvailabilityError = null;
+        });
+      }
+    }).catchError((_) {
+      // No bloquear si falla la validación remota
+      if (_emailAvailabilityError != null && mounted) {
+        setState(() {
+          _emailAvailabilityError = null;
+        });
+      }
+    }).whenComplete(() {
+      _checkingEmailAvailability = false;
+    });
+  }
+
+  void _maybeOpenEmailVerificationWindow() {
+    if (!_pendingOpenEmailVerification || !mounted) return;
+    _pendingOpenEmailVerification = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _showEmailVerificationWindow();
+    });
+  }
+
+  Future<void> _refreshPasswordPolicies() async {
+    await _configService.loadPasswordPoliciesFromDatabase(_apiService);
+    if (!mounted) return;
+    setState(() {});
   }
 
   Future<void> _loadEmailVerificationStatus() async {
@@ -79,6 +189,9 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
       setState(() {
         _emailVerified = status['email_verified'] == true;
         _emailVerificationDate = status['verification_date']?.toString();
+        if (_emailVerified) {
+          _emailVerificationCodeExpiresAt = null;
+        }
       });
     } catch (_) {
       // Mantener estado por defecto si falla para no bloquear la edicion de perfil.
@@ -90,14 +203,151 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
     }
   }
 
+  bool _isValidEmailFormat(String email) {
+    final emailRegex = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
+    return emailRegex.hasMatch(email.trim());
+  }
+
+  DateTime? _tryParseServerDateTime(String? value) {
+    final raw = (value ?? '').trim();
+    if (raw.isEmpty) {
+      return null;
+    }
+
+    final normalized = raw.contains(' ') && !raw.contains('T')
+        ? raw.replaceFirst(' ', 'T')
+        : raw;
+    final parsed = DateTime.tryParse(normalized);
+    return parsed?.toLocal();
+  }
+
+  Future<bool> _emailExistsInAnotherUser(String email) async {
+    final normalizedEmail = email.trim().toLowerCase();
+    if (normalizedEmail.isEmpty) {
+      return false;
+    }
+
+    return _apiService.checkEmailExists(
+      normalizedEmail,
+      excludeCodigo: _fullUsuario?.codigo,
+    );
+  }
+
+  Future<bool> _updateProfileWithEmail(
+    String email, {
+    bool includePassword = false,
+  }) async {
+    final usuarioData = {
+      'codigo': _fullUsuario?.codigo.toString(),
+      'nick': _nick,
+      'nombre': _fullUsuario?.nombre,
+      'email': email,
+      'tipo': _fullUsuario?.tipo,
+      'codigo_paciente': _fullUsuario?.codigoPaciente,
+      'edad': int.tryParse(_edadController.text.trim()),
+      'altura': int.tryParse(_alturaController.text.trim()),
+      'activo': _fullUsuario?.activo,
+      'accesoweb': _fullUsuario?.accesoweb,
+      'administrador': _fullUsuario?.administrador,
+      'img_perfil': _imageBase64,
+    };
+
+    if (usuarioData['edad'] == null || (usuarioData['edad'] as int) <= 0) {
+      usuarioData['edad'] = null;
+    }
+    if (usuarioData['altura'] == null || (usuarioData['altura'] as int) <= 0) {
+      usuarioData['altura'] = null;
+    }
+
+    if (includePassword && _newPassword.isNotEmpty) {
+      usuarioData['contrasena'] = _newPassword;
+    }
+
+    final success = await _apiService.updateUsuario(usuarioData);
+    if (success) {
+      _fullUsuario?.email = email.isEmpty ? null : email;
+      _fullUsuario?.nick = _nick;
+      _fullUsuario?.edad = usuarioData['edad'] as int?;
+      _fullUsuario?.altura = usuarioData['altura'] as int?;
+      _fullUsuario?.imgPerfil = _imageBase64;
+    }
+    return success;
+  }
+
+  Future<void> _saveEmailToProfile() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) {
+      throw Exception('Debes indicar primero una cuenta de email.');
+    }
+    if (!_isValidEmailFormat(email)) {
+      throw Exception('Email no válido.');
+    }
+
+    final currentEmail = (_fullUsuario?.email ?? '').trim();
+    final sameEmail = currentEmail.toLowerCase() == email.toLowerCase();
+    if (sameEmail) {
+      return;
+    }
+
+    final emailExists = await _emailExistsInAnotherUser(email);
+    if (emailExists) {
+      throw Exception('No puede usar esta cuenta de email, indique otra.');
+    }
+
+    await _updateProfileWithEmail(email);
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _emailVerified = false;
+      _emailVerificationDate = null;
+      _emailVerificationCodeExpiresAt = null;
+      _hasChanges = false;
+    });
+  }
+
   Future<void> _sendEmailVerificationCode() async {
     final email = _emailController.text.trim();
     if (email.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content:
-              Text('Primero indica un email en tu perfil y guarda cambios.'),
+          content: Text('Primero indica un email en tu perfil.'),
           backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    if (!_isValidEmailFormat(email)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Email no válido.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // Si hay error de disponibilidad, no continuar
+    if (_emailAvailabilityError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_emailAvailabilityError!),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    try {
+      await _saveEmailToProfile();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: Colors.red,
         ),
       );
       return;
@@ -109,10 +359,59 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
 
     try {
       final resp = await _apiService.sendEmailVerificationCode();
+      final expiresAt = _tryParseServerDateTime(resp['expires_at']?.toString());
+      if (!mounted) return;
+      setState(() {
+        _emailVerificationCodeExpiresAt = expiresAt;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text((resp['message'] ?? 'Código enviado.').toString()),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text((resp['message'] ?? 'Codigo enviado.').toString()),
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _loadingEmailVerification = false;
+      });
+    }
+  }
+
+  Future<void> _verifyEmailCode(String code) async {
+    final value = code.trim();
+    if (value.length != 10) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('El código debe tener 10 dígitos.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _loadingEmailVerification = true;
+    });
+
+    try {
+      final resp = await _apiService.verifyEmailCode(code: value);
+      await _loadEmailVerificationStatus();
+      if (!mounted) return;
+      setState(() {
+        _emailVerificationCodeExpiresAt = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text((resp['message'] ?? 'Email verificado.').toString()),
           backgroundColor: Colors.green,
         ),
       );
@@ -134,57 +433,30 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
 
   Future<void> _verifyEmailCodeDialog() async {
     final codeController = TextEditingController();
-    final email = _emailController.text.trim();
-    final targetEmail =
-        email.isNotEmpty ? email : 'tu direccion de correo electronico';
     final code = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Verificar email'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Introduce el código de 10 dígitos que ha debido llegarte a tu dirección de correo electrónico $targetEmail y pulsa en "Verificar".',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: codeController,
-                keyboardType: TextInputType.number,
-                maxLength: 10,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
-                  labelText: 'Código de 10 dígitos',
-                  border: OutlineInputBorder(),
-                  counterText: '',
-                ),
-              ),
-            ],
+        title: const Text('Validar código de email'),
+        content: TextField(
+          controller: codeController,
+          keyboardType: TextInputType.number,
+          maxLength: 10,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          decoration: const InputDecoration(
+            labelText: 'Código de 10 dígitos',
+            border: OutlineInputBorder(),
+            counterText: '',
           ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(null),
+            onPressed: () => Navigator.of(dialogContext).pop(),
             child: const Text('Cancelar'),
           ),
           ElevatedButton(
-            onPressed: () {
-              final value = codeController.text.trim();
-              if (value.length != 10) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('El código debe tener 10 dígitos.'),
-                    backgroundColor: Colors.orange,
-                  ),
-                );
-                return;
-              }
-              Navigator.of(dialogContext).pop(value);
-            },
-            child: const Text('Verificar'),
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(codeController.text.trim()),
+            child: const Text('Validar código'),
           ),
         ],
       ),
@@ -195,34 +467,604 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
       return;
     }
 
+    await _verifyEmailCode(code);
+  }
+
+  Future<void> _showEmailVerificationWindow() async {
+    final codeController = TextEditingController();
+    final userType =
+        (context.read<AuthService>().userType ?? '').trim().toLowerCase();
+    final isNutricionista = userType == 'nutricionista' ||
+        userType == 'administrador' ||
+        userType == 'admin' ||
+        userType == 'nutritionist';
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        final email = _emailController.text.trim();
+        final hasEmail = email.isNotEmpty;
+        var codeSent = _emailVerificationCodeExpiresAt != null;
+        var isBusy = false;
+        String? inlineMessage;
+        Color inlineMessageColor = Colors.orange.shade800;
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Verificar email'),
+              content: SizedBox(
+                width: 560,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.lightBlue.shade50,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.lightBlue.shade200),
+                        ),
+                        child: RichText(
+                          text: TextSpan(
+                            style: const TextStyle(
+                              color: Colors.black87,
+                              fontSize: 13,
+                              height: 1.4,
+                            ),
+                            children: [
+                              const TextSpan(
+                                text:
+                                    'Verificar tu email te permitirá recuperar el acceso por correo si olvidas la contraseña y también solicitar ',
+                              ),
+                              WidgetSpan(
+                                alignment: PlaceholderAlignment.middle,
+                                child: InkWell(
+                                  onTap: () {
+                                    Navigator.of(dialogContext).pop();
+                                    Navigator.pushNamed(
+                                      context,
+                                      '/premium_info',
+                                    );
+                                  },
+                                  child: Text(
+                                    'suscribirte a Premium',
+                                    style: TextStyle(
+                                      color: Colors.blue.shade700,
+                                      decoration: TextDecoration.underline,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const TextSpan(text: '.'),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.teal.shade50,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.teal.shade200),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Sigue estos pasos...',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 14,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            // Punto 1
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(
+                                  Icons.looks_one,
+                                  color: Colors.teal.shade700,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Pulsa en "Enviar código" para enviarte el código de verificación a ${hasEmail ? email : 'tu email'}.',
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            // Botón "Enviar código" / "Volver a enviar"
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                onPressed: (!hasEmail || isBusy)
+                                    ? null
+                                    : () async {
+                                        var dialogClosed = false;
+                                        if (!dialogContext.mounted) return;
+                                        setDialogState(() {
+                                          isBusy = true;
+                                          inlineMessage = null;
+                                        });
+                                        try {
+                                          await _saveEmailToProfile();
+                                          final resp = await _apiService
+                                              .sendEmailVerificationCode();
+                                          final expiresAt =
+                                              _tryParseServerDateTime(
+                                            resp['expires_at']?.toString(),
+                                          );
+                                          if (!mounted ||
+                                              !dialogContext.mounted) {
+                                            dialogClosed = true;
+                                            return;
+                                          }
+                                          setState(() {
+                                            _emailVerificationCodeExpiresAt =
+                                                expiresAt;
+                                          });
+                                          if (!dialogContext.mounted) {
+                                            dialogClosed = true;
+                                            return;
+                                          }
+                                          setDialogState(() {
+                                            inlineMessage =
+                                                'Código enviado a tu cuenta de correo electrónico. Caducará en 15 minutos. Si no lo ves en Bandeja de entrada, revisa la carpeta Spam.';
+                                            inlineMessageColor =
+                                                Colors.orange.shade800;
+                                            codeSent = true;
+                                          });
+                                        } catch (e) {
+                                          if (!dialogContext.mounted) {
+                                            dialogClosed = true;
+                                            return;
+                                          }
+                                          setDialogState(() {
+                                            final detailed = e
+                                                .toString()
+                                                .replaceFirst(
+                                                    'Exception: ', '');
+                                            inlineMessage = isNutricionista
+                                                ? detailed
+                                                : 'No se ha podido enviar el email de verificación en este momento, inténtelo más tarde.';
+                                            inlineMessageColor = Colors.red;
+                                          });
+                                        } finally {
+                                          if (mounted &&
+                                              dialogContext.mounted &&
+                                              !dialogClosed) {
+                                            setDialogState(() {
+                                              isBusy = false;
+                                            });
+                                          }
+                                        }
+                                      },
+                                icon: const Icon(Icons.send_outlined),
+                                label: Text(
+                                  codeSent
+                                      ? 'Volver a enviar'
+                                      : 'Enviar código',
+                                ),
+                              ),
+                            ),
+                            if (codeSent && hasEmail) ...[
+                              const SizedBox(height: 12),
+                              // Punto 2
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Icon(
+                                    Icons.looks_two,
+                                    color: Colors.teal.shade700,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  const Expanded(
+                                    child: Text(
+                                      'Revisa tu correo electrónico, habrás recibido un email con un código, cópialo y pégalo aquí, y pulsa en "Verificar".',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              TextField(
+                                controller: codeController,
+                                keyboardType: TextInputType.number,
+                                maxLength: 10,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly,
+                                ],
+                                decoration: const InputDecoration(
+                                  labelText: 'Código de verificación',
+                                  border: OutlineInputBorder(),
+                                  counterText: '',
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton.icon(
+                                  onPressed: (!hasEmail || isBusy)
+                                      ? null
+                                      : () async {
+                                          var dialogClosed = false;
+                                          final code =
+                                              codeController.text.trim();
+                                          if (code.length != 10) {
+                                            if (!dialogContext.mounted) return;
+                                            setDialogState(() {
+                                              inlineMessage =
+                                                  'El código debe tener 10 dígitos.';
+                                              inlineMessageColor =
+                                                  Colors.orange;
+                                            });
+                                            return;
+                                          }
+
+                                          if (!dialogContext.mounted) return;
+                                          setDialogState(() {
+                                            isBusy = true;
+                                            inlineMessage = null;
+                                          });
+                                          try {
+                                            final resp = await _apiService
+                                                .verifyEmailCode(code: code);
+                                            await _loadEmailVerificationStatus();
+                                            if (!mounted) {
+                                              dialogClosed = true;
+                                              return;
+                                            }
+                                            if (!dialogContext.mounted) {
+                                              dialogClosed = true;
+                                              return;
+                                            }
+                                            dialogClosed = true;
+                                            Navigator.of(dialogContext).pop();
+                                            WidgetsBinding.instance
+                                                .addPostFrameCallback((_) {
+                                              if (!mounted) return;
+                                              ScaffoldMessenger.of(this.context)
+                                                  .showSnackBar(
+                                                SnackBar(
+                                                  content: Text(
+                                                    (resp['message'] ??
+                                                            'Email verificado.')
+                                                        .toString(),
+                                                  ),
+                                                  backgroundColor: Colors.green,
+                                                ),
+                                              );
+                                            });
+                                          } catch (e) {
+                                            if (!dialogContext.mounted) {
+                                              dialogClosed = true;
+                                              return;
+                                            }
+                                            setDialogState(() {
+                                              inlineMessage = e
+                                                  .toString()
+                                                  .replaceFirst(
+                                                      'Exception: ', '');
+                                              inlineMessageColor = Colors.red;
+                                            });
+                                          } finally {
+                                            if (mounted &&
+                                                dialogContext.mounted &&
+                                                !dialogClosed) {
+                                              setDialogState(() {
+                                                isBusy = false;
+                                              });
+                                            }
+                                          }
+                                        },
+                                  icon: const Icon(Icons.verified_outlined),
+                                  label: const Text('Verificar'),
+                                ),
+                              ),
+                            ],
+                            if (!hasEmail) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                'Debes indicar primero un email en Editar Perfil para poder verificarlo.',
+                                style: TextStyle(
+                                  color: Colors.orange.shade800,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      if (inlineMessage != null) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: inlineMessageColor.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: inlineMessageColor),
+                          ),
+                          child: Text(
+                            inlineMessage!,
+                            style: TextStyle(
+                              color: inlineMessageColor,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed:
+                      isBusy ? null : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cerrar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    codeController.dispose();
+  }
+
+  Future<void> _showChangeEmailDialog() async {
+    final currentEmail = _emailController.text.trim();
+    final updated = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => _ChangeEmailDialog(
+        currentEmail: currentEmail,
+        wasVerified: _emailVerified,
+        isValidEmailFormat: _isValidEmailFormat,
+        emailExistsInAnotherUser: _emailExistsInAnotherUser,
+      ),
+    );
+
+    if (updated == null || !mounted) {
+      return;
+    }
+
     setState(() {
-      _loadingEmailVerification = true;
+      _emailController.text = updated;
+      _emailVerified = false;
+      _emailAvailabilityError = null;
+      _emailVerificationDate = null;
+      _emailVerificationCodeExpiresAt = null;
+      _hasChanges = true;
+    });
+
+    _validateEmailInRealTime();
+  }
+
+  Future<void> _showTwoFactorWindow() async {
+    if (!_twoFactorEnabled) {
+      await _activarTwoFactor();
+      return;
+    }
+
+    await _loadTrustedDeviceStatus();
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Doble factor (2FA)'),
+          content: SizedBox(
+            width: 560,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.green),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.security, color: Colors.green),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Estado: Activado',
+                            style: TextStyle(
+                              color: Colors.green.shade800,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'El doble factor ya está activado en tu cuenta. Desde aquí solo puedes consultar si este dispositivo es de confianza y vincularlo o desvincularlo.',
+                        style: TextStyle(fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _isCurrentDeviceTrusted
+                        ? Colors.lightGreen.shade50
+                        : Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: _isCurrentDeviceTrusted
+                          ? Colors.lightGreen.shade200
+                          : Colors.orange.shade200,
+                    ),
+                  ),
+                  child: Text(
+                    _isCurrentDeviceTrusted
+                        ? 'Este dispositivo está marcado como de confianza. No se solicitará 2FA en próximos inicios de sesión hasta quitar la confianza.'
+                        : 'Este dispositivo no está marcado como de confianza. Para marcarlo, debes volver a iniciar sesión y activar la casilla "Confiar en este dispositivo" durante la validación 2FA.',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.blue.shade100),
+                  ),
+                  child: Text(
+                    _isCurrentDeviceTrusted
+                        ? 'Si desvinculas este dispositivo, en el próximo inicio de sesión volverá a pedirse el código 2FA.'
+                        : 'Si quieres convertir este dispositivo en dispositivo de confianza, deberás cerrar sesión e iniciar sesión de nuevo para validarlo con 2FA marcando la opción correspondiente.',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: _isCurrentDeviceTrusted
+                      ? OutlinedButton.icon(
+                          onPressed:
+                              (_loadingTwoFactor || _loadingTrustedDevice)
+                                  ? null
+                                  : () async {
+                                      await _quitarConfianzaDispositivo();
+                                      if (!mounted) return;
+                                      await _loadTrustedDeviceStatus();
+                                      if (!mounted) return;
+                                      Navigator.of(dialogContext).pop();
+                                    },
+                          icon: const Icon(Icons.phonelink_erase_outlined),
+                          label: const Text(
+                            'Quitar confianza en este dispositivo',
+                          ),
+                        )
+                      : ElevatedButton.icon(
+                          onPressed:
+                              (_loadingTwoFactor || _loadingTrustedDevice)
+                                  ? null
+                                  : () async {
+                                      await _establecerConfianzaDispositivoActual();
+                                      if (!mounted) return;
+                                      Navigator.of(dialogContext).pop();
+                                    },
+                          icon: const Icon(Icons.phonelink_lock_outlined),
+                          label: const Text(
+                            'Establecer este dispositivo como de confianza',
+                          ),
+                        ),
+                ),
+                if (_loadingTrustedDevice) ...[
+                  const SizedBox(height: 10),
+                  const LinearProgressIndicator(minHeight: 2),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: (_loadingTwoFactor || _loadingTrustedDevice)
+                  ? null
+                  : () => Navigator.pop(dialogContext),
+              child: const Text('Cerrar'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _loadTrustedDeviceStatus() async {
+    if (!mounted) return;
+    if (!_twoFactorEnabled) {
+      setState(() {
+        _isCurrentDeviceTrusted = false;
+        _loadingTrustedDevice = false;
+      });
+      return;
+    }
+
+    final authService = context.read<AuthService>();
+    final nick = (authService.userNick ?? '').trim();
+    if (nick.isEmpty) {
+      setState(() {
+        _isCurrentDeviceTrusted = false;
+        _loadingTrustedDevice = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _loadingTrustedDevice = true;
     });
 
     try {
-      final resp = await _apiService.verifyEmailCode(code: code);
+      final token = await authService.getTrustedDeviceTokenForNick(nick);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text((resp['message'] ?? 'Email verificado.').toString()),
-          backgroundColor: Colors.green,
-        ),
-      );
-      await _loadEmailVerificationStatus();
-    } catch (e) {
+      setState(() {
+        _isCurrentDeviceTrusted = (token ?? '').trim().isNotEmpty;
+      });
+    } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(e.toString().replaceFirst('Exception: ', '')),
-          backgroundColor: Colors.red,
-        ),
-      );
+      setState(() {
+        _isCurrentDeviceTrusted = false;
+      });
     } finally {
       if (!mounted) return;
       setState(() {
-        _loadingEmailVerification = false;
+        _loadingTrustedDevice = false;
       });
     }
+  }
+
+  Future<void> _establecerConfianzaDispositivoActual() async {
+    final goToLogin = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Establecer dispositivo de confianza'),
+        content: const Text(
+          'Para marcar este dispositivo como de confianza debes validarlo en el inicio de sesión 2FA, activando la casilla "Confiar en este dispositivo".\n\n¿Quieres cerrar sesión ahora para hacerlo?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Ir al login'),
+          ),
+        ],
+      ),
+    );
+
+    if (goToLogin != true || !mounted) return;
+
+    await context.read<AuthService>().logout();
+    if (!mounted) return;
+    Navigator.of(context).pushNamedAndRemoveUntil('login', (_) => false);
   }
 
   Future<void> _loadTwoFactorStatus() async {
@@ -237,8 +1079,9 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
       setState(() {
         _twoFactorEnabled = status['enabled'] == true;
       });
+      await _loadTrustedDeviceStatus();
     } catch (_) {
-      // Si falla la consulta, mantenemos el estado actual sin bloquear la pantalla.
+      // Si falla la consulta, mantenemos el estado actual sin bloquear.
     } finally {
       if (!mounted) return;
       setState(() {
@@ -258,151 +1101,399 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
       final secret = (setup['secret'] ?? '').toString().trim();
       final manualKey = (setup['manual_key'] ?? '').toString().trim();
       final otpauthUrl = (setup['otpauth_url'] ?? '').toString().trim();
+      final effectiveKey = manualKey.isNotEmpty ? manualKey : secret;
 
       if (!mounted) return;
 
       final codeController = TextEditingController();
+
+      Future<String> saveQrImage({
+        required String qrData,
+        required String filePrefix,
+        required bool useDownloads,
+      }) async {
+        final safeData = qrData.trim();
+        if (safeData.isEmpty) {
+          throw Exception('No hay datos para guardar el QR.');
+        }
+
+        final painter = QrPainter(
+          data: safeData,
+          version: QrVersions.auto,
+          color: Colors.black,
+          emptyColor: Colors.white,
+        );
+        final imageData = await painter.toImageData(
+          1024,
+          format: ui.ImageByteFormat.png,
+        );
+
+        if (imageData == null) {
+          throw Exception('No se pudo generar el contenido del QR.');
+        }
+
+        final bytes = imageData.buffer.asUint8List();
+
+        Directory targetDir;
+        if (useDownloads &&
+            (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+          targetDir = await getDownloadsDirectory() ??
+              await getApplicationDocumentsDirectory();
+        } else {
+          targetDir = await getApplicationDocumentsDirectory();
+        }
+
+        final fileName =
+            '${filePrefix}_${DateTime.now().millisecondsSinceEpoch}.png';
+        final filePath = '${targetDir.path}${Platform.pathSeparator}$fileName';
+
+        final file = File(filePath);
+        await file.writeAsBytes(bytes, flush: true);
+        return filePath;
+      }
+
       final code = await showDialog<String>(
         context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Activar doble factor'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .primary
-                          .withOpacity(0.35),
-                    ),
-                  ),
-                  child: const Text(
-                    'El doble factor (2FA) añade una capa extra de seguridad: además de tu contraseña, se solicita un código temporal de tu app de autenticación.',
-                    style: TextStyle(fontSize: 13),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  '1) Abre tu app de autenticación (Google Authenticator, Microsoft Authenticator, Authy, etc.) y añade una cuenta.',
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  '2) Copia esta clave secreta (puedes usar el botón "Copiar clave"):',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 4),
-                SelectableText(manualKey.isNotEmpty ? manualKey : secret),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          String? dialogError;
+          String? dialogNotice;
+          bool showMoreOptions = false;
+          bool showOtpauthInfo = false;
+
+          return StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: const Text('Activar doble factor'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        await Clipboard.setData(
-                          ClipboardData(
-                            text: manualKey.isNotEmpty ? manualKey : secret,
-                          ),
-                        );
-                        if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Clave copiada al portapapeles'),
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.copy, size: 16),
-                      label: const Text('Copiar clave'),
-                    ),
-                    if (otpauthUrl.isNotEmpty)
-                      OutlinedButton.icon(
-                        onPressed: () async {
-                          await Clipboard.setData(
-                            ClipboardData(text: otpauthUrl),
-                          );
-                          if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('URL otpauth copiada'),
-                            ),
-                          );
-                        },
-                        icon: const Icon(Icons.link, size: 16),
-                        label: const Text('Copiar URL'),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.lightBlue.shade50,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.lightBlue.shade200),
                       ),
+                      child: const Text(
+                        'El doble factor (2FA) añade una capa extra de seguridad: además de tu contraseña, se solicita un código temporal de tu app de autenticación.',
+                        style: TextStyle(fontSize: 13),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.teal.shade50,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.teal.shade200),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Sigue estos pasos...',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                Icons.looks_one,
+                                color: Colors.teal.shade700,
+                              ),
+                              const SizedBox(width: 8),
+                              const Expanded(
+                                child: Text(
+                                  'Abre tu app de autenticación (Google Authenticator, Microsoft Authenticator, Authy, etc.) y añade una cuenta.',
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                Icons.looks_two,
+                                color: Colors.teal.shade700,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: Colors.teal.shade100,
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        'Clave para configurar 2FA:',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        effectiveKey,
+                                        style: const TextStyle(
+                                          fontFamily: 'monospace',
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Align(
+                                        alignment: Alignment.centerRight,
+                                        child: OutlinedButton.icon(
+                                          onPressed: () async {
+                                            await Clipboard.setData(
+                                              ClipboardData(text: effectiveKey),
+                                            );
+                                            if (!dialogContext.mounted) return;
+                                            setDialogState(() {
+                                              dialogNotice =
+                                                  'Clave copiada al portapapeles';
+                                              dialogError = null;
+                                            });
+                                          },
+                                          icon:
+                                              const Icon(Icons.copy, size: 16),
+                                          label: const Text('Copiar'),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton.icon(
+                              onPressed: () {
+                                setDialogState(() {
+                                  showMoreOptions = !showMoreOptions;
+                                });
+                              },
+                              icon: Icon(
+                                showMoreOptions
+                                    ? Icons.expand_less
+                                    : Icons.more_horiz,
+                              ),
+                              label: Text(
+                                showMoreOptions
+                                    ? 'Ocultar opciones'
+                                    : 'Más opciones...',
+                              ),
+                            ),
+                          ),
+                          if (showMoreOptions) ...[
+                            const SizedBox(height: 6),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                OutlinedButton.icon(
+                                  onPressed: () async {
+                                    final qrData = otpauthUrl.isNotEmpty
+                                        ? otpauthUrl
+                                        : effectiveKey;
+                                    try {
+                                      if (Platform.isWindows ||
+                                          Platform.isLinux ||
+                                          Platform.isMacOS) {
+                                        final path = await saveQrImage(
+                                          qrData: qrData,
+                                          filePrefix: 'nutrifit_2fa_qr',
+                                          useDownloads: true,
+                                        );
+                                        if (!dialogContext.mounted) return;
+                                        setDialogState(() {
+                                          dialogNotice =
+                                              'QR guardado en Descargas: $path';
+                                          dialogError = null;
+                                        });
+                                      } else {
+                                        final path = await saveQrImage(
+                                          qrData: qrData,
+                                          filePrefix: 'nutrifit_2fa_qr',
+                                          useDownloads: false,
+                                        );
+                                        await Share.shareXFiles(
+                                          [XFile(path)],
+                                          text: 'QR 2FA de NutriFit',
+                                        );
+                                        if (!dialogContext.mounted) return;
+                                        setDialogState(() {
+                                          dialogNotice =
+                                              'Se abrió el menú para compartir o guardar el QR.';
+                                          dialogError = null;
+                                        });
+                                      }
+                                    } catch (e) {
+                                      if (!dialogContext.mounted) return;
+                                      setDialogState(() {
+                                        dialogError = e
+                                            .toString()
+                                            .replaceFirst('Exception: ', '');
+                                      });
+                                    }
+                                  },
+                                  icon: const Icon(Icons.share_outlined,
+                                      size: 16),
+                                  label:
+                                      const Text('Compartir / Guardar en...'),
+                                ),
+                                if (otpauthUrl.isNotEmpty)
+                                  OutlinedButton.icon(
+                                    onPressed: () async {
+                                      await Clipboard.setData(
+                                        ClipboardData(text: otpauthUrl),
+                                      );
+                                      if (!dialogContext.mounted) return;
+                                      setDialogState(() {
+                                        dialogNotice = 'URL otpauth copiada';
+                                        dialogError = null;
+                                        showOtpauthInfo = true;
+                                      });
+                                    },
+                                    icon: const Icon(Icons.link, size: 16),
+                                    label: const Text('Copiar URL'),
+                                  ),
+                              ],
+                            ),
+                            if (showOtpauthInfo && otpauthUrl.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: Colors.blueGrey.shade50,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: Colors.blueGrey.shade200,
+                                  ),
+                                ),
+                                child: const Text(
+                                  'La opción "Copiar URL" copia un enlace otpauth con toda la configuración 2FA para importarla en apps compatibles. Si tu app no permite importación por enlace, usa "Copiar" en la clave.',
+                                  style: TextStyle(fontSize: 13),
+                                ),
+                              ),
+                            ],
+                          ],
+                          const SizedBox(height: 8),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                Icons.looks_3,
+                                color: Colors.teal.shade700,
+                              ),
+                              const SizedBox(width: 8),
+                              const Expanded(
+                                child: Text(
+                                  'Introduce el código de 6 dígitos que te aparecerá en la app de autenticación para confirmar.',
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: codeController,
+                            keyboardType: TextInputType.number,
+                            maxLength: 6,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            decoration: InputDecoration(
+                              labelText: 'Código 2FA',
+                              border: const OutlineInputBorder(),
+                              counterText: '',
+                              errorText: dialogError,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (dialogError != null) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.red),
+                        ),
+                        child: Text(
+                          dialogError!,
+                          style: const TextStyle(
+                            color: Colors.red,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (dialogNotice != null) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.green),
+                        ),
+                        child: Text(
+                          dialogNotice!,
+                          style: TextStyle(
+                            color: Colors.green.shade700,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
-                if (otpauthUrl.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.secondaryContainer,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .secondary
-                            .withOpacity(0.35),
-                      ),
-                    ),
-                    child: const Text(
-                      'La opción "Copiar URL" copia un enlace otpauth con toda la configuración 2FA para importarla en apps compatibles. Si tu app no permite importación por enlace, usa "Copiar clave".',
-                      style: TextStyle(fontSize: 13),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                const Text(
-                  '3) Introduce el código de 6 dígitos que te aparecerá en la app de autenticación para confirmar:',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Cancelar'),
                 ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: codeController,
-                  keyboardType: TextInputType.number,
-                  maxLength: 6,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: const InputDecoration(
-                    labelText: 'Código 2FA',
-                    border: OutlineInputBorder(),
-                    counterText: '',
-                  ),
+                ElevatedButton(
+                  onPressed: () {
+                    final value = codeController.text.trim();
+                    if (value.length != 6) {
+                      setDialogState(() {
+                        dialogError = 'El código debe tener 6 dígitos.';
+                      });
+                      return;
+                    }
+                    Navigator.pop(dialogContext, value);
+                  },
+                  child: const Text('Activar'),
                 ),
               ],
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancelar'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                final value = codeController.text.trim();
-                if (value.length != 6) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('El código debe tener 6 dígitos.'),
-                    ),
-                  );
-                  return;
-                }
-                Navigator.pop(context, value);
-              },
-              child: const Text('Activar'),
-            ),
-          ],
-        ),
+          );
+        },
       );
+
       codeController.dispose();
 
       if (code == null || code.isEmpty) {
@@ -411,20 +1502,26 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
 
       await _apiService.enableTwoFactor(secret: secret, code: code);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Doble factor activado correctamente'),
-          backgroundColor: Colors.green,
-        ),
-      );
-      await _loadTwoFactorStatus();
+      // Diferir SnackBar y setState hasta después de que el diálogo esté
+      // completamente desmontado, para evitar el crash _dependents.isEmpty.
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Doble factor activado correctamente'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        await _loadTwoFactorStatus();
+      });
     } catch (e) {
       if (!mounted) return;
       final errorMessage = e.toString().replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-              errorMessage.isEmpty ? 'No se pudo activar 2FA.' : errorMessage),
+            errorMessage.isEmpty ? 'No se pudo activar 2FA.' : errorMessage,
+          ),
           backgroundColor: Colors.red,
         ),
       );
@@ -433,6 +1530,76 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
       setState(() {
         _loadingTwoFactor = false;
       });
+    }
+  }
+
+  // ignore: unused_element
+  Future<void> _guardarQr2fa({
+    required String qrData,
+    required String filePrefix,
+  }) async {
+    final safeData = qrData.trim();
+    if (safeData.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No hay datos para guardar el QR.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    try {
+      final painter = QrPainter(
+        data: safeData,
+        version: QrVersions.auto,
+        color: Colors.black,
+        emptyColor: Colors.white,
+      );
+
+      final imageData = await painter.toImageData(
+        1024,
+        format: ui.ImageByteFormat.png,
+      );
+
+      if (imageData == null) {
+        throw Exception('No se pudo generar el contenido del QR.');
+      }
+
+      final bytes = imageData.buffer.asUint8List();
+
+      Directory targetDir;
+      if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+        targetDir = await getDownloadsDirectory() ??
+            await getApplicationDocumentsDirectory();
+      } else {
+        targetDir = await getApplicationDocumentsDirectory();
+      }
+
+      final fileName =
+          '${filePrefix}_${DateTime.now().millisecondsSinceEpoch}.png';
+      final filePath = '${targetDir.path}${Platform.pathSeparator}$fileName';
+
+      final file = File(filePath);
+      await file.writeAsBytes(bytes, flush: true);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('QR guardado en: $filePath'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo guardar el QR: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -502,9 +1669,9 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
       final errorMessage = e.toString().replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(errorMessage.isEmpty
-              ? 'No se pudo desactivar 2FA.'
-              : errorMessage),
+          content: Text(
+            errorMessage.isEmpty ? 'No se pudo desactivar 2FA.' : errorMessage,
+          ),
           backgroundColor: Colors.red,
         ),
       );
@@ -595,7 +1762,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                 const SizedBox(height: 10),
                 const Text('3) Cintura/Cadera = cintura (cm) / cadera (cm)'),
                 const Text(
-                    'Origen: Waist-Hip Ratio (OMS, obesidad abdominal).'),
+                  'Origen: Waist-Hip Ratio (OMS, obesidad abdominal).',
+                ),
                 const SizedBox(height: 12),
                 Container(
                   width: double.infinity,
@@ -695,16 +1863,14 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
           ),
           if (expanded) ...[
             const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: child,
-            ),
+            Padding(padding: const EdgeInsets.all(12), child: child),
           ],
         ],
       ),
     );
   }
 
+  // ignore: unused_element
   Widget _buildTwoFactorCard() {
     final statusColor = _twoFactorEnabled ? Colors.green : Colors.red;
     final statusLabel = _twoFactorEnabled ? 'activado' : 'desactivado';
@@ -726,10 +1892,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
             ),
             TextSpan(
               text: statusLabel,
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                color: statusColor,
-              ),
+              style: TextStyle(fontWeight: FontWeight.w700, color: statusColor),
             ),
             const TextSpan(
               text: ')',
@@ -790,6 +1953,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
     );
   }
 
+  // ignore: unused_element
   Widget _buildEmailVerificationCard() {
     final statusColor = _emailVerified ? Colors.green : Colors.orange;
     final statusLabel = _emailVerified ? 'verificado' : 'sin verificar';
@@ -806,7 +1970,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
           style: const TextStyle(fontSize: 16, color: Colors.black87),
           children: [
             const TextSpan(
-              text: 'Email (',
+              text: 'Email',
               style: TextStyle(fontWeight: FontWeight.w600),
             ),
             TextSpan(
@@ -824,7 +1988,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'Verifica tu email para poder recuperar el acceso por correo si olvidas tu contrasena.',
+            'Verifica tu email para poder recuperar el acceso por correo si olvidas tu contraseña y para suscribirte a una cuenta Premium. Introduce tu cuenta de email y pulsa en "Enviar código", recibirás un código por correo, cópialo y pulsa en "Validar código", lo pegas y tu correo habrá quedado verificado.',
             style: TextStyle(fontSize: 13),
           ),
           if (_emailVerified && _emailVerificationDate != null) ...[
@@ -847,7 +2011,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                       ? null
                       : _sendEmailVerificationCode,
                   icon: const Icon(Icons.send_outlined),
-                  label: const Text('Enviar codigo'),
+                  label: const Text('1º Enviar código'),
                 ),
               ),
               const SizedBox(width: 8),
@@ -856,7 +2020,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                   onPressed:
                       _loadingEmailVerification ? null : _verifyEmailCodeDialog,
                   icon: const Icon(Icons.verified_outlined),
-                  label: const Text('Validar codigo'),
+                  label: const Text('2º Validar código'),
                 ),
               ),
             ],
@@ -879,8 +2043,9 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
 
   Future<void> _loadMaxImageDimensions() async {
     try {
-      final dimParam =
-          await _apiService.getParametro('usuario_max_imagen_tamaño');
+      final dimParam = await _apiService.getParametro(
+        'usuario_max_imagen_tamaño',
+      );
       if (dimParam != null && mounted) {
         final width = int.tryParse(dimParam['valor'] ?? '400');
         final height = int.tryParse(dimParam['valor2'] ?? '400');
@@ -905,7 +2070,59 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
 
   Future<bool> _confirmDiscardChanges() async {
     if (!_hasChanges) return true;
-    return showUnsavedChangesDialog(context);
+    final action = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        titlePadding: const EdgeInsets.fromLTRB(10, 8, 12, 0),
+        title: Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Cambios sin guardar',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Cancelar',
+              style: IconButton.styleFrom(
+                shape: const CircleBorder(),
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(32, 32),
+              ),
+              icon: const Icon(Icons.close, size: 18),
+              onPressed: () => Navigator.of(dialogContext).pop('cancel'),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Tienes cambios sin guardar. Si sales ahora, se perderán.',
+        ),
+        actions: [
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop('cancel'),
+            child: const Text('Volver'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop('discard'),
+            child: const Text('Salir sin guardar'),
+          ),
+        ],
+      ),
+    );
+
+    if (action == 'discard') {
+      return true;
+    }
+
+    return false;
   }
 
   Future<void> _handleBack() async {
@@ -918,6 +2135,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
 
   @override
   void dispose() {
+    _emailFocusNode.dispose();
     _nickController.dispose();
     _emailController.dispose();
     _edadController.dispose();
@@ -936,8 +2154,9 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
         if (widget.usuario!.nick.isEmpty && widget.usuario!.codigo > 0) {
           try {
             // Intentar cargar el usuario específico desde el servidor
-            final usuario =
-                await _apiService.getUsuario(widget.usuario!.codigo);
+            final usuario = await _apiService.getUsuario(
+              widget.usuario!.codigo,
+            );
             setState(() {
               _fullUsuario = usuario;
               _nick = usuario.nick;
@@ -948,6 +2167,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
               _imageBase64 = usuario.imgPerfil;
               _isLoading = false;
             });
+            _maybeOpenEmailVerificationWindow();
           } catch (e) {
             // Si falla (permisos), usar datos locales
             setState(() {
@@ -960,6 +2180,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
               _imageBase64 = widget.usuario!.imgPerfil;
               _isLoading = false;
             });
+            _maybeOpenEmailVerificationWindow();
           }
         } else {
           // Usar los datos del usuario que ya tenemos
@@ -973,17 +2194,20 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
             _imageBase64 = widget.usuario!.imgPerfil;
             _isLoading = false;
           });
+          _maybeOpenEmailVerificationWindow();
         }
       } else {
         // Nuevo usuario - no hay datos que cargar
         setState(() {
           _isLoading = false;
         });
+        _maybeOpenEmailVerificationWindow();
       }
     } catch (e) {
       setState(() {
         _isLoading = false;
       });
+      _maybeOpenEmailVerificationWindow();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1010,72 +2234,6 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
     if (password.isEmpty) return null;
 
     return _configService.validatePassword(password);
-  }
-
-  Widget _buildPasswordRequirementsList() {
-    final minLength = _configService.passwordMinLength;
-    final requireUpperLower = _configService.passwordRequireUpperLower;
-    final requireNumbers = _configService.passwordRequireNumbers;
-    final requireSpecialChars = _configService.passwordRequireSpecialChars;
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.blue.shade50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.blue.shade200),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Requisitos de contraseña:',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: Colors.blue.shade900,
-            ),
-          ),
-          const SizedBox(height: 8),
-          if (minLength > 0)
-            _buildRequirement('Mínimo $minLength caracteres',
-                _newPassword.length >= minLength),
-          if (requireUpperLower)
-            _buildRequirement(
-                'Mayúsculas y minúsculas',
-                _newPassword.contains(RegExp(r'[A-Z]')) &&
-                    _newPassword.contains(RegExp(r'[a-z]'))),
-          if (requireNumbers)
-            _buildRequirement(
-                'Contener números', _newPassword.contains(RegExp(r'[0-9]'))),
-          if (requireSpecialChars)
-            _buildRequirement('Caracteres especiales (*,.+-#\$?¿!¡_()/\\%&)',
-                _newPassword.contains(RegExp(r'[*,.+\-#$?¿!¡_()\/\\%&]'))),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRequirement(String text, bool isMet) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Row(
-        children: [
-          Icon(
-            isMet ? Icons.check_circle : Icons.cancel,
-            color: isMet ? Colors.green : Colors.grey,
-            size: 20,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            text,
-            style: TextStyle(
-              color: isMet ? Colors.green : Colors.grey,
-              fontSize: 13,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   /// Redimensiona la imagen de perfil si supera las dimensiones máximas
@@ -1132,49 +2290,6 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
     }
   }
 
-  Future<bool> _confirmLopdDeletionStep1() async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Derecho de supresión de datos (LOPDGDD/RGPD)'),
-        content: const SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Puedes solicitar la eliminación de tus datos personales conforme al derecho de supresión (art. 17 RGPD y LOPDGDD en España).',
-              ),
-              SizedBox(height: 10),
-              Text(
-                'Si continúas, se eliminarán tu usuario y todos los datos asociados: inicios de sesión, chats con el dietista, control de peso, lista de la compra, actividades, tareas, entrenamientos, ejercicios e imágenes.',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-              SizedBox(height: 10),
-              Text(
-                'Esta acción es irreversible y cerrará tu sesión.',
-                style: TextStyle(color: Colors.red),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Continuar'),
-          ),
-        ],
-      ),
-    );
-
-    return result == true;
-  }
-
   Future<bool> _confirmLopdDeletionStep2() async {
     String confirmationText = '';
     final result = await showDialog<bool>(
@@ -1185,9 +2300,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Para confirmar, escribe ELIMINAR en mayúsculas:',
-            ),
+            const Text('Para confirmar, escribe ELIMINAR en mayúsculas:'),
             const SizedBox(height: 10),
             TextField(
               autofocus: true,
@@ -1229,27 +2342,108 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
     return result == true;
   }
 
-  Future<void> _deleteMyAccountLopd() async {
-    final confirmedStep1 = await _confirmLopdDeletionStep1();
-    if (!confirmedStep1 || !mounted) {
-      return;
-    }
+  Future<void> _showDeleteUserWindow() async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Eliminación de usuario'),
+          content: SizedBox(
+            width: 560,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.red.shade200),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.privacy_tip_outlined,
+                        color: Colors.red.shade700,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Puedes solicitar la eliminación de tus datos personales conforme al derecho de supresión (art. 17 RGPD y LOPDGDD en España).',
+                              style: TextStyle(
+                                color: Colors.red.shade900,
+                                fontSize: 13,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Si continúas, se eliminarán tu usuario y todos los datos asociados: inicios de sesión, chats con el dietista, control de peso, lista de la compra, actividades, tareas, entrenamientos, ejercicios e imágenes.',
+                              style: TextStyle(
+                                color: Colors.red.shade900,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Esta acción es irreversible y cerrará tu sesión.',
+                              style: TextStyle(
+                                color: Colors.red.shade900,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: () async {
+                      Navigator.of(dialogContext).pop();
+                      await _deleteMyAccountLopd();
+                    },
+                    icon: const Icon(Icons.delete_forever),
+                    label: const Text('Eliminar todos mis datos'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cerrar'),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
+  Future<void> _deleteMyAccountLopd() async {
     final confirmedStep2 = await _confirmLopdDeletionStep2();
     if (!confirmedStep2 || !mounted) {
       return;
     }
 
     try {
-      final result = await _apiService.deleteCurrentUserWithDetails();
-      final deletedCounts = result['deleted_counts'] is Map
-          ? Map<String, dynamic>.from(result['deleted_counts'] as Map)
-          : <String, dynamic>{};
-      final totalDeleted = deletedCounts.values.fold<int>(
-        0,
-        (sum, value) => sum + (int.tryParse(value.toString()) ?? 0),
-      );
-
+      await _apiService.deleteCurrentUserWithDetails();
       FocusManager.instance.primaryFocus?.unfocus();
       if (!mounted) return;
       await context.read<AuthService>().logout();
@@ -1285,8 +2479,11 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
     }
   }
 
-  void _submitForm() async {
-    if (_formKey.currentState!.validate()) {
+  Future<bool> _submitForm() async {
+    if (!_formKey.currentState!.validate()) {
+      return false;
+    }
+    {
       _formKey.currentState!.save();
 
       // Redimensionar la imagen si excede los límites
@@ -1300,28 +2497,31 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
             backgroundColor: Colors.red,
           ),
         );
-        return;
+        return false;
       }
 
       // Validar que el nick no exista (si ha cambiado)
       if (_nick != _fullUsuario?.nick) {
         try {
           final usuarios = await _apiService.getUsuarios();
-          final nickExists = usuarios.any((u) =>
-              u.nick.toLowerCase() == _nick.toLowerCase() &&
-              u.codigo != _fullUsuario?.codigo);
+          final nickExists = usuarios.any(
+            (u) =>
+                u.nick.toLowerCase() == _nick.toLowerCase() &&
+                u.codigo != _fullUsuario?.codigo,
+          );
 
           if (nickExists) {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content:
-                      Text('Este nick ya está en uso. Por favor, elija otro.'),
+                  content: Text(
+                    'Este nick ya está en uso. Por favor, elija otro.',
+                  ),
                   backgroundColor: Colors.red,
                 ),
               );
             }
-            return;
+            return false;
           }
         } on SocketException {
           if (mounted) {
@@ -1334,7 +2534,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
               ),
             );
           }
-          return;
+          return false;
         } catch (e) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -1344,40 +2544,61 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
               ),
             );
           }
-          return;
+          return false;
         }
       }
 
-      Map<String, dynamic> usuarioData = {
-        'codigo': _fullUsuario?.codigo.toString(),
-        'nick': _nick,
-        'nombre': _fullUsuario?.nombre,
-        'email': _emailController.text.trim(),
-        'tipo': _fullUsuario?.tipo,
-        'codigo_paciente': _fullUsuario?.codigoPaciente,
-        'edad': int.tryParse(_edadController.text.trim()),
-        'altura': int.tryParse(_alturaController.text.trim()),
-        'activo': _fullUsuario?.activo,
-        'accesoweb': _fullUsuario?.accesoweb,
-        'administrador': _fullUsuario?.administrador,
-        'img_perfil': _imageBase64,
-      };
-
-      if (usuarioData['edad'] == null || (usuarioData['edad'] as int) <= 0) {
-        usuarioData['edad'] = null;
-      }
-      if (usuarioData['altura'] == null ||
-          (usuarioData['altura'] as int) <= 0) {
-        usuarioData['altura'] = null;
-      }
-
-      // Solo incluir contraseña si se proporciona una nueva
-      if (_newPassword.isNotEmpty) {
-        usuarioData['contrasena'] = _newPassword;
+      // Validar email duplicado (si cambia)
+      final currentEmail = (_fullUsuario?.email ?? '').trim().toLowerCase();
+      final formEmail = _emailController.text.trim().toLowerCase();
+      if (formEmail.isNotEmpty && formEmail != currentEmail) {
+        try {
+          final emailExists = await _emailExistsInAnotherUser(
+            _emailController.text.trim(),
+          );
+          if (emailExists) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Esta cuenta de email no puede usarse, indique otra',
+                  ),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+            return false;
+          }
+        } on SocketException {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'No se ha podido realizar el proceso. Revise la conexión a Internet',
+                ),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          return false;
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Error al validar el email: $e'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          return false;
+        }
       }
 
       try {
-        final success = await _apiService.updateUsuario(usuarioData);
+        final success = await _updateProfileWithEmail(
+          _emailController.text.trim(),
+          includePassword: true,
+        );
         if (success) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -1386,9 +2607,10 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                 backgroundColor: Colors.green,
               ),
             );
-            Navigator.of(context).pop(true);
           }
+          return true;
         }
+        return false;
       } on SocketException {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1400,6 +2622,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
             ),
           );
         }
+        return false;
       } catch (e) {
         if (mounted) {
           final errorMessage = e.toString().replaceFirst('Exception: ', '');
@@ -1410,6 +2633,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
             ),
           );
         }
+        return false;
       }
     }
   }
@@ -1425,9 +2649,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
           ),
           title: const Text('Editar Perfil'),
         ),
-        body: const Center(
-          child: CircularProgressIndicator(),
-        ),
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
@@ -1444,6 +2666,9 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   /// Construye la pantalla de edición para usuarios registrados
   Widget _buildEditScreen() {
     final bottomSafeInset = MediaQuery.of(context).padding.bottom;
+    final hasEmail = _emailController.text.trim().isNotEmpty;
+    final isVerifiedEmail = hasEmail && _emailVerified;
+    final isPremium = context.read<AuthService>().isPremium;
 
     return WillPopScope(
       onWillPop: _confirmDiscardChanges,
@@ -1455,7 +2680,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
           ),
           title: const Text('Editar Perfil'),
           actions: [
-            IconButton(icon: const Icon(Icons.save), onPressed: _submitForm)
+            IconButton(icon: const Icon(Icons.save), onPressed: _submitForm),
           ],
         ),
         body: DefaultTabController(
@@ -1484,12 +2709,109 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // Avatar de perfil
-                            Center(
-                              child: ProfileImagePicker(
-                                initialBase64Image: _imageBase64,
-                                onImageChanged: _handleImageChanged,
+                            if (isPremium) ...[
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 12,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.amber.shade50,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: Colors.amber.shade300,
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.workspace_premium,
+                                      color: Colors.amber.shade800,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            'Cuenta Premium',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w800,
+                                              color: Colors.amber.shade900,
+                                            ),
+                                          ),
+                                          Text(
+                                            'Tienes acceso a funciones exclusivas como Vídeos Ejercicios.',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.amber.shade900,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
+                              const SizedBox(height: 16),
+                            ],
+                            // Avatar de perfil + estado 2FA (arriba derecha)
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Center(
+                                    child: ProfileImagePicker(
+                                      initialBase64Image: _imageBase64,
+                                      onImageChanged: _handleImageChanged,
+                                    ),
+                                  ),
+                                ),
+                                if (_twoFactorEnabled)
+                                  Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(12),
+                                      onTap: _showTwoFactorWindow,
+                                      child: Container(
+                                        margin: const EdgeInsets.only(top: 6),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 14,
+                                          vertical: 10,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.green.shade50,
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                          border: Border.all(
+                                            color: Colors.green.shade300,
+                                          ),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.verified,
+                                              size: 22,
+                                              color: Colors.green.shade700,
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              '2FA',
+                                              style: TextStyle(
+                                                color: Colors.green.shade800,
+                                                fontWeight: FontWeight.w800,
+                                                fontSize: 18,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
                             const SizedBox(height: 24),
 
@@ -1507,30 +2829,106 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                               onSaved: (value) => _nick = value!,
                             ),
                             const SizedBox(height: 16),
-                            TextFormField(
-                              controller: _emailController,
-                              keyboardType: TextInputType.emailAddress,
-                              decoration: const InputDecoration(
-                                labelText: 'Email (opcional)',
-                                border: OutlineInputBorder(),
-                              ),
-                              validator: (value) {
-                                final v = (value ?? '').trim();
-                                if (v.isEmpty) return null;
-                                final emailRegex =
-                                    RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
-                                if (!emailRegex.hasMatch(v)) {
-                                  return 'Email no válido';
-                                }
-                                return null;
-                              },
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: TextFormField(
+                                    controller: _emailController,
+                                    focusNode: _emailFocusNode,
+                                    enabled: true,
+                                    readOnly: isVerifiedEmail,
+                                    keyboardType: TextInputType.emailAddress,
+                                    onChanged: (_) {
+                                      _validateEmailInRealTime();
+                                    },
+                                    decoration: InputDecoration(
+                                      labelText: 'Email',
+                                      border: const OutlineInputBorder(),
+                                      errorText: _emailFormatError ??
+                                          (!_checkingEmailAvailability &&
+                                                  _emailAvailabilityError !=
+                                                      null
+                                              ? 'El email introducido no es válido, indique otro'
+                                              : null),
+                                      suffixIcon: isVerifiedEmail
+                                          ? Icon(
+                                              Icons.verified,
+                                              color: Colors.green.shade700,
+                                            )
+                                          : null,
+                                    ),
+                                    validator: (value) {
+                                      final v = (value ?? '').trim();
+                                      if (v.isEmpty) return null;
+                                      if (!_isValidEmailFormat(v)) {
+                                        return 'Email no válido';
+                                      }
+                                      if (_emailAvailabilityError != null) {
+                                        return 'El email introducido no es válido, indique otro';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ),
+                                if (isVerifiedEmail) ...[
+                                  const SizedBox(width: 8),
+                                  Tooltip(
+                                    message:
+                                        'Cambiar cuenta de correo electrónico',
+                                    child: SizedBox(
+                                      height: 56,
+                                      width: 56,
+                                      child: OutlinedButton(
+                                        onPressed: _showChangeEmailDialog,
+                                        child:
+                                            const Icon(Icons.alternate_email),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
-                            const SizedBox(height: 16),
-
-                            _buildEmailVerificationCard(),
-                            const SizedBox(height: 16),
-
-                            _buildTwoFactorCard(),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                if (!_emailVerified)
+                                  Expanded(
+                                    child: ElevatedButton.icon(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.green.shade600,
+                                        foregroundColor: Colors.white,
+                                        textStyle: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      onPressed: (_emailController.text
+                                                  .trim()
+                                                  .isNotEmpty &&
+                                              _isValidEmailFormat(
+                                                  _emailController.text
+                                                      .trim()) &&
+                                              _emailAvailabilityError == null)
+                                          ? _showEmailVerificationWindow
+                                          : null,
+                                      icon: const Icon(
+                                        Icons.mark_email_read_outlined,
+                                      ),
+                                      label: const Text('Verificar email'),
+                                    ),
+                                  ),
+                                if (!_emailVerified && !_twoFactorEnabled)
+                                  const SizedBox(width: 8),
+                                if (!_twoFactorEnabled)
+                                  Expanded(
+                                    child: OutlinedButton.icon(
+                                      onPressed: _showTwoFactorWindow,
+                                      icon: const Icon(Icons.security_outlined),
+                                      label: const Text('Doble factor'),
+                                    ),
+                                  ),
+                              ],
+                            ),
                             const SizedBox(height: 16),
 
                             _buildCollapsibleCard(
@@ -1544,7 +2942,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                 children: [
                                   const Expanded(
                                     child: Text(
-                                      'Datos adicionales (MVP / IMC)',
+                                      'Datos para IMC',
                                       style: TextStyle(
                                         fontSize: 16,
                                         fontWeight: FontWeight.w600,
@@ -1567,7 +2965,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                       color: Colors.orange.shade50,
                                       borderRadius: BorderRadius.circular(8),
                                       border: Border.all(
-                                          color: Colors.orange.shade200),
+                                        color: Colors.orange.shade200,
+                                      ),
                                     ),
                                     child: Row(
                                       crossAxisAlignment:
@@ -1603,8 +3002,9 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                       if ((value ?? '').trim().isEmpty) {
                                         return null;
                                       }
-                                      final parsed =
-                                          int.tryParse(value!.trim());
+                                      final parsed = int.tryParse(
+                                        value!.trim(),
+                                      );
                                       if (parsed == null ||
                                           parsed <= 0 ||
                                           parsed > 120) {
@@ -1625,8 +3025,9 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                       if ((value ?? '').trim().isEmpty) {
                                         return null;
                                       }
-                                      final parsed =
-                                          int.tryParse(value!.trim());
+                                      final parsed = int.tryParse(
+                                        value!.trim(),
+                                      );
                                       if (parsed == null ||
                                           parsed < 80 ||
                                           parsed > 250) {
@@ -1676,29 +3077,28 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                       if (value == null || value.isEmpty) {
                                         return null;
                                       }
-                                      final error =
-                                          _getPasswordValidationError(value);
+                                      final error = _getPasswordValidationError(
+                                        value,
+                                      );
                                       return error;
                                     },
                                     onChanged: (value) {
                                       setState(() {
                                         _newPassword = value;
-                                        if (value.isNotEmpty &&
-                                            !_showPasswordRequirements) {
-                                          _showPasswordRequirements = true;
-                                        } else if (value.isEmpty) {
-                                          _showPasswordRequirements = false;
-                                        }
                                       });
                                     },
                                     onSaved: (value) =>
                                         _newPassword = value ?? '',
                                   ),
                                   const SizedBox(height: 16),
-                                  if (_showPasswordRequirements) ...[
-                                    _buildPasswordRequirementsList(),
-                                    const SizedBox(height: 16),
-                                  ],
+                                  PasswordRequirementsChecklist(
+                                    policy:
+                                        PasswordPolicyRequirements.fromConfig(
+                                      _configService,
+                                    ),
+                                    password: _newPassword,
+                                  ),
+                                  const SizedBox(height: 16),
                                   if (_newPassword.isNotEmpty)
                                     TextFormField(
                                       obscureText: true,
@@ -1725,72 +3125,6 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                             ),
                             const SizedBox(height: 16),
 
-                            _buildCollapsibleCard(
-                              expanded: _lopdCardExpanded,
-                              onToggle: () {
-                                setState(() {
-                                  _lopdCardExpanded = !_lopdCardExpanded;
-                                });
-                              },
-                              title: const Text(
-                                'Eliminación de usuario',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.red,
-                                ),
-                              ),
-                              child: Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: Colors.red.shade50,
-                                  borderRadius: BorderRadius.circular(8),
-                                  border:
-                                      Border.all(color: Colors.red.shade200),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Icon(
-                                          Icons.privacy_tip_outlined,
-                                          color: Colors.red.shade700,
-                                        ),
-                                        const SizedBox(width: 10),
-                                        Expanded(
-                                          child: Text(
-                                            'Tienes derecho a solicitar la eliminación completa de tus datos personales. Esta acción borrará tu cuenta y los registros asociados, incluyendo inicios de sesión, chats con el dietista, control de peso, lista de la compra, actividades, tareas, entrenamientos, ejercicios e imágenes.',
-                                            style: TextStyle(
-                                              color: Colors.red.shade900,
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 12),
-                                    SizedBox(
-                                      width: double.infinity,
-                                      child: ElevatedButton.icon(
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: Colors.red,
-                                          foregroundColor: Colors.white,
-                                        ),
-                                        onPressed: _deleteMyAccountLopd,
-                                        icon: const Icon(Icons.delete_forever),
-                                        label: const Text(
-                                            'Eliminar todos mis datos'),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
                             const SizedBox(height: 24),
 
                             // Botón de guardar
@@ -1804,19 +3138,14 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                             const SizedBox(height: 16),
                             SizedBox(
                               width: double.infinity,
-                              child: OutlinedButton.icon(
-                                onPressed: () async {
-                                  final authService = Provider.of<AuthService>(
-                                      context,
-                                      listen: false);
-                                  await authService.logout();
-                                  if (mounted) {
-                                    Navigator.of(context)
-                                        .pushReplacementNamed('login');
-                                  }
-                                },
-                                icon: const Icon(Icons.logout),
-                                label: const Text('Cerrar sesión'),
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.red,
+                                  foregroundColor: Colors.white,
+                                ),
+                                onPressed: _showDeleteUserWindow,
+                                icon: const Icon(Icons.delete_forever),
+                                label: const Text('Eliminar todos mis datos'),
                               ),
                             ),
                           ],
@@ -1840,6 +3169,242 @@ class _UserSessionsTab extends StatefulWidget {
 
   @override
   State<_UserSessionsTab> createState() => _UserSessionsTabState();
+}
+
+class _ChangeEmailDialog extends StatefulWidget {
+  const _ChangeEmailDialog({
+    required this.currentEmail,
+    required this.wasVerified,
+    required this.isValidEmailFormat,
+    required this.emailExistsInAnotherUser,
+  });
+
+  final String currentEmail;
+  final bool wasVerified;
+  final bool Function(String) isValidEmailFormat;
+  final Future<bool> Function(String) emailExistsInAnotherUser;
+
+  @override
+  State<_ChangeEmailDialog> createState() => _ChangeEmailDialogState();
+}
+
+class _ChangeEmailDialogState extends State<_ChangeEmailDialog> {
+  late final TextEditingController _emailController;
+  String? _errorText;
+  bool _checkingAvailability = false;
+  bool _emailAvailable = false;
+  String _availabilityCheckedEmail = '';
+  int _validationToken = 0;
+
+  String get _currentEmailNormalized =>
+      widget.currentEmail.trim().toLowerCase();
+
+  @override
+  void initState() {
+    super.initState();
+    _emailController = TextEditingController(text: widget.currentEmail);
+    _validateInline();
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    super.dispose();
+  }
+
+  bool _canAccept() {
+    final value = _emailController.text.trim();
+    if (value.isEmpty) {
+      return false;
+    }
+    if (!widget.isValidEmailFormat(value)) {
+      return false;
+    }
+    if (value.toLowerCase() == _currentEmailNormalized) {
+      return false;
+    }
+    if (_checkingAvailability) {
+      return false;
+    }
+
+    final normalized = value.toLowerCase();
+    return _availabilityCheckedEmail == normalized && _emailAvailable;
+  }
+
+  void _validateInline() {
+    final value = _emailController.text.trim();
+
+    if (value.isEmpty) {
+      setState(() {
+        _errorText = 'Debes indicar un email.';
+        _checkingAvailability = false;
+        _emailAvailable = false;
+        _availabilityCheckedEmail = '';
+      });
+      return;
+    }
+
+    if (!widget.isValidEmailFormat(value)) {
+      setState(() {
+        _errorText = 'Email no válido.';
+        _checkingAvailability = false;
+        _emailAvailable = false;
+        _availabilityCheckedEmail = '';
+      });
+      return;
+    }
+
+    if (value.toLowerCase() == _currentEmailNormalized) {
+      setState(() {
+        _errorText = 'Debes indicar un email distinto al actual.';
+        _checkingAvailability = false;
+        _emailAvailable = false;
+        _availabilityCheckedEmail = '';
+      });
+      return;
+    }
+
+    _checkEmailAvailability(value);
+  }
+
+  Future<void> _checkEmailAvailability(String email) async {
+    final normalized = email.trim().toLowerCase();
+    final token = ++_validationToken;
+
+    setState(() {
+      _checkingAvailability = true;
+      _errorText = null;
+      _availabilityCheckedEmail = '';
+      _emailAvailable = false;
+    });
+
+    try {
+      final exists = await widget.emailExistsInAnotherUser(email);
+      if (!mounted || token != _validationToken) return;
+
+      setState(() {
+        _checkingAvailability = false;
+        _availabilityCheckedEmail = normalized;
+        _emailAvailable = !exists;
+        _errorText = exists
+            ? 'Esta cuenta de email no puede usarse, indique otra'
+            : null;
+      });
+    } catch (_) {
+      if (!mounted || token != _validationToken) return;
+      setState(() {
+        _checkingAvailability = false;
+        _availabilityCheckedEmail = '';
+        _emailAvailable = false;
+        _errorText = 'No se pudo validar el email. Inténtalo de nuevo.';
+      });
+    }
+  }
+
+  Future<void> _submit() async {
+    _validateInline();
+
+    final value = _emailController.text.trim();
+    final normalized = value.toLowerCase();
+    final needsAvailabilityCheck = value.isNotEmpty &&
+        widget.isValidEmailFormat(value) &&
+        normalized != _currentEmailNormalized &&
+        _availabilityCheckedEmail != normalized;
+
+    if (needsAvailabilityCheck) {
+      await _checkEmailAvailability(value);
+    }
+
+    if (!_canAccept()) {
+      setState(() {
+        _errorText ??= 'Revisa el email indicado.';
+      });
+      return;
+    }
+
+    FocusScope.of(context).unfocus();
+    Navigator.of(context).pop(value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Cambiar email'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (widget.wasVerified) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.orange.shade200),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    color: Colors.orange.shade800,
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      'El email actual está verificado, si lo cambias, tendrás que volver a verificarlo.',
+                      style: TextStyle(fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          TextField(
+            controller: _emailController,
+            keyboardType: TextInputType.emailAddress,
+            autofocus: true,
+            decoration: InputDecoration(
+              labelText: 'Nuevo email',
+              border: const OutlineInputBorder(),
+              errorText: _errorText,
+              suffixIcon: _checkingAvailability
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : null,
+            ),
+            onChanged: (_) {
+              _validateInline();
+            },
+            onSubmitted: (_) {
+              _submit();
+            },
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            FocusScope.of(context).unfocus();
+            Navigator.of(context).pop();
+          },
+          child: const Text('Cancelar'),
+        ),
+        ElevatedButton(
+          onPressed: _canAccept() ? _submit : null,
+          child: const Text('Aceptar'),
+        ),
+      ],
+    );
+  }
 }
 
 class _UserSessionsTabState extends State<_UserSessionsTab> {
@@ -1898,10 +3463,7 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
           children: [
             const Icon(Icons.calendar_today, size: 18),
             const SizedBox(width: 8),
-            Text(
-              'Fecha: $fechaFormato',
-              style: const TextStyle(fontSize: 14),
-            ),
+            Text('Fecha: $fechaFormato', style: const TextStyle(fontSize: 14)),
           ],
         ),
         const SizedBox(height: 8),
@@ -1909,10 +3471,7 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
           children: [
             const Icon(Icons.access_time, size: 18),
             const SizedBox(width: 8),
-            Text(
-              'Hora: $horaFormato',
-              style: const TextStyle(fontSize: 14),
-            ),
+            Text('Hora: $horaFormato', style: const TextStyle(fontSize: 14)),
           ],
         ),
         const SizedBox(height: 8),
@@ -1958,9 +3517,7 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
     final usuarioCode = authService.userCode;
 
     if (usuarioCode == null || usuarioCode.isEmpty) {
-      return const Center(
-        child: Text('Código de usuario no disponible'),
-      );
+      return const Center(child: Text('Código de usuario no disponible'));
     }
 
     return RefreshIndicator(
@@ -2150,8 +3707,11 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
                       const SizedBox(height: 12),
                       Row(
                         children: [
-                          const Icon(Icons.analytics,
-                              size: 16, color: Colors.grey),
+                          const Icon(
+                            Icons.analytics,
+                            size: 16,
+                            color: Colors.grey,
+                          ),
                           const SizedBox(width: 8),
                           Text(
                             'Total de sesiones: ${sessionData.totalSesiones}',
@@ -2162,8 +3722,11 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
                       const SizedBox(height: 6),
                       Row(
                         children: [
-                          const Icon(Icons.check_circle,
-                              size: 16, color: Colors.green),
+                          const Icon(
+                            Icons.check_circle,
+                            size: 16,
+                            color: Colors.green,
+                          ),
                           const SizedBox(width: 8),
                           Text(
                             'Intentos exitosos: ${sessionData.totalExitosas}',

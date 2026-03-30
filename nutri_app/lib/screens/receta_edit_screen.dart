@@ -2,19 +2,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:image/image.dart' as img;
 import 'dart:convert';
 import 'dart:io';
-import 'package:image/image.dart' as img;
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../services/thumbnail_generator.dart';
 import '../models/receta.dart';
 import '../models/receta_documento.dart';
 import '../models/paciente.dart';
 import '../widgets/unsaved_changes_dialog.dart';
 import '../widgets/image_viewer_dialog.dart';
+import '../widgets/paste_image_dialog.dart';
 
 class RecetaEditScreen extends StatefulWidget {
   const RecetaEditScreen({super.key});
@@ -26,6 +29,22 @@ class RecetaEditScreen extends StatefulWidget {
 class _RecetaEditScreenState extends State<RecetaEditScreen> {
   static const MethodChannel _externalUrlChannel =
       MethodChannel('nutri_app/external_url');
+  static const String _prefsCategoriasSearchVisible =
+      'receta_edit_categorias_search_visible';
+  static const String _prefsCategoriasExpanded =
+      'receta_edit_card_categorias_expanded';
+  static const String _prefsIngredientesExpanded =
+      'receta_edit_card_ingredientes_expanded';
+  static const String _prefsPortadaExpanded =
+      'receta_edit_card_portada_expanded';
+  static const String _prefsPeriodoExpanded =
+      'receta_edit_card_periodo_expanded';
+  static const String _prefsActivoPortadaExpanded =
+      'receta_edit_card_activo_portada_expanded';
+  static const String _prefsPacientesExpanded =
+      'receta_edit_card_pacientes_expanded';
+  static const String _prefsDocumentosExpanded =
+      'receta_edit_card_documentos_expanded';
 
   final _formKey = GlobalKey<FormState>();
   late Receta _receta;
@@ -48,6 +67,14 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
   bool _categoriasLoading = false;
   List<Map<String, dynamic>> _categoriasCatalogo = [];
   List<int> _selectedCategoriaIds = [];
+  List<String> _pendingPrefillCategoriaNames = [];
+  bool _categoriasExpanded = true;
+  bool _ingredientesExpanded = true;
+  bool _imagenPortadaExpanded = true;
+  bool _periodoExpanded = true;
+  bool _activoPortadaExpanded = true;
+  bool _pacientesExpanded = true;
+  bool _documentosExpanded = true;
 
   Uint8List? _imagenPortadaBytes;
   String? _imagenPortadaNombre;
@@ -61,6 +88,8 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
     if (_isInitialized) return;
     _isInitialized = true;
 
+    await _loadCardsExpandedState();
+
     final args = ModalRoute.of(context)?.settings.arguments;
     if (args != null && args is Receta) {
       _receta = args;
@@ -68,6 +97,35 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
 
       // Cargar la receta completa desde la API para obtener imagen_portada
       await _loadRecetaCompleta(_receta.codigo!);
+    } else if (args is Map<String, dynamic>) {
+      _receta = Receta(
+        titulo: '',
+        texto: '',
+        activo: 'S',
+        mostrarPortada: 'N',
+        visibleParaTodos: 'S',
+      );
+      _isNew = true;
+      _selectedCategoriaIds = [];
+
+      _tituloController.text = (args['prefill_titulo'] ?? '').toString();
+      _textoController.text = (args['prefill_texto'] ?? '').toString();
+      final categoryNames = args['prefill_categoria_names'];
+      if (categoryNames is List) {
+        _pendingPrefillCategoriaNames = categoryNames
+            .map((item) => item.toString().trim())
+            .where((item) => item.isNotEmpty)
+            .toList(growable: false);
+      }
+      final maybeImage = args['prefill_image_bytes'];
+      if (maybeImage is Uint8List && maybeImage.isNotEmpty) {
+        _imagenPortadaBytes = maybeImage;
+        _imagenPortadaNombre = 'clipboard';
+        _imagenMiniaturaBytes = _generateThumbnail(maybeImage) ?? maybeImage;
+      }
+
+      _loadPacientes();
+      _loadCategorias();
     } else {
       _receta = Receta(
         titulo: '',
@@ -81,6 +139,32 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
       _loadPacientes();
       _loadCategorias();
     }
+  }
+
+  Future<void> _loadCardsExpandedState() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _categoriasExpanded = prefs.getBool(_prefsCategoriasExpanded) ?? true;
+      _ingredientesExpanded = prefs.getBool(_prefsIngredientesExpanded) ?? true;
+      _imagenPortadaExpanded = prefs.getBool(_prefsPortadaExpanded) ?? true;
+      _periodoExpanded = prefs.getBool(_prefsPeriodoExpanded) ?? true;
+      _activoPortadaExpanded =
+          prefs.getBool(_prefsActivoPortadaExpanded) ?? true;
+      _pacientesExpanded = prefs.getBool(_prefsPacientesExpanded) ?? true;
+      _documentosExpanded = prefs.getBool(_prefsDocumentosExpanded) ?? true;
+    });
+  }
+
+  Future<void> _saveCardsExpandedState() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_prefsCategoriasExpanded, _categoriasExpanded);
+    await prefs.setBool(_prefsIngredientesExpanded, _ingredientesExpanded);
+    await prefs.setBool(_prefsPortadaExpanded, _imagenPortadaExpanded);
+    await prefs.setBool(_prefsPeriodoExpanded, _periodoExpanded);
+    await prefs.setBool(_prefsActivoPortadaExpanded, _activoPortadaExpanded);
+    await prefs.setBool(_prefsPacientesExpanded, _pacientesExpanded);
+    await prefs.setBool(_prefsDocumentosExpanded, _documentosExpanded);
   }
 
   Future<void> _loadRecetaCompleta(int codigo) async {
@@ -144,10 +228,22 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
       final response = await apiService.get('api/recetas.php?categorias=1');
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
+        final categorias =
+            data.map((item) => Map<String, dynamic>.from(item)).toList();
+        final resolvedIds = _resolveCategoriaIdsByName(
+          categorias,
+          _pendingPrefillCategoriaNames,
+        );
         setState(() {
-          _categoriasCatalogo =
-              data.map((item) => Map<String, dynamic>.from(item)).toList();
+          _categoriasCatalogo = categorias;
+          if (resolvedIds.isNotEmpty) {
+            _selectedCategoriaIds = {
+              ..._selectedCategoriaIds,
+              ...resolvedIds,
+            }.toList(growable: false);
+          }
         });
+        _pendingPrefillCategoriaNames = [];
       }
     } finally {
       if (mounted) {
@@ -156,6 +252,38 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
         });
       }
     }
+  }
+
+  List<int> _resolveCategoriaIdsByName(
+    List<Map<String, dynamic>> catalogo,
+    List<String> nombres,
+  ) {
+    if (nombres.isEmpty) {
+      return const <int>[];
+    }
+
+    final normalizedTargets = nombres
+        .map(_normalizeCategoryName)
+        .where((name) => name.isNotEmpty)
+        .toSet();
+    if (normalizedTargets.isEmpty) {
+      return const <int>[];
+    }
+
+    final matches = <int>[];
+    for (final categoria in catalogo) {
+      final codigo = int.tryParse((categoria['codigo'] ?? '').toString());
+      final nombre =
+          _normalizeCategoryName((categoria['nombre'] ?? '').toString());
+      if (codigo != null && normalizedTargets.contains(nombre)) {
+        matches.add(codigo);
+      }
+    }
+    return matches;
+  }
+
+  String _normalizeCategoryName(String value) {
+    return value.trim().toLowerCase();
   }
 
   Future<Map<String, dynamic>?> _createCategoria(String nombre) async {
@@ -179,8 +307,10 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
   }
 
   Future<void> _showCategoriasDialog() async {
+    final prefs = await SharedPreferences.getInstance();
     final searchController = TextEditingController();
     final newController = TextEditingController();
+    bool showSearch = prefs.getBool(_prefsCategoriasSearchVisible) ?? true;
     List<int> tempSelected = List<int>.from(_selectedCategoriaIds);
     try {
       await showDialog(
@@ -195,21 +325,91 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
             }).toList();
 
             return AlertDialog(
-              title: const Text('Categorias de la receta'),
+              titlePadding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+              title: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Categorías de la receta',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () {
+                      final nextValue = !showSearch;
+                      setStateDialog(() {
+                        showSearch = nextValue;
+                        if (!showSearch && searchController.text.isNotEmpty) {
+                          searchController.clear();
+                        }
+                      });
+                      prefs.setBool(_prefsCategoriasSearchVisible, nextValue);
+                    },
+                    icon: Icon(showSearch ? Icons.search_off : Icons.search),
+                    tooltip:
+                        showSearch ? 'Ocultar búsqueda' : 'Mostrar búsqueda',
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                    tooltip: 'Cerrar',
+                    style: IconButton.styleFrom(
+                      shape: const CircleBorder(),
+                      minimumSize: const Size(32, 32),
+                      padding: EdgeInsets.zero,
+                    ),
+                  ),
+                ],
+              ),
               content: SizedBox(
                 width: double.maxFinite,
                 height: MediaQuery.of(context).size.height * 0.7,
                 child: Column(
                   children: [
-                    TextField(
-                      controller: searchController,
-                      decoration: const InputDecoration(
-                        labelText: 'Buscar categoria',
-                        prefixIcon: Icon(Icons.search),
+                    if (showSearch) ...[
+                      TextField(
+                        controller: searchController,
+                        decoration: InputDecoration(
+                          hintText: 'Buscar categoría',
+                          prefixIcon: IconButton(
+                            tooltip: searchController.text.isNotEmpty
+                                ? 'Limpiar búsqueda'
+                                : 'Buscar',
+                            onPressed: searchController.text.isNotEmpty
+                                ? () {
+                                    searchController.clear();
+                                    setStateDialog(() {});
+                                  }
+                                : null,
+                            icon: Icon(
+                              searchController.text.isNotEmpty
+                                  ? Icons.clear
+                                  : Icons.search,
+                            ),
+                          ),
+                          suffixIcon: IconButton(
+                            tooltip: 'Ocultar búsqueda',
+                            onPressed: () {
+                              setStateDialog(() {
+                                showSearch = false;
+                                if (searchController.text.isNotEmpty) {
+                                  searchController.clear();
+                                }
+                              });
+                              prefs.setBool(
+                                _prefsCategoriasSearchVisible,
+                                false,
+                              );
+                            },
+                            icon: const Icon(Icons.visibility_off_outlined),
+                          ),
+                          border: const OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        onChanged: (_) => setStateDialog(() {}),
                       ),
-                      onChanged: (_) => setStateDialog(() {}),
-                    ),
-                    const SizedBox(height: 12),
+                      const SizedBox(height: 12),
+                    ],
                     Expanded(
                       child: _categoriasLoading
                           ? const Center(
@@ -248,7 +448,7 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
                           child: TextField(
                             controller: newController,
                             decoration: const InputDecoration(
-                              labelText: 'Nueva categoria',
+                              labelText: 'Nueva categoría',
                             ),
                           ),
                         ),
@@ -278,10 +478,6 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
                 ),
               ),
               actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancelar'),
-                ),
                 ElevatedButton(
                   onPressed: () {
                     setState(() {
@@ -289,7 +485,32 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
                     });
                     Navigator.pop(context);
                   },
-                  child: const Text('Aplicar'),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('Aplicar'),
+                      const SizedBox(width: 8),
+                      Container(
+                        width: 20,
+                        height: 20,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: tempSelected.isNotEmpty
+                              ? Colors.blue
+                              : Colors.grey,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          '${tempSelected.length}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             );
@@ -337,6 +558,7 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
           SnackBar(
             content: Text('Error al cargar pacientes: ${e.toString()}'),
             backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
           ),
         );
       }
@@ -384,7 +606,8 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
               content:
-                  Text('Error al cargar pacientes asignados: ${e.toString()}')),
+                  Text('Error al cargar pacientes asignados: ${e.toString()}'),
+              behavior: SnackBarBehavior.floating),
         );
       }
     }
@@ -422,6 +645,7 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
             content: Text(
               'No hay imágenes guardadas para insertar. Guarda primero las imágenes adjuntas.',
             ),
+            behavior: SnackBarBehavior.floating,
           ),
         );
       }
@@ -507,6 +731,7 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
             content: Text(
               'No hay documentos guardados para insertar. Guarda primero documentos adjuntos.',
             ),
+            behavior: SnackBarBehavior.floating,
           ),
         );
       }
@@ -563,6 +788,7 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
             content: Text(
               'No hay enlaces guardados para insertar. Guarda primero enlaces adjuntos.',
             ),
+            behavior: SnackBarBehavior.floating,
           ),
         );
       }
@@ -626,7 +852,9 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Insertado $token')),
+        SnackBar(
+            content: Text('Insertado $token'),
+            behavior: SnackBarBehavior.floating),
       );
     }
   }
@@ -634,27 +862,7 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
   /// Generate a thumbnail from the full image
   /// Target size: 200x200 pixels, JPEG quality 85%
   Uint8List? _generateThumbnail(Uint8List imageBytes) {
-    try {
-      // Decode the image
-      img.Image? image = img.decodeImage(imageBytes);
-      if (image == null) return null;
-
-      // Calculate thumbnail size maintaining aspect ratio
-      const int maxSize = 200;
-      img.Image thumbnail;
-
-      if (image.width > image.height) {
-        thumbnail = img.copyResize(image, width: maxSize);
-      } else {
-        thumbnail = img.copyResize(image, height: maxSize);
-      }
-
-      // Encode as JPEG with 85% quality
-      return Uint8List.fromList(img.encodeJpg(thumbnail, quality: 85));
-    } catch (e) {
-      // debugPrint('Error generating thumbnail: $e');
-      return null;
-    }
+    return ThumbnailGenerator.generateThumbnail(imageBytes);
   }
 
   Future<void> _pickPortada() async {
@@ -690,9 +898,37 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
         SnackBar(
           content: Text('Error al seleccionar imagen: ${e.toString()}'),
           backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
         ),
       );
     }
+  }
+
+  Future<void> _pastePortadaImage() async {
+    final bytes = await showPasteImageDialog(
+      context,
+      title: 'Pegar imagen',
+      description:
+          'Genera la imagen en formato base64 o copiala directamente al portapapeles y pulsa en pegar para agregarla a la receta.',
+    );
+    if (bytes == null) return;
+
+    setState(() {
+      _imagenPortadaBytes = bytes;
+      _imagenPortadaNombre = 'base64';
+      _imagenMiniaturaBytes =
+          ThumbnailGenerator.generateThumbnail(bytes) ?? bytes;
+    });
+    _markDirty();
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Imagen aplicada a la receta.'),
+        backgroundColor: Colors.green,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   void _showMenuAtWidget(BuildContext context) {
@@ -715,11 +951,23 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
           child: Text('Cambiar imagen'),
         ),
       );
+      menuOptions.add(
+        const PopupMenuItem(
+          value: 'paste',
+          child: Text('Pegar imagen'),
+        ),
+      );
     } else {
       menuOptions.add(
         const PopupMenuItem(
           value: 'add',
           child: Text('Añadir imagen'),
+        ),
+      );
+      menuOptions.add(
+        const PopupMenuItem(
+          value: 'paste',
+          child: Text('Pegar imagen'),
         ),
       );
     }
@@ -738,6 +986,8 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
         _removeImage();
       } else if (value == 'change' || value == 'add') {
         _pickPortada();
+      } else if (value == 'paste') {
+        _pastePortadaImage();
       }
     });
   }
@@ -750,7 +1000,7 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
       base64Image: base64Encode(_imagenPortadaBytes!),
       title: _tituloController.text.isNotEmpty
           ? _tituloController.text
-          : 'Imagen de portada',
+          : 'Portada',
     );
   }
 
@@ -776,7 +1026,9 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
     if (raw.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Documento no disponible')),
+          const SnackBar(
+              content: Text('Documento no disponible'),
+              behavior: SnackBarBehavior.floating),
         );
       }
       return;
@@ -805,14 +1057,18 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
       if (result.type != ResultType.done && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('Error al abrir documento: ${result.message}')),
+              content: Text('Error al abrir documento: ${result.message}'),
+              behavior: SnackBarBehavior.floating),
         );
       }
     } catch (e) {
       if (mounted) {
         final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al abrir documento. $errorMessage')),
+          SnackBar(
+            content: Text('Error al abrir documento. $errorMessage'),
+            behavior: SnackBarBehavior.floating,
+          ),
         );
       }
     }
@@ -863,7 +1119,9 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
     if ((imageBase64 ?? '').trim().isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Imagen no disponible')),
+          const SnackBar(
+              content: Text('Imagen no disponible'),
+              behavior: SnackBarBehavior.floating),
         );
       }
       return;
@@ -933,13 +1191,15 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
           // Si ya existe la receta, guardar todas en BD
           int savedCount = 0;
           for (var item in items) {
-            final success = await _saveDocumento(item, null, showMessage: false);
+            final success =
+                await _saveDocumento(item, null, showMessage: false);
             if (success) savedCount++;
           }
           if (savedCount > 0) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                  content: Text('$savedCount imagen${savedCount == 1 ? '' : 'es'} agregada${savedCount == 1 ? '' : 's'}')),
+                  content: Text(
+                      '$savedCount imagen${savedCount == 1 ? '' : 'es'} agregada${savedCount == 1 ? '' : 's'}')),
             );
             _loadDocumentos();
           }
@@ -988,9 +1248,8 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
   }
 
   Future<bool> _saveDocumento(
-    Map<String, dynamic> data,
-    RecetaDocumento? existingDoc,
-    {bool showMessage = true}) async {
+      Map<String, dynamic> data, RecetaDocumento? existingDoc,
+      {bool showMessage = true}) async {
     try {
       final authService = Provider.of<AuthService>(context, listen: false);
       final apiService = Provider.of<ApiService>(context, listen: false);
@@ -1057,7 +1316,9 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
 
       if (response.statusCode == 200) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Documento eliminado')),
+          const SnackBar(
+              content: Text('Documento eliminado'),
+              behavior: SnackBarBehavior.floating),
         );
         _loadDocumentos();
       }
@@ -1067,6 +1328,7 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
         SnackBar(
           content: Text('Error al eliminar documento. $errorMessage'),
           backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
         ),
       );
     }
@@ -1340,6 +1602,148 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
     }
   }
 
+  String _formatDateLabel(DateTime? date, {String emptyLabel = 'Sin fecha'}) {
+    if (date == null) {
+      return emptyLabel;
+    }
+    return '${date.day}/${date.month}/${date.year}';
+  }
+
+  Widget _buildCountBadge(
+    int count, {
+    Color activeColor = Colors.green,
+    Color inactiveColor = Colors.grey,
+  }) {
+    return Container(
+      width: 20,
+      height: 20,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: count > 0 ? activeColor : inactiveColor,
+        shape: BoxShape.circle,
+      ),
+      child: Text(
+        '$count',
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCountBoxBadge(
+    int count, {
+    Color activeColor = Colors.green,
+    Color inactiveColor = Colors.grey,
+  }) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 32),
+      height: 22,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: count > 0 ? activeColor : inactiveColor,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        '$count',
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusTag(String label, bool active) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: active ? Colors.green : Colors.grey,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCollapsibleCard({
+    required String title,
+    String? subtitle,
+    required bool expanded,
+    required VoidCallback onToggle,
+    required Widget child,
+    List<Widget> badges = const [],
+    List<Widget> actions = const [],
+  }) {
+    return Card(
+      child: Column(
+        children: [
+          InkWell(
+            onTap: onToggle,
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        if (subtitle != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            subtitle,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  ...badges,
+                  if (badges.isNotEmpty) const SizedBox(width: 8),
+                  ...actions,
+                  IconButton(
+                    onPressed: onToggle,
+                    icon: Icon(
+                      expanded ? Icons.expand_less : Icons.expand_more,
+                    ),
+                    tooltip: expanded ? 'Plegar' : 'Desplegar',
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (expanded) const Divider(height: 1),
+          if (expanded)
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: child,
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return WillPopScope(
@@ -1384,6 +1788,8 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
                   hintText: 'Ej: Ensalada César, Pasta Carbonara',
                   border: OutlineInputBorder(),
                 ),
+                minLines: 2,
+                maxLines: 2,
                 validator: (value) {
                   if (value == null || value.isEmpty) {
                     return 'El título es obligatorio';
@@ -1393,660 +1799,723 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
               ),
               const SizedBox(height: 16),
 
-              // Categorias
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Categorias',
-                            style: TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.bold),
-                          ),
-                          IconButton(
-                            onPressed: _showCategoriasDialog,
-                            icon: const Icon(Icons.category),
-                            iconSize: 30,
-                            tooltip: 'Seleccionar categorias',
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      if (_selectedCategoriaIds.isEmpty)
-                        Text(
-                          'Sin categorias seleccionadas',
-                          style: TextStyle(color: Colors.grey[600]),
-                        )
-                      else
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: _selectedCategoriaIds.map((id) {
-                            final match = _categoriasCatalogo.firstWhere(
-                              (cat) =>
-                                  int.parse(cat['codigo'].toString()) == id,
-                              orElse: () => {'nombre': 'Categoría $id'},
-                            );
-                            return Chip(
-                                label: Text(match['nombre'].toString()));
-                          }).toList(),
-                        ),
-                    ],
+              _buildCollapsibleCard(
+                title: 'Categorías',
+                expanded: _categoriasExpanded,
+                onToggle: () {
+                  setState(() {
+                    _categoriasExpanded = !_categoriasExpanded;
+                  });
+                  _saveCardsExpandedState();
+                },
+                badges: [
+                  _buildCountBadge(_selectedCategoriaIds.length),
+                ],
+                actions: [
+                  IconButton(
+                    onPressed: _showCategoriasDialog,
+                    icon: const Icon(Icons.category),
+                    tooltip: 'Seleccionar categorías',
                   ),
+                ],
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_selectedCategoriaIds.isEmpty)
+                      Text(
+                        'Sin categorías seleccionadas',
+                        style: TextStyle(color: Colors.grey[600]),
+                      )
+                    else
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _selectedCategoriaIds.map((id) {
+                          final match = _categoriasCatalogo.firstWhere(
+                            (cat) => int.parse(cat['codigo'].toString()) == id,
+                            orElse: () => {'nombre': 'Categoría $id'},
+                          );
+                          return Chip(
+                            label: Text(match['nombre'].toString()),
+                          );
+                        }).toList(),
+                      ),
+                  ],
                 ),
               ),
               const SizedBox(height: 16),
 
-              // Texto (ingredientes y preparación)
-              TextFormField(
-                controller: _textoController,
-                decoration: const InputDecoration(
-                  labelText: 'Ingredientes y preparación *',
-                  hintText: 'Describe los ingredientes y pasos de preparación',
-                  border: OutlineInputBorder(),
-                  alignLabelWithHint: true,
-                ),
-                maxLines: 12,
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Los ingredientes y preparación son obligatorios';
-                  }
-                  return null;
+              _buildCollapsibleCard(
+                title: 'Preparación',
+                expanded: _ingredientesExpanded,
+                onToggle: () {
+                  setState(() {
+                    _ingredientesExpanded = !_ingredientesExpanded;
+                  });
+                  _saveCardsExpandedState();
                 },
-              ),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.center,
-                child: Wrap(
-                  alignment: WrapAlignment.center,
-                  spacing: 8,
+                badges: [
+                  _buildCountBoxBadge(_textoController.text.length),
+                ],
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    OutlinedButton.icon(
-                      onPressed: _insertImageTokenAtCursor,
-                      icon: const Icon(Icons.image_outlined),
-                      label: const Text('Img'),
+                    TextFormField(
+                      controller: _textoController,
+                      decoration: const InputDecoration(
+                        labelText: 'Preparación',
+                        hintText:
+                            'Describe los ingredientes y pasos de preparación',
+                        border: OutlineInputBorder(),
+                        alignLabelWithHint: true,
+                      ),
+                      minLines: 12,
+                      maxLines: 16,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Los ingredientes y preparación son obligatorios';
+                        }
+                        return null;
+                      },
+                      onChanged: (_) {
+                        setState(() {});
+                      },
                     ),
-                    OutlinedButton.icon(
-                      onPressed: _insertDocumentoTokenAtCursor,
-                      icon: const Icon(Icons.insert_drive_file_outlined),
-                      label: const Text('Doc'),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.center,
+                      child: Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: _insertImageTokenAtCursor,
+                            icon: const Icon(Icons.image_outlined),
+                            label: const Text('Img'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: _insertDocumentoTokenAtCursor,
+                            icon: const Icon(Icons.insert_drive_file_outlined),
+                            label: const Text('Doc'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: _insertEnlaceTokenAtCursor,
+                            icon: const Icon(Icons.link_outlined),
+                            label: const Text('Enlace'),
+                          ),
+                        ],
+                      ),
                     ),
-                    OutlinedButton.icon(
-                      onPressed: _insertEnlaceTokenAtCursor,
-                      icon: const Icon(Icons.link_outlined),
-                      label: const Text('Enlace'),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Marcadores: [[img:id]], [[documento:id]] y [[enlace:id]].',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 4),
-              Text(
-                'Marcadores: [[img:id]], [[documento:id]] y [[enlace:id]].',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey[600],
-                ),
-              ),
               const SizedBox(height: 16),
 
-              // Imagen de portada
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Imagen de portada',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 12),
-                      Center(
-                        child: Builder(
-                          builder: (BuildContext context) {
-                            return GestureDetector(
-                              onTap: () {
-                                if (_imagenPortadaBytes != null) {
-                                  _viewImage();
-                                } else {
-                                  _showMenuAtWidget(context);
-                                }
-                              },
-                              onLongPress: () {
+              _buildCollapsibleCard(
+                title: 'Portada',
+                subtitle: _imagenPortadaBytes != null
+                    ? (_imagenPortadaNombre ?? 'Imagen seleccionada')
+                    : 'Sin imagen',
+                expanded: _imagenPortadaExpanded,
+                onToggle: () {
+                  setState(() {
+                    _imagenPortadaExpanded = !_imagenPortadaExpanded;
+                  });
+                  _saveCardsExpandedState();
+                },
+                actions: [
+                  IconButton(
+                    onPressed: _pickPortada,
+                    icon: const Icon(Icons.add_photo_alternate_outlined),
+                    tooltip: 'Añadir imagen',
+                  ),
+                  IconButton(
+                    onPressed: _pastePortadaImage,
+                    icon: const Icon(Icons.content_paste_rounded),
+                    tooltip: 'Pegar imagen',
+                  ),
+                  if (_imagenPortadaBytes != null)
+                    IconButton(
+                      onPressed: () {
+                        setState(() {
+                          _imagenPortadaBytes = null;
+                          _imagenPortadaNombre = null;
+                          _imagenMiniaturaBytes = null;
+                        });
+                        _markDirty();
+                      },
+                      icon: const Icon(Icons.delete_outline),
+                      tooltip: 'Eliminar imagen',
+                    ),
+                ],
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Builder(
+                        builder: (BuildContext context) {
+                          return GestureDetector(
+                            onTap: () {
+                              if (_imagenPortadaBytes != null) {
+                                _viewImage();
+                              } else {
                                 _showMenuAtWidget(context);
-                              },
-                              child: Container(
-                                width: 100,
-                                height: 100,
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: Colors.grey[300]!,
-                                    width: 2,
-                                  ),
-                                ),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(10),
-                                  child: _imagenMiniaturaBytes != null
-                                      ? Image.memory(
-                                          _imagenMiniaturaBytes!,
-                                          fit: BoxFit.cover,
-                                        )
-                                      : _imagenPortadaBytes != null
-                                          ? Image.memory(
-                                              _imagenPortadaBytes!,
-                                              fit: BoxFit.cover,
-                                            )
-                                          : Container(
-                                              color: Colors.grey[200],
-                                              child: Column(
-                                                mainAxisAlignment:
-                                                    MainAxisAlignment.center,
-                                                children: [
-                                                  Icon(
-                                                    Icons.restaurant_menu,
-                                                    size: 64,
-                                                    color: Colors.grey[400],
-                                                  ),
-                                                  const SizedBox(height: 8),
-                                                  Text(
-                                                    'Sin imagen',
-                                                    style: TextStyle(
-                                                      color: Colors.grey[600],
-                                                      fontSize: 14,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
+                              }
+                            },
+                            onLongPress: () {
+                              _showMenuAtWidget(context);
+                            },
+                            child: Container(
+                              width: 100,
+                              height: 100,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: Colors.grey[300]!,
+                                  width: 2,
                                 ),
                               ),
-                            );
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Center(
-                        child: Text(
-                          _imagenPortadaBytes != null
-                              ? 'Toca para ver • Mantén pulsado para opciones'
-                              : 'Toca para añadir imagen',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[600],
-                            fontStyle: FontStyle.italic,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Fechas
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Período de visualización',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 8),
-                      ListTile(
-                        title: const Text('Fecha inicio'),
-                        subtitle: Text(_fechaInicio != null
-                            ? '${_fechaInicio!.day}/${_fechaInicio!.month}/${_fechaInicio!.year}'
-                            : 'Sin fecha'),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.calendar_today),
-                              onPressed: () async {
-                                final date = await showDatePicker(
-                                  context: context,
-                                  initialDate: _fechaInicio ?? DateTime.now(),
-                                  firstDate: DateTime(2020),
-                                  lastDate: DateTime(2030),
-                                );
-                                if (date != null) {
-                                  setState(() {
-                                    _fechaInicio = date;
-                                  });
-                                }
-                              },
-                            ),
-                            if (_fechaInicio != null)
-                              IconButton(
-                                icon: const Icon(Icons.clear),
-                                onPressed: () {
-                                  setState(() {
-                                    _fechaInicio = null;
-                                  });
-                                },
-                              ),
-                          ],
-                        ),
-                      ),
-                      ListTile(
-                        title: const Text('Fecha fin'),
-                        subtitle: Text(_fechaFin != null
-                            ? '${_fechaFin!.day}/${_fechaFin!.month}/${_fechaFin!.year}'
-                            : 'Sin fecha'),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.calendar_today),
-                              onPressed: () async {
-                                final date = await showDatePicker(
-                                  context: context,
-                                  initialDate: _fechaFin ?? DateTime.now(),
-                                  firstDate: DateTime(2020),
-                                  lastDate: DateTime(2030),
-                                );
-                                if (date != null) {
-                                  setState(() {
-                                    _fechaFin = date;
-                                  });
-                                }
-                              },
-                            ),
-                            if (_fechaFin != null)
-                              IconButton(
-                                icon: const Icon(Icons.clear),
-                                onPressed: () {
-                                  setState(() {
-                                    _fechaFin = null;
-                                  });
-                                },
-                              ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Opciones
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    children: [
-                      SwitchListTile(
-                        title: const Text('Activo'),
-                        value: _receta.activo == 'S',
-                        onChanged: (value) {
-                          setState(() {
-                            _receta.activo = value ? 'S' : 'N';
-                          });
-                        },
-                      ),
-                      SwitchListTile(
-                        title: const Text('Mostrar en portada'),
-                        subtitle:
-                            const Text('Aparecerá destacada en el inicio'),
-                        value: _receta.mostrarPortada == 'S',
-                        onChanged: (value) {
-                          setState(() {
-                            _receta.mostrarPortada = value ? 'S' : 'N';
-                          });
-                        },
-                      ),
-                      // Campos de fechas de portada (solo visibles si mostrarPortada está activo)
-                      if (_receta.mostrarPortada == 'S') ...[
-                        const Divider(),
-                        const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                          child: Text(
-                            'Período destacado en portada',
-                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-                          ),
-                        ),
-                        ListTile(
-                          title: const Text('Fecha inicio portada'),
-                          subtitle: Text(_fechaInicioPortada != null
-                              ? '${_fechaInicioPortada!.day}/${_fechaInicioPortada!.month}/${_fechaInicioPortada!.year}'
-                              : 'Sin fecha (siempre visible)'),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.calendar_today),
-                                onPressed: () async {
-                                  final date = await showDatePicker(
-                                    context: context,
-                                    initialDate: _fechaInicioPortada ?? DateTime.now(),
-                                    firstDate: DateTime(2020),
-                                    lastDate: DateTime(2100),
-                                  );
-                                  if (date != null) {
-                                    setState(() {
-                                      _fechaInicioPortada = date;
-                                    });
-                                  }
-                                },
-                              ),
-                              if (_fechaInicioPortada != null)
-                                IconButton(
-                                  icon: const Icon(Icons.clear),
-                                  onPressed: () {
-                                    setState(() {
-                                      _fechaInicioPortada = null;
-                                    });
-                                  },
-                                ),
-                            ],
-                          ),
-                        ),
-                        ListTile(
-                          title: const Text('Fecha fin portada'),
-                          subtitle: Text(_fechaFinPortada != null
-                              ? '${_fechaFinPortada!.day}/${_fechaFinPortada!.month}/${_fechaFinPortada!.year}'
-                              : 'Sin fecha (indefinido)'),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.calendar_today),
-                                onPressed: () async {
-                                  final date = await showDatePicker(
-                                    context: context,
-                                    initialDate: _fechaFinPortada ?? DateTime.now(),
-                                    firstDate: DateTime(2020),
-                                    lastDate: DateTime(2100),
-                                  );
-                                  if (date != null) {
-                                    setState(() {
-                                      _fechaFinPortada = date;
-                                    });
-                                  }
-                                },
-                              ),
-                              if (_fechaFinPortada != null)
-                                IconButton(
-                                  icon: const Icon(Icons.clear),
-                                  onPressed: () {
-                                    setState(() {
-                                      _fechaFinPortada = null;
-                                    });
-                                  },
-                                ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Pacientes
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Pacientes',
-                            style: TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.bold),
-                          ),
-                          Text(
-                            _visibleParaTodos
-                                ? 'Todos los pacientes'
-                                : '${_selectedPacientes.length} seleccionados',
-                            style: TextStyle(color: Colors.grey[600]),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      CheckboxListTile(
-                        title: const Text('Visible para todos los pacientes'),
-                        subtitle: const Text(
-                            'La receta aparecerá a todos sin necesidad de seleccionarlos'),
-                        value: _visibleParaTodos,
-                        onChanged: (value) {
-                          setState(() {
-                            _visibleParaTodos = value ?? true;
-                            if (_visibleParaTodos) {
-                              _selectedPacientes.clear();
-                            }
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 8),
-                      OutlinedButton.icon(
-                        onPressed: _visibleParaTodos
-                            ? null
-                            : () async {
-                                final result = await showDialog<List<int>>(
-                                  context: context,
-                                  builder: (context) => _PacientesSelector(
-                                    allPacientes: _allPacientes,
-                                    selectedPacientes: _selectedPacientes,
-                                  ),
-                                );
-
-                                if (result != null) {
-                                  setState(() {
-                                    _selectedPacientes = result;
-                                  });
-                                }
-                              },
-                        icon: const Icon(Icons.people),
-                        label: const Text('Seleccionar pacientes'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Documentos
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Documentos y URLs',
-                            style: TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.bold),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.add),
-                            onPressed: _addDocumento,
-                          ),
-                        ],
-                      ),
-                      if (_documentos.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.all(16.0),
-                          child: Text('No hay documentos'),
-                        )
-                      else
-                        ..._documentos.map((doc) {
-                          // Acortar URL o nombre de archivo si tiene más de 20 caracteres
-                          String segundaLinea = '';
-                          if (doc.tipo == 'url') {
-                            segundaLinea = doc.url ?? '';
-                          } else {
-                            segundaLinea = doc.nombre ?? '';
-                          }
-                          if (segundaLinea.length > 20) {
-                            segundaLinea =
-                                '${segundaLinea.substring(0, 20)}...';
-                          }
-
-                          return Card(
-                            margin: const EdgeInsets.symmetric(
-                                vertical: 4, horizontal: 0),
-                            child: ListTile(
-                              contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 4),
-                              leading: SizedBox(
-                                width: 50,
-                                height: 50,
-                                child: doc.tipo == 'imagen'
-                                    ? FutureBuilder<Uint8List?>(
-                                        future: _loadImageBytes(doc),
-                                        builder: (context, snapshot) {
-                                          if (snapshot.connectionState ==
-                                                  ConnectionState.waiting ||
-                                              !snapshot.hasData) {
-                                            return Container(
-                                              decoration: BoxDecoration(
-                                                color: Colors.grey[300],
-                                                borderRadius:
-                                                    BorderRadius.circular(4),
-                                              ),
-                                              child: const Icon(Icons.image,
-                                                  size: 30,
-                                                  color: Colors.grey),
-                                            );
-                                          }
-                                          return ClipRRect(
-                                            borderRadius:
-                                                BorderRadius.circular(4),
-                                            child: Image.memory(
-                                              snapshot.data!,
-                                              fit: BoxFit.cover,
-                                            ),
-                                          );
-                                        },
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: _imagenMiniaturaBytes != null
+                                    ? Image.memory(
+                                        _imagenMiniaturaBytes!,
+                                        fit: BoxFit.cover,
                                       )
-                                    : Container(
-                                        decoration: BoxDecoration(
-                                          color: doc.tipo == 'documento'
-                                              ? Colors.blue.withOpacity(0.1)
-                                              : _isYouTubeUrl(doc.url)
-                                                  ? Colors.red.withOpacity(0.1)
-                                                  : Colors.purple
-                                                      .withOpacity(0.1),
-                                          borderRadius:
-                                              BorderRadius.circular(4),
-                                        ),
-                                        child: Icon(
-                                          doc.tipo == 'documento'
-                                              ? Icons.file_present
-                                              : _isYouTubeUrl(doc.url)
-                                                  ? Icons.play_circle
-                                                  : Icons.link,
-                                          size: 30,
-                                          color: doc.tipo == 'documento'
-                                              ? Colors.blue
-                                              : _isYouTubeUrl(doc.url)
-                                                  ? Colors.red
-                                                  : Colors.purple,
-                                        ),
-                                      ),
-                              ),
-                              title: Text(
-                                doc.nombre ?? 'Sin nombre',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              subtitle: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    segundaLinea,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.grey[600],
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      if (doc.tipo == 'url')
-                                        IconButton(
-                                          icon: const Icon(Icons.open_in_browser,
-                                              size: 20),
-                                          color: Colors.blue,
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(),
-                                          onPressed: () => _openUrl(doc.url),
-                                          tooltip: 'Abrir URL',
-                                        )
-                                      else if (doc.tipo == 'imagen')
-                                        IconButton(
-                                          icon: const Icon(Icons.visibility,
-                                              size: 20),
-                                          color: Colors.teal,
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(),
-                                          onPressed: () => _openImagen(doc),
-                                          tooltip: 'Visualizar imagen',
-                                        )
-                                      else
-                                        IconButton(
-                                          icon: const Icon(Icons.download,
-                                              size: 20),
-                                          color: Colors.blue,
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(),
-                                          onPressed: () => _openDocumento(doc),
-                                          tooltip: 'Descargar',
-                                        ),
-                                      const SizedBox(width: 12),
-                                      IconButton(
-                                        icon: const Icon(Icons.edit, size: 20),
-                                        color: Colors.blue,
-                                        padding: EdgeInsets.zero,
-                                        constraints: const BoxConstraints(),
-                                        onPressed: () => _editDocumento(doc),
-                                        tooltip: 'Editar',
-                                      ),
-                                      const SizedBox(width: 12),
-                                      IconButton(
-                                        icon: const Icon(Icons.delete, size: 20),
-                                        color: Colors.red,
-                                        padding: EdgeInsets.zero,
-                                        constraints: const BoxConstraints(),
-                                        onPressed: () => _deleteDocumento(doc),
-                                        tooltip: 'Eliminar',
-                                      ),
-                                    ],
-                                  ),
-                                ],
+                                    : _imagenPortadaBytes != null
+                                        ? Image.memory(
+                                            _imagenPortadaBytes!,
+                                            fit: BoxFit.cover,
+                                          )
+                                        : Container(
+                                            color: Colors.grey[200],
+                                            child: Column(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                Icon(
+                                                  Icons.restaurant_menu,
+                                                  size: 64,
+                                                  color: Colors.grey[400],
+                                                ),
+                                                const SizedBox(height: 8),
+                                                Text(
+                                                  'Sin imagen',
+                                                  style: TextStyle(
+                                                    color: Colors.grey[600],
+                                                    fontSize: 14,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
                               ),
                             ),
                           );
-                        }),
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Center(
+                      child: Text(
+                        _imagenPortadaBytes != null
+                            ? 'Toca para ver • Mantén pulsado para opciones'
+                            : 'Toca para añadir imagen',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[600],
+                          fontStyle: FontStyle.italic,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              _buildCollapsibleCard(
+                title: 'Visualización',
+                subtitle:
+                    '${_formatDateLabel(_fechaInicio)} - ${_formatDateLabel(_fechaFin)}',
+                expanded: _periodoExpanded,
+                onToggle: () {
+                  setState(() {
+                    _periodoExpanded = !_periodoExpanded;
+                  });
+                  _saveCardsExpandedState();
+                },
+                child: Column(
+                  children: [
+                    ListTile(
+                      title: const Text('Fecha inicio'),
+                      subtitle: Text(_formatDateLabel(_fechaInicio)),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.calendar_today),
+                            onPressed: () async {
+                              final date = await showDatePicker(
+                                context: context,
+                                initialDate: _fechaInicio ?? DateTime.now(),
+                                firstDate: DateTime(2020),
+                                lastDate: DateTime(2030),
+                              );
+                              if (date != null) {
+                                setState(() {
+                                  _fechaInicio = date;
+                                });
+                              }
+                            },
+                          ),
+                          if (_fechaInicio != null)
+                            IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                setState(() {
+                                  _fechaInicio = null;
+                                });
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                    ListTile(
+                      title: const Text('Fecha fin'),
+                      subtitle: Text(_formatDateLabel(_fechaFin)),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.calendar_today),
+                            onPressed: () async {
+                              final date = await showDatePicker(
+                                context: context,
+                                initialDate: _fechaFin ?? DateTime.now(),
+                                firstDate: DateTime(2020),
+                                lastDate: DateTime(2030),
+                              );
+                              if (date != null) {
+                                setState(() {
+                                  _fechaFin = date;
+                                });
+                              }
+                            },
+                          ),
+                          if (_fechaFin != null)
+                            IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                setState(() {
+                                  _fechaFin = null;
+                                });
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              _buildCollapsibleCard(
+                title: 'Activo, Portada',
+                expanded: _activoPortadaExpanded,
+                onToggle: () {
+                  setState(() {
+                    _activoPortadaExpanded = !_activoPortadaExpanded;
+                  });
+                  _saveCardsExpandedState();
+                },
+                badges: [
+                  _buildStatusTag('A', _receta.activo == 'S'),
+                  const SizedBox(width: 6),
+                  _buildStatusTag('P', _receta.mostrarPortada == 'S'),
+                ],
+                child: Column(
+                  children: [
+                    SwitchListTile(
+                      title: const Text('Activo'),
+                      value: _receta.activo == 'S',
+                      onChanged: (value) {
+                        setState(() {
+                          _receta.activo = value ? 'S' : 'N';
+                        });
+                      },
+                    ),
+                    SwitchListTile(
+                      title: const Text('Mostrar en portada'),
+                      subtitle: const Text('Aparecerá destacada en el inicio'),
+                      value: _receta.mostrarPortada == 'S',
+                      onChanged: (value) {
+                        setState(() {
+                          _receta.mostrarPortada = value ? 'S' : 'N';
+                        });
+                      },
+                    ),
+                    if (_receta.mostrarPortada == 'S') ...[
+                      const Divider(),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(
+                            horizontal: 16.0, vertical: 8.0),
+                        child: Text(
+                          'Período destacado en portada',
+                          style: TextStyle(
+                              fontSize: 14, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                      ListTile(
+                        title: const Text('Fecha inicio portada'),
+                        subtitle: Text(
+                          _formatDateLabel(
+                            _fechaInicioPortada,
+                            emptyLabel: 'Sin fecha (siempre visible)',
+                          ),
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.calendar_today),
+                              onPressed: () async {
+                                final date = await showDatePicker(
+                                  context: context,
+                                  initialDate:
+                                      _fechaInicioPortada ?? DateTime.now(),
+                                  firstDate: DateTime(2020),
+                                  lastDate: DateTime(2100),
+                                );
+                                if (date != null) {
+                                  setState(() {
+                                    _fechaInicioPortada = date;
+                                  });
+                                }
+                              },
+                            ),
+                            if (_fechaInicioPortada != null)
+                              IconButton(
+                                icon: const Icon(Icons.clear),
+                                onPressed: () {
+                                  setState(() {
+                                    _fechaInicioPortada = null;
+                                  });
+                                },
+                              ),
+                          ],
+                        ),
+                      ),
+                      ListTile(
+                        title: const Text('Fecha fin portada'),
+                        subtitle: Text(
+                          _formatDateLabel(
+                            _fechaFinPortada,
+                            emptyLabel: 'Sin fecha (indefinido)',
+                          ),
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.calendar_today),
+                              onPressed: () async {
+                                final date = await showDatePicker(
+                                  context: context,
+                                  initialDate:
+                                      _fechaFinPortada ?? DateTime.now(),
+                                  firstDate: DateTime(2020),
+                                  lastDate: DateTime(2100),
+                                );
+                                if (date != null) {
+                                  setState(() {
+                                    _fechaFinPortada = date;
+                                  });
+                                }
+                              },
+                            ),
+                            if (_fechaFinPortada != null)
+                              IconButton(
+                                icon: const Icon(Icons.clear),
+                                onPressed: () {
+                                  setState(() {
+                                    _fechaFinPortada = null;
+                                  });
+                                },
+                              ),
+                          ],
+                        ),
+                      ),
                     ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              _buildCollapsibleCard(
+                title: 'Pacientes',
+                expanded: _pacientesExpanded,
+                onToggle: () {
+                  setState(() {
+                    _pacientesExpanded = !_pacientesExpanded;
+                  });
+                  _saveCardsExpandedState();
+                },
+                badges: [
+                  _buildCountBadge(_selectedPacientes.length),
+                  const SizedBox(width: 6),
+                  _buildStatusTag('Todos', _visibleParaTodos),
+                ],
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    CheckboxListTile(
+                      title: const Text('Visible para todos los pacientes'),
+                      subtitle: const Text(
+                          'La receta aparecerá a todos sin necesidad de seleccionarlos'),
+                      value: _visibleParaTodos,
+                      onChanged: (value) {
+                        setState(() {
+                          _visibleParaTodos = value ?? true;
+                          if (_visibleParaTodos) {
+                            _selectedPacientes.clear();
+                          }
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: _visibleParaTodos
+                          ? null
+                          : () async {
+                              final result = await showDialog<List<int>>(
+                                context: context,
+                                builder: (context) => _PacientesSelector(
+                                  allPacientes: _allPacientes,
+                                  selectedPacientes: _selectedPacientes,
+                                ),
+                              );
+
+                              if (result != null) {
+                                setState(() {
+                                  _selectedPacientes = result;
+                                });
+                              }
+                            },
+                      icon: const Icon(Icons.people),
+                      label: const Text('Seleccionar pacientes'),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              _buildCollapsibleCard(
+                title: 'Documentos, URL',
+                expanded: _documentosExpanded,
+                onToggle: () {
+                  setState(() {
+                    _documentosExpanded = !_documentosExpanded;
+                  });
+                  _saveCardsExpandedState();
+                },
+                badges: [
+                  _buildCountBadge(_documentos.length),
+                ],
+                actions: [
+                  IconButton(
+                    icon: const Icon(Icons.add),
+                    onPressed: _addDocumento,
+                    tooltip: 'Añadir documento/url',
                   ),
+                ],
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_documentos.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(16.0),
+                        child: Text('No hay documentos'),
+                      )
+                    else
+                      ..._documentos.map((doc) {
+                        // Acortar URL o nombre de archivo si tiene más de 20 caracteres
+                        String segundaLinea = '';
+                        if (doc.tipo == 'url') {
+                          segundaLinea = doc.url ?? '';
+                        } else {
+                          segundaLinea = doc.nombre ?? '';
+                        }
+                        if (segundaLinea.length > 20) {
+                          segundaLinea = '${segundaLinea.substring(0, 20)}...';
+                        }
+
+                        return Card(
+                          margin: const EdgeInsets.symmetric(
+                            vertical: 4,
+                            horizontal: 0,
+                          ),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            leading: SizedBox(
+                              width: 50,
+                              height: 50,
+                              child: doc.tipo == 'imagen'
+                                  ? FutureBuilder<Uint8List?>(
+                                      future: _loadImageBytes(doc),
+                                      builder: (context, snapshot) {
+                                        if (snapshot.connectionState ==
+                                                ConnectionState.waiting ||
+                                            !snapshot.hasData) {
+                                          return Container(
+                                            decoration: BoxDecoration(
+                                              color: Colors.grey[300],
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                            ),
+                                            child: const Icon(
+                                              Icons.image,
+                                              size: 30,
+                                              color: Colors.grey,
+                                            ),
+                                          );
+                                        }
+                                        return ClipRRect(
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                          child: Image.memory(
+                                            snapshot.data!,
+                                            fit: BoxFit.cover,
+                                          ),
+                                        );
+                                      },
+                                    )
+                                  : Container(
+                                      decoration: BoxDecoration(
+                                        color: doc.tipo == 'documento'
+                                            ? Colors.blue.withOpacity(0.1)
+                                            : _isYouTubeUrl(doc.url)
+                                                ? Colors.red.withOpacity(0.1)
+                                                : Colors.purple
+                                                    .withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: Icon(
+                                        doc.tipo == 'documento'
+                                            ? Icons.file_present
+                                            : _isYouTubeUrl(doc.url)
+                                                ? Icons.play_circle
+                                                : Icons.link,
+                                        size: 30,
+                                        color: doc.tipo == 'documento'
+                                            ? Colors.blue
+                                            : _isYouTubeUrl(doc.url)
+                                                ? Colors.red
+                                                : Colors.purple,
+                                      ),
+                                    ),
+                            ),
+                            title: Text(
+                              doc.nombre ?? 'Sin nombre',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const SizedBox(height: 4),
+                                Text(
+                                  segundaLinea,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey[600],
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (doc.tipo == 'url')
+                                      IconButton(
+                                        icon: const Icon(
+                                          Icons.open_in_browser,
+                                          size: 20,
+                                        ),
+                                        color: Colors.blue,
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                        onPressed: () => _openUrl(doc.url),
+                                        tooltip: 'Abrir URL',
+                                      )
+                                    else if (doc.tipo == 'imagen')
+                                      IconButton(
+                                        icon: const Icon(
+                                          Icons.visibility,
+                                          size: 20,
+                                        ),
+                                        color: Colors.teal,
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                        onPressed: () => _openImagen(doc),
+                                        tooltip: 'Visualizar imagen',
+                                      )
+                                    else
+                                      IconButton(
+                                        icon: const Icon(
+                                          Icons.download,
+                                          size: 20,
+                                        ),
+                                        color: Colors.blue,
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                        onPressed: () => _openDocumento(doc),
+                                        tooltip: 'Descargar',
+                                      ),
+                                    const SizedBox(width: 12),
+                                    IconButton(
+                                      icon: const Icon(Icons.edit, size: 20),
+                                      color: Colors.blue,
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(),
+                                      onPressed: () => _editDocumento(doc),
+                                      tooltip: 'Editar',
+                                    ),
+                                    const SizedBox(width: 12),
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.delete,
+                                        size: 20,
+                                      ),
+                                      color: Colors.red,
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(),
+                                      onPressed: () => _deleteDocumento(doc),
+                                      tooltip: 'Eliminar',
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+                  ],
                 ),
               ),
             ],
@@ -2079,13 +2548,50 @@ class _PacientesSelector extends StatefulWidget {
 }
 
 class _PacientesSelectorState extends State<_PacientesSelector> {
+  static const String _prefsPacientesSearchVisible =
+      'receta_edit_pacientes_search_visible';
+
   late List<int> _selected;
+  final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  bool _showSearch = true;
 
   @override
   void initState() {
     super.initState();
     _selected = List.from(widget.selectedPacientes);
+    _loadSearchVisibility();
+  }
+
+  Future<void> _loadSearchVisibility() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _showSearch = prefs.getBool(_prefsPacientesSearchVisible) ?? true;
+    });
+  }
+
+  Future<void> _setSearchVisibility(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_prefsPacientesSearchVisible, value);
+  }
+
+  void _toggleSearchVisibility() {
+    final nextValue = !_showSearch;
+    setState(() {
+      _showSearch = nextValue;
+      if (!_showSearch && _searchQuery.isNotEmpty) {
+        _searchController.clear();
+        _searchQuery = '';
+      }
+    });
+    _setSearchVisibility(nextValue);
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   @override
@@ -2097,24 +2603,73 @@ class _PacientesSelectorState extends State<_PacientesSelector> {
     }).toList();
 
     return AlertDialog(
-      title: const Text('Seleccionar pacientes'),
+      titlePadding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+      title: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'Seleccionar pacientes',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ),
+          IconButton(
+            onPressed: _toggleSearchVisibility,
+            icon: Icon(_showSearch ? Icons.search_off : Icons.search),
+            tooltip: _showSearch ? 'Ocultar búsqueda' : 'Mostrar búsqueda',
+          ),
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.close),
+            tooltip: 'Cerrar',
+            style: IconButton.styleFrom(
+              shape: const CircleBorder(),
+              minimumSize: const Size(32, 32),
+              padding: EdgeInsets.zero,
+            ),
+          ),
+        ],
+      ),
       content: SizedBox(
         width: double.maxFinite,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(
-              decoration: const InputDecoration(
-                labelText: 'Buscar',
-                prefixIcon: Icon(Icons.search),
+            if (_showSearch) ...[
+              TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: 'Buscar paciente',
+                  prefixIcon: IconButton(
+                    tooltip:
+                        _searchQuery.isNotEmpty ? 'Limpiar búsqueda' : 'Buscar',
+                    onPressed: _searchQuery.isNotEmpty
+                        ? () {
+                            _searchController.clear();
+                            setState(() {
+                              _searchQuery = '';
+                            });
+                          }
+                        : null,
+                    icon: Icon(
+                      _searchQuery.isNotEmpty ? Icons.clear : Icons.search,
+                    ),
+                  ),
+                  suffixIcon: IconButton(
+                    tooltip: 'Ocultar búsqueda',
+                    onPressed: _toggleSearchVisibility,
+                    icon: const Icon(Icons.visibility_off_outlined),
+                  ),
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                ),
+                onChanged: (value) {
+                  setState(() {
+                    _searchQuery = value.trim();
+                  });
+                },
               ),
-              onChanged: (value) {
-                setState(() {
-                  _searchQuery = value;
-                });
-              },
-            ),
-            const SizedBox(height: 8),
+              const SizedBox(height: 8),
+            ],
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
@@ -2168,13 +2723,32 @@ class _PacientesSelectorState extends State<_PacientesSelector> {
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancelar'),
-        ),
         ElevatedButton(
           onPressed: () => Navigator.pop(context, _selected),
-          child: const Text('Aceptar'),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Aplicar'),
+              const SizedBox(width: 8),
+              Container(
+                width: 20,
+                height: 20,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _selected.isNotEmpty ? Colors.blue : Colors.grey,
+                  shape: BoxShape.circle,
+                ),
+                child: Text(
+                  '${_selected.length}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     );

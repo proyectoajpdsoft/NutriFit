@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:nutri_app/models/usuario.dart';
 import 'package:nutri_app/screens/citas/citas_list_screen.dart';
 import 'package:nutri_app/screens/entrevistas/entrevistas_pacientes_list_screen.dart';
@@ -12,6 +12,7 @@ import 'package:nutri_app/screens/planes_nutricionales/planes_paciente_list_scre
 import 'package:nutri_app/screens/planes_fit/planes_fit_pacientes_list_screen.dart';
 import 'package:nutri_app/screens/planes_fit/planes_fit_paciente_list_screen.dart';
 import 'package:nutri_app/screens/planes_fit/plan_fit_ejercicios_catalog_screen.dart';
+import 'package:nutri_app/screens/alimentos/alimentos_screen.dart';
 import 'package:nutri_app/screens/revisiones/revisiones_pacientes_list_screen.dart';
 import 'package:nutri_app/screens/clientes/clientes_list_screen.dart';
 import 'package:nutri_app/screens/cobros/cobros_list_screen.dart';
@@ -19,7 +20,9 @@ import 'package:nutri_app/screens/usuarios/usuarios_list_screen.dart';
 import 'package:nutri_app/screens/contacto_nutricionista_screen.dart';
 import 'package:nutri_app/screens/chat_conversations_screen.dart';
 import 'package:nutri_app/screens/chat_screen.dart';
+import 'package:nutri_app/screens/premium_info_screen.dart';
 import 'package:nutri_app/screens/todo_list_screen.dart';
+import 'package:nutri_app/screens/entrenamientos_screen.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/widgets/restricted_access_dialog_helper.dart';
 import 'package:provider/provider.dart';
@@ -89,9 +92,13 @@ class AppDrawer extends StatelessWidget {
       userTypeLabel = 'Usuario administrador';
     } else if (authService.patientCode != null &&
         authService.patientCode!.isNotEmpty) {
-      userTypeLabel = 'Usuario paciente';
+      userTypeLabel = authService.isPremium
+          ? 'Usuario paciente Premium'
+          : 'Usuario paciente';
     } else {
-      userTypeLabel = 'Usuario registrado';
+      userTypeLabel = authService.isPremium
+          ? 'Usuario registrado Premium'
+          : 'Usuario registrado';
     }
 
     return Drawer(
@@ -134,14 +141,47 @@ class AppDrawer extends StatelessWidget {
                           fontSize: 12,
                         ),
                       ),
+                      if (authService.isPremium) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.shade400,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.workspace_premium,
+                                size: 14,
+                                color: Colors.black87,
+                              ),
+                              SizedBox(width: 6),
+                              Text(
+                                'PREMIUM',
+                                style: TextStyle(
+                                  color: Colors.black87,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.4,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
                 TextButton.icon(
                   onPressed: () {
                     Navigator.pop(context);
-                    final isPacienteOrGuest =
-                        userType == 'Paciente' || userType == 'Guest';
+                    final auth = context.read<AuthService>();
+                    final isPacienteOrGuest = auth.isPatientAreaUser;
                     Navigator.pushReplacementNamed(
                       context,
                       isPacienteOrGuest ? 'paciente_home' : 'home',
@@ -153,8 +193,10 @@ class AppDrawer extends StatelessWidget {
                     style: TextStyle(color: Colors.white, fontSize: 14),
                   ),
                   style: TextButton.styleFrom(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                   ),
                 ),
               ],
@@ -180,9 +222,11 @@ class AppDrawer extends StatelessWidget {
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => const PacientesListScreen()));
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const PacientesListScreen(),
+                  ),
+                );
               },
             ),
             ListTile(
@@ -191,9 +235,11 @@ class AppDrawer extends StatelessWidget {
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => const CitasListScreen()));
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const CitasListScreen(),
+                  ),
+                );
               },
             ),
             ListTile(
@@ -202,10 +248,11 @@ class AppDrawer extends StatelessWidget {
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) =>
-                            const RevisionesPacientesListScreen()));
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const RevisionesPacientesListScreen(),
+                  ),
+                );
               },
             ),
             ListTile(
@@ -214,10 +261,11 @@ class AppDrawer extends StatelessWidget {
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) =>
-                            const MedicionesPacientesListScreen()));
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const MedicionesPacientesListScreen(),
+                  ),
+                );
               },
             ),
             const Divider(),
@@ -227,10 +275,12 @@ class AppDrawer extends StatelessWidget {
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) =>
-                            const EntrevistasPacientesListScreen()));
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) =>
+                        const EntrevistasPacientesListScreen(),
+                  ),
+                );
               },
             ),
             ListTile(
@@ -239,10 +289,11 @@ class AppDrawer extends StatelessWidget {
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) =>
-                            const PlanesPacientesListScreen()));
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const PlanesPacientesListScreen(),
+                  ),
+                );
               },
             ),
             const Divider(),
@@ -252,10 +303,12 @@ class AppDrawer extends StatelessWidget {
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) =>
-                            const EntrevistasFitPacientesListScreen()));
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) =>
+                        const EntrevistasFitPacientesListScreen(),
+                  ),
+                );
               },
             ),
             ListTile(
@@ -264,22 +317,58 @@ class AppDrawer extends StatelessWidget {
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) =>
-                            const PlanesFitPacientesListScreen()));
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const PlanesFitPacientesListScreen(),
+                  ),
+                );
               },
             ),
             ListTile(
               leading: const Icon(Icons.sports_mma),
               title: const Text('Ejercicios'),
+              trailing: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade300,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Icon(
+                  Icons.workspace_premium,
+                  size: 13,
+                  color: Colors.black87,
+                ),
+              ),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) =>
-                            const PlanFitEjerciciosCatalogScreen()));
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) =>
+                        const PlanFitEjerciciosCatalogScreen(),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.play_circle_outline),
+              title: const Text('Vídeos Ejercicios'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/videos_ejercicios_admin');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.directions_run),
+              title: const Text('Actividades'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const EntrenamientosScreen(),
+                  ),
+                );
               },
             ),
             const Divider(),
@@ -298,9 +387,11 @@ class AppDrawer extends StatelessWidget {
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => const CobrosListScreen()));
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const CobrosListScreen(),
+                  ),
+                );
               },
             ),
             ListTile(
@@ -309,9 +400,11 @@ class AppDrawer extends StatelessWidget {
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => const ClientesListScreen()));
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ClientesListScreen(),
+                  ),
+                );
               },
             ),
             const Divider(),
@@ -329,6 +422,59 @@ class AppDrawer extends StatelessWidget {
               onTap: () {
                 Navigator.pop(context);
                 Navigator.pushNamed(context, '/recetas_list');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.swap_horiz_rounded),
+              title: const Text('Sustituciones'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/sustituciones_saludables_list');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.present_to_all_rounded),
+              title: const Text('Charlas y Seminarios'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/charlas_seminarios_list');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.workspace_premium),
+              title: const Text('Hazte Premium (vista)'),
+              onTap: () {
+                Navigator.pop(context);
+                Future.microtask(() => _showPremiumPreviewMenu(context));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.set_meal_outlined),
+              title: const Text('Alimentos'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const AlimentosScreen(),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.medication_outlined),
+              title: const Text('Suplementos'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/suplementos_list');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.science_outlined),
+              title: const Text('Aditivos alimentarios'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/aditivos_list');
               },
             ),
             ListTile(
@@ -354,9 +500,24 @@ class AppDrawer extends StatelessWidget {
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => const UsuariosListScreen()));
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const UsuariosListScreen(),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.checklist_outlined),
+              title: const Text('Tareas'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const TodoListScreen(),
+                  ),
+                );
               },
             ),
             const Divider(),
@@ -374,9 +535,7 @@ class AppDrawer extends StatelessWidget {
                 Navigator.pop(context);
                 Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (context) => const ChatScreen(),
-                  ),
+                  MaterialPageRoute(builder: (context) => const ChatScreen()),
                 );
               },
             ),
@@ -399,8 +558,10 @@ class AppDrawer extends StatelessWidget {
                 title: const Text('Editar Perfil'),
                 onTap: () {
                   Navigator.pop(context);
-                  final authService =
-                      Provider.of<AuthService>(context, listen: false);
+                  final authService = Provider.of<AuthService>(
+                    context,
+                    listen: false,
+                  );
                   final usuario = Usuario(
                     codigo: int.parse(authService.userCode ?? '0'),
                     nick: '', // Se obtendr├í del servidor si es necesario
@@ -421,8 +582,10 @@ class AppDrawer extends StatelessWidget {
               title: const Text('Planes Nutri'),
               onTap: () {
                 Navigator.pop(context);
-                final authService =
-                    Provider.of<AuthService>(context, listen: false);
+                final authService = Provider.of<AuthService>(
+                  context,
+                  listen: false,
+                );
                 final hasPatient = (authService.patientCode ?? '').isNotEmpty;
 
                 if (hasPatient) {
@@ -442,8 +605,10 @@ class AppDrawer extends StatelessWidget {
               title: const Text('Planes Fit'),
               onTap: () {
                 Navigator.pop(context);
-                final authService =
-                    Provider.of<AuthService>(context, listen: false);
+                final authService = Provider.of<AuthService>(
+                  context,
+                  listen: false,
+                );
                 final hasPatient = (authService.patientCode ?? '').isNotEmpty;
 
                 if (hasPatient) {
@@ -455,7 +620,9 @@ class AppDrawer extends StatelessWidget {
                   );
                 } else {
                   _showPlanesRestrictedDialog(
-                      context, 'Planes de Entrenamiento');
+                    context,
+                    'Planes de Entrenamiento',
+                  );
                 }
               },
             ),
@@ -465,14 +632,18 @@ class AppDrawer extends StatelessWidget {
               title: const Text('Recomendaciones'),
               onTap: () {
                 Navigator.pop(context);
-                final authService =
-                    Provider.of<AuthService>(context, listen: false);
+                final authService = Provider.of<AuthService>(
+                  context,
+                  listen: false,
+                );
                 final hasPatient = (authService.patientCode ?? '').isNotEmpty;
 
                 // Si no está registrado o no tiene paciente
                 if (authService.isGuestMode || !hasPatient) {
                   _showRecomendacionesRestrictedDialog(
-                      context, authService.isGuestMode);
+                    context,
+                    authService.isGuestMode,
+                  );
                 } else {
                   // Usuario con paciente: abrir pestaña Personales
                   Navigator.pushNamed(
@@ -496,11 +667,230 @@ class AppDrawer extends StatelessWidget {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.play_circle_outline),
+              title: const Text('Vídeos Ejercicios'),
+              trailing: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade300,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Icon(
+                  Icons.workspace_premium,
+                  size: 13,
+                  color: Colors.black87,
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                final auth = Provider.of<AuthService>(context, listen: false);
+                if (auth.isPremium ||
+                    auth.userType == 'Nutricionista' ||
+                    auth.userType == 'Administrador') {
+                  Navigator.pushNamed(context, '/videos_ejercicios');
+                } else {
+                  RestrictedAccessDialogHelper.show(
+                    context,
+                    title: 'Vídeos de ejercicios',
+                    message:
+                        'Los vídeos de ejercicios completos están disponibles para usuarios Premium. Desde aquí puedes consultar sus ventajas y solicitar el acceso al nutricionista.',
+                    primaryActionLabel: 'Hazte Premium',
+                    primaryActionIcon: Icons.workspace_premium,
+                    primaryRouteName: '/premium_info',
+                  );
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.fitness_center_outlined),
+              title: const Text('Catálogo ejercicios'),
+              trailing: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade300,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Icon(
+                  Icons.workspace_premium,
+                  size: 13,
+                  color: Colors.black87,
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                final auth = Provider.of<AuthService>(context, listen: false);
+                if (auth.isPremium ||
+                    auth.userType == 'Nutricionista' ||
+                    auth.userType == 'Administrador') {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) =>
+                          const PlanFitEjerciciosCatalogScreen(
+                        readOnly: true,
+                        premiumVisibleOnly: true,
+                      ),
+                    ),
+                  );
+                } else {
+                  RestrictedAccessDialogHelper.show(
+                    context,
+                    title: 'Catálogo ejercicios',
+                    message:
+                        'El catálogo de ejercicios para pacientes está disponible para usuarios Premium. Activa Premium para consultar los ejercicios habilitados y usarlos en tus actividades.',
+                    primaryActionLabel: 'Hazte Premium',
+                    primaryActionIcon: Icons.workspace_premium,
+                    primaryRouteName: '/premium_info',
+                  );
+                }
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.restaurant_menu),
               title: const Text('Recetas'),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.pushNamed(context, '/recetas_paciente');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.swap_horiz_rounded),
+              title: const Text('Sustituciones'),
+              trailing: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade300,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Icon(
+                  Icons.workspace_premium,
+                  size: 13,
+                  color: Colors.black87,
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                final auth = Provider.of<AuthService>(context, listen: false);
+                if (auth.isPremium ||
+                    auth.userType == 'Nutricionista' ||
+                    auth.userType == 'Administrador') {
+                  Navigator.pushNamed(context, '/sustituciones_saludables');
+                } else {
+                  RestrictedAccessDialogHelper.show(
+                    context,
+                    title: 'Sustituciones',
+                    message:
+                        'La biblioteca de sustituciones saludables está disponible para usuarios Premium. Desde aquí puedes revisar sus ventajas y solicitar el acceso al nutricionista.',
+                    primaryActionLabel: 'Hazte Premium',
+                    primaryActionIcon: Icons.workspace_premium,
+                    primaryRouteName: '/premium_info',
+                  );
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.present_to_all_rounded),
+              title: const Text('Charlas'),
+              trailing: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade300,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Icon(
+                  Icons.workspace_premium,
+                  size: 13,
+                  color: Colors.black87,
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                final auth = Provider.of<AuthService>(context, listen: false);
+                if (auth.isPremium ||
+                    auth.userType == 'Nutricionista' ||
+                    auth.userType == 'Administrador') {
+                  Navigator.pushNamed(context, '/charlas_seminarios');
+                } else {
+                  RestrictedAccessDialogHelper.show(
+                    context,
+                    title: 'Charlas y Seminarios',
+                    message:
+                        'Las charlas y seminarios están disponibles para usuarios Premium. Activa Premium para acceder al contenido exclusivo.',
+                    primaryActionLabel: 'Hazte Premium',
+                    primaryActionIcon: Icons.workspace_premium,
+                    primaryRouteName: '/premium_info',
+                  );
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.medication_outlined),
+              title: const Text('Suplementos'),
+              trailing: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade300,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Icon(
+                  Icons.workspace_premium,
+                  size: 13,
+                  color: Colors.black87,
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                final auth = Provider.of<AuthService>(context, listen: false);
+                if (auth.isPremium ||
+                    auth.userType == 'Nutricionista' ||
+                    auth.userType == 'Administrador') {
+                  Navigator.pushNamed(context, '/suplementos');
+                } else {
+                  RestrictedAccessDialogHelper.show(
+                    context,
+                    title: 'Suplementos',
+                    message:
+                        'La sección de suplementos está disponible para usuarios Premium. Activa Premium para consultar el catálogo de suplementos.',
+                    primaryActionLabel: 'Hazte Premium',
+                    primaryActionIcon: Icons.workspace_premium,
+                    primaryRouteName: '/premium_info',
+                  );
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.science_outlined),
+              title: const Text('Aditivos'),
+              trailing: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade300,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Icon(
+                  Icons.workspace_premium,
+                  size: 13,
+                  color: Colors.black87,
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                final auth = Provider.of<AuthService>(context, listen: false);
+                if (auth.isPremium ||
+                    auth.userType == 'Nutricionista' ||
+                    auth.userType == 'Administrador') {
+                  Navigator.pushNamed(context, '/aditivos');
+                } else {
+                  RestrictedAccessDialogHelper.show(
+                    context,
+                    title: 'Aditivos alimentarios',
+                    message:
+                        'La sección de aditivos alimentarios está disponible para usuarios Premium. Activa Premium para consultar el catálogo de aditivos.',
+                    primaryActionLabel: 'Hazte Premium',
+                    primaryActionIcon: Icons.workspace_premium,
+                    primaryRouteName: '/premium_info',
+                  );
+                }
               },
             ),
             const Divider(),
@@ -618,7 +1008,9 @@ class AppDrawer extends StatelessWidget {
   }
 
   static void _showPlanesRestrictedDialog(
-      BuildContext context, String planType) {
+    BuildContext context,
+    String planType,
+  ) {
     final dialogTitle = planType == 'Planes Nutricionales'
         ? 'Planes nutricionales'
         : 'Entrenamientos personalizados';
@@ -626,8 +1018,59 @@ class AppDrawer extends StatelessWidget {
   }
 
   static void _showRecomendacionesRestrictedDialog(
-      BuildContext context, bool isGuest) {
+    BuildContext context,
+    bool isGuest,
+  ) {
     RestrictedAccessDialogHelper.show(context, title: 'Recomendaciones');
+  }
+
+  static Future<void> _showPremiumPreviewMenu(BuildContext context) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(
+              title: Text(
+                'Hazte Premium (vista previa)',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.verified_user_outlined),
+              title: const Text('Ver como usuario registrado'),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const PremiumInfoScreen(
+                      previewMode: PremiumPreviewMode.registered,
+                    ),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.person_add_alt_1_outlined),
+              title: const Text('Ver como usuario no registrado'),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const PremiumInfoScreen(
+                      previewMode: PremiumPreviewMode.guest,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   static void _showChatGuestDialog(BuildContext context) {

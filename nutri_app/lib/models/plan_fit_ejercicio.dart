@@ -12,6 +12,8 @@ class PlanFitEjercicio {
   int? codigoEjercicioCatalogo;
   String nombre;
   String? instrucciones;
+  String? instruccionesDetalladas;
+  String? hashtag;
   String? urlVideo;
   String? fotoBase64;
   String? fotoNombre;
@@ -21,6 +23,8 @@ class PlanFitEjercicio {
   int? repeticiones;
   int? kilos;
   int? orden;
+  String? visiblePremium;
+  int totalUsos;
 
   PlanFitEjercicio({
     required this.codigo,
@@ -29,6 +33,8 @@ class PlanFitEjercicio {
     this.codigoEjercicioCatalogo,
     required this.nombre,
     this.instrucciones,
+    this.instruccionesDetalladas,
+    this.hashtag,
     this.urlVideo,
     this.fotoBase64,
     this.fotoNombre,
@@ -38,6 +44,8 @@ class PlanFitEjercicio {
     this.repeticiones,
     this.kilos,
     this.orden,
+    this.visiblePremium,
+    this.totalUsos = 0,
   });
 
   factory PlanFitEjercicio.fromJson(Map<String, dynamic> json) {
@@ -56,6 +64,8 @@ class PlanFitEjercicio {
           : int.tryParse(json['codigo_ejercicio_catalogo']?.toString() ?? ''),
       nombre: json['nombre']?.toString() ?? '',
       instrucciones: json['instrucciones']?.toString(),
+      instruccionesDetalladas: json['instrucciones_detalladas']?.toString(),
+      hashtag: json['hashtag']?.toString(),
       urlVideo: json['url_video']?.toString(),
       fotoBase64: json['foto']?.toString(),
       fotoNombre: json['foto_nombre']?.toString(),
@@ -75,6 +85,8 @@ class PlanFitEjercicio {
       orden: json['orden'] is int
           ? json['orden']
           : int.tryParse(json['orden']?.toString() ?? ''),
+      visiblePremium: json['visible_premium']?.toString(),
+      totalUsos: int.tryParse(json['total_usos']?.toString() ?? '0') ?? 0,
     );
   }
 
@@ -85,6 +97,8 @@ class PlanFitEjercicio {
         'codigo_ejercicio_catalogo': codigoEjercicioCatalogo,
         'nombre': nombre,
         'instrucciones': instrucciones,
+        'instrucciones_detalladas': instruccionesDetalladas,
+        'hashtag': hashtag,
         'url_video': urlVideo,
         'foto_nombre': fotoNombre,
         'foto_miniatura': fotoMiniatura,
@@ -93,5 +107,6 @@ class PlanFitEjercicio {
         'repeticiones': repeticiones,
         'kilos': kilos,
         'orden': orden,
+        'visible_premium': visiblePremium,
       };
 }

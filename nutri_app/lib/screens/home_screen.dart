@@ -15,10 +15,12 @@ import 'package:nutri_app/screens/pacientes/pacientes_list_screen.dart';
 import 'package:nutri_app/screens/planes_nutricionales/planes_pacientes_list_screen.dart';
 import 'package:nutri_app/screens/planes_fit/planes_fit_pacientes_list_screen.dart';
 import 'package:nutri_app/screens/planes_fit/plan_fit_ejercicios_catalog_screen.dart';
+import 'package:nutri_app/screens/alimentos/alimentos_screen.dart';
 import 'package:nutri_app/screens/revisiones/revisiones_pacientes_list_screen.dart';
 import 'package:nutri_app/screens/usuarios/usuarios_list_screen.dart';
 import 'package:nutri_app/screens/entrenamientos_screen.dart';
 import 'package:nutri_app/screens/paciente_profile_edit_screen.dart';
+import 'package:nutri_app/screens/premium_info_screen.dart';
 import 'package:nutri_app/widgets/app_drawer.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
@@ -43,6 +45,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
   bool _isLoading = true;
   bool _isAuthorized = true;
   bool _twoFactorPromptShownInSession = false;
+  bool _premiumWarningShownInSession = false;
 
   @override
   void initState() {
@@ -50,7 +53,119 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
     _verifyUserAndLoad();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkAndShowTwoFactorRecommendation();
+      _checkAndShowPremiumExpiryWarning();
     });
+  }
+
+  String _premiumWarningShownKey(String userCode, String dayKey) {
+    return 'premium_warning_shown_${userCode}_$dayKey';
+  }
+
+  Future<void> _checkAndShowPremiumExpiryWarning() async {
+    if (!mounted || _premiumWarningShownInSession) return;
+
+    final authService = context.read<AuthService>();
+    final type = (authService.userType ?? '').toLowerCase();
+    if (type == 'nutricionista' || type == 'administrador' || type == 'guest') {
+      return;
+    }
+
+    final expiry = authService.premiumExpiryDate;
+    final days = authService.premiumDaysUntilExpiry;
+    final userCode = (authService.userCode ?? '').trim();
+    if (expiry == null || days == null || userCode.isEmpty) return;
+
+    int warningDays = 7;
+    try {
+      final raw = await context
+          .read<ApiService>()
+          .getParametroValor('premium_dias_aviso_vencimiento');
+      final parsed = int.tryParse((raw ?? '').trim());
+      if (parsed != null && parsed > 0 && parsed <= 90) {
+        warningDays = parsed;
+      }
+    } catch (_) {}
+
+    if (days > warningDays) return;
+
+    final today = DateTime.now();
+    final dayKey =
+        '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_premiumWarningShownKey(userCode, dayKey)) == true) {
+      return;
+    }
+
+    _premiumWarningShownInSession = true;
+    final formattedExpiry =
+        '${expiry.day.toString().padLeft(2, '0')}/${expiry.month.toString().padLeft(2, '0')}/${expiry.year}';
+    final isExpired = days < 0;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isDismissible: true,
+      enableDrag: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.workspace_premium,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        isExpired
+                            ? 'Tu Premium ha caducado'
+                            : 'Tu Premium está próximo a caducar',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  isExpired
+                      ? 'Tu Premium caducó el $formattedExpiry. Puedes renovarlo ahora.'
+                      : 'Tu Premium vence el $formattedExpiry (${days == 0 ? 'hoy' : 'en $days día${days == 1 ? '' : 's'}'}). Te recomendamos renovarlo para no perder ventajas.',
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                      child: const Text('Más tarde'),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.of(sheetContext).pop();
+                        Navigator.pushNamed(context, '/premium_info');
+                      },
+                      icon: const Icon(Icons.workspace_premium_outlined),
+                      label: const Text('Renovar Premium'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    await prefs.setBool(_premiumWarningShownKey(userCode, dayKey), true);
   }
 
   String _twoFactorPromptDismissedKey(String userCode) {
@@ -72,6 +187,55 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
       context,
       MaterialPageRoute(
         builder: (context) => PacienteProfileEditScreen(usuario: usuario),
+      ),
+    );
+  }
+
+  Future<void> _openPremiumPreviewMenu() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(
+              title: Text(
+                'Hazte Premium (vista previa)',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.verified_user_outlined),
+              title: const Text('Ver como usuario registrado'),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const PremiumInfoScreen(
+                      previewMode: PremiumPreviewMode.registered,
+                    ),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.person_add_alt_1_outlined),
+              title: const Text('Ver como usuario no registrado'),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const PremiumInfoScreen(
+                      previewMode: PremiumPreviewMode.guest,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -496,13 +660,67 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               ),
               _buildDashboardCard(
                 context,
+                icon: Icons.set_meal_outlined,
+                label: 'Alimentos',
+                onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const AlimentosScreen())),
+              ),
+              _buildDashboardCard(
+                context,
+                icon: Icons.medication_outlined,
+                label: 'Suplementos',
+                showPremiumBadge: true,
+                onTap: () => Navigator.pushNamed(context, '/suplementos_list'),
+              ),
+              _buildDashboardCard(
+                context,
+                icon: Icons.science_outlined,
+                label: 'Aditivos',
+                showPremiumBadge: true,
+                onTap: () => Navigator.pushNamed(context, '/aditivos_list'),
+              ),
+              _buildDashboardCard(
+                context,
                 icon: Icons.sports_mma,
                 label: 'Ejercicios',
+                showPremiumBadge: true,
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
                         builder: (context) =>
                             const PlanFitEjerciciosCatalogScreen())),
+              ),
+              _buildDashboardCard(
+                context,
+                icon: Icons.play_circle_outline,
+                label: 'Vídeos Ejercicios',
+                showPremiumBadge: true,
+                onTap: () =>
+                    Navigator.pushNamed(context, '/videos_ejercicios_admin'),
+              ),
+              _buildDashboardCard(
+                context,
+                icon: Icons.swap_horiz_rounded,
+                label: 'Sustituciones',
+                showPremiumBadge: true,
+                onTap: () => Navigator.pushNamed(
+                    context, '/sustituciones_saludables_list'),
+              ),
+              _buildDashboardCard(
+                context,
+                icon: Icons.record_voice_over_outlined,
+                label: 'Charlas',
+                showPremiumBadge: true,
+                onTap: () =>
+                    Navigator.pushNamed(context, '/charlas_seminarios_list'),
+              ),
+              _buildDashboardCard(
+                context,
+                icon: Icons.workspace_premium_outlined,
+                label: 'Hazte Premium',
+                onTap: _openPremiumPreviewMenu,
               ),
               _buildDashboardCard(
                 context,
@@ -512,16 +730,6 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
                     context,
                     MaterialPageRoute(
                         builder: (context) => const EntrenamientosScreen())),
-              ),
-              _buildDashboardCard(
-                context,
-                icon: Icons.document_scanner_outlined,
-                label: 'Escáner',
-                onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) =>
-                            const EtiquetaNutricionalScannerScreen())),
               ),
               _buildDashboardCard(
                 context,
@@ -564,6 +772,16 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               ),
               _buildDashboardCard(
                 context,
+                icon: Icons.document_scanner_outlined,
+                label: 'Escáner',
+                onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) =>
+                            const EtiquetaNutricionalScannerScreen())),
+              ),
+              _buildDashboardCard(
+                context,
                 icon: Icons.settings_outlined,
                 label: 'Ajustes',
                 onTap: () => Navigator.push(
@@ -596,19 +814,47 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
   Widget _buildDashboardCard(BuildContext context,
       {required IconData icon,
       required String label,
-      required VoidCallback onTap}) {
+      required VoidCallback onTap,
+      bool showPremiumBadge = false}) {
     return Card(
       elevation: 4.0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            Icon(icon, size: 26, color: Theme.of(context).primaryColor),
-            const SizedBox(height: 2),
-            Text(label, style: const TextStyle(fontSize: 12)),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: <Widget>[
+                Icon(icon, size: 26, color: Theme.of(context).primaryColor),
+                const SizedBox(height: 2),
+                Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ],
+            ),
+            if (showPremiumBadge)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade400,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: const Icon(
+                    Icons.workspace_premium,
+                    size: 12,
+                    color: Colors.black87,
+                  ),
+                ),
+              ),
           ],
         ),
       ),

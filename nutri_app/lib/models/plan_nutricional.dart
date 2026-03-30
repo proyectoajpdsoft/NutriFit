@@ -8,9 +8,13 @@ String planNutricionalToJson(PlanNutricional data) =>
 class PlanNutricional {
   int codigo;
   int? codigoPaciente;
+  String? tituloPlan;
+  String? objetivoPlan;
   DateTime? desde;
   DateTime? hasta;
   String? semanas;
+  int? totalSemanas;
+  String? usaEstructuraDetallada;
   String? completado; // 'S' o 'N'
   int? codigoEntrevista;
   String? planDocumentoNombre;
@@ -22,9 +26,13 @@ class PlanNutricional {
   PlanNutricional({
     required this.codigo,
     this.codigoPaciente,
+    this.tituloPlan,
+    this.objetivoPlan,
     this.desde,
     this.hasta,
     this.semanas,
+    this.totalSemanas,
+    this.usaEstructuraDetallada,
     this.completado,
     this.codigoEntrevista,
     this.planDocumentoNombre,
@@ -54,10 +62,16 @@ class PlanNutricional {
       codigoPaciente: json["codigo_paciente"] is int
           ? json["codigo_paciente"]
           : int.tryParse(json["codigo_paciente"]?.toString() ?? ''),
+      tituloPlan: json["titulo_plan"],
+      objetivoPlan: json["objetivo_plan"],
       nombrePaciente: json["nombre_paciente"], // Campo añadido
       desde: safeParseDate(json["desde"]),
       hasta: safeParseDate(json["hasta"]),
       semanas: json["semanas"],
+      totalSemanas: json["total_semanas"] is int
+          ? json["total_semanas"]
+          : int.tryParse(json["total_semanas"]?.toString() ?? ''),
+      usaEstructuraDetallada: json["usa_estructura_detallada"],
       completado: json["completado"],
       codigoEntrevista: json["codigo_entrevista"] is int
           ? json["codigo_entrevista"]
@@ -72,9 +86,13 @@ class PlanNutricional {
   Map<String, dynamic> toJson() => {
         "codigo": codigo,
         "codigo_paciente": codigoPaciente,
+        "titulo_plan": tituloPlan,
+        "objetivo_plan": objetivoPlan,
         "desde": desde?.toIso8601String().split('T').first,
         "hasta": hasta?.toIso8601String().split('T').first,
         "semanas": semanas,
+        "total_semanas": totalSemanas,
+        "usa_estructura_detallada": usaEstructuraDetallada,
         "completado": completado,
         "codigo_entrevista": codigoEntrevista,
         "plan_documento_nombre": planDocumentoNombre,

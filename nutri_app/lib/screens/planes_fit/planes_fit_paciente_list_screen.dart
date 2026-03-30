@@ -14,6 +14,7 @@ import 'package:nutri_app/widgets/adherencia_calendar_view.dart';
 import 'package:nutri_app/widgets/app_drawer.dart';
 import 'package:nutri_app/widgets/adherencia_registro_bottom_sheet.dart';
 import 'package:nutri_app/widgets/contact_nutricionista_dialog.dart';
+import 'package:nutri_app/widgets/image_viewer_dialog.dart';
 import 'package:nutri_app/screens/entrenamiento_edit_screen.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:provider/provider.dart';
@@ -205,6 +206,12 @@ class _PlanesFitPacienteListScreenState
         _loadingAdherenciaCalendario = false;
       });
     }
+  }
+
+  String _shortInstructionText(String text, {int maxChars = 45}) {
+    final normalized = text.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (normalized.length <= maxChars) return normalized;
+    return '${normalized.substring(0, maxChars)}...';
   }
 
   Future<void> _onCalendarDayTap(DateTime day) async {
@@ -572,6 +579,17 @@ class _PlanesFitPacienteListScreenState
     return 'Día ${dia.numeroDia}';
   }
 
+  Uint8List? _tryDecodeBase64Image(String? raw) {
+    final value = (raw ?? '').trim();
+    if (value.isEmpty) return null;
+    try {
+      return base64Decode(value);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ignore: unused_element
   Widget _buildMetaTag({required IconData icon, required String label}) {
     return Chip(
       avatar: Icon(icon, size: 16),
@@ -580,129 +598,659 @@ class _PlanesFitPacienteListScreenState
     );
   }
 
-  void _showEjercicioDetailDialog(PlanFitEjercicio ejercicio) {
-    final hasReps = (ejercicio.repeticiones ?? 0) > 0;
-    final hasRest = (ejercicio.descanso ?? 0) > 0;
-    final hasTime = (ejercicio.tiempo ?? 0) > 0;
-    final hasKilos = (ejercicio.kilos ?? 0) > 0;
-    final hasInstructions =
-        ejercicio.instrucciones != null && ejercicio.instrucciones!.isNotEmpty;
-    final hasVideo =
-        ejercicio.urlVideo != null && ejercicio.urlVideo!.trim().isNotEmpty;
-    final largeImageBase64 = (ejercicio.fotoBase64 ?? '').trim().isNotEmpty
-        ? ejercicio.fotoBase64!.trim()
-        : (ejercicio.fotoMiniatura ?? '').trim().isNotEmpty
-            ? ejercicio.fotoMiniatura!.trim()
-            : null;
+  List<String> _extractInstructionTags(String rawText) {
+    final normalized = rawText
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n')
+        .replaceAll('•', '\n')
+        .replaceAll('·', '\n');
 
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(ejercicio.nombre),
-          content: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (largeImageBase64 != null)
-                  Container(
-                    width: double.infinity,
-                    height: 220,
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[100],
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Image.memory(
-                      base64Decode(largeImageBase64),
-                      width: double.infinity,
-                      height: 208,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => Container(
-                        width: double.infinity,
-                        height: 208,
-                        color: Colors.grey[300],
-                        child: const Icon(
-                          Icons.broken_image,
-                          size: 48,
-                          color: Colors.grey,
-                        ),
-                      ),
-                    ),
-                  )
-                else
-                  Container(
-                    width: double.infinity,
-                    height: 220,
-                    color: Colors.grey[300],
-                    child: const Icon(
-                      Icons.fitness_center,
-                      size: 52,
-                      color: Colors.grey,
-                    ),
-                  ),
-                const SizedBox(height: 12),
-                if (hasKilos)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Text('Peso: ${ejercicio.kilos} kg'),
-                  ),
-                if (hasReps)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Text('Repeticiones: ${ejercicio.repeticiones}'),
-                  ),
-                if (hasTime)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Text('Tiempo: ${ejercicio.tiempo} s'),
-                  ),
-                if (hasRest)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Text('Descanso: ${ejercicio.descanso} s'),
-                  ),
-                if (hasInstructions) ...[
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Recomendaciones',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(ejercicio.instrucciones!),
-                ],
-                if (hasVideo) ...[
-                  const SizedBox(height: 10),
-                  InkWell(
-                    onTap: () => _launchUrlExternal(ejercicio.urlVideo ?? ''),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.play_circle_fill, color: Colors.blue),
-                        SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            'Ver vídeo',
-                            style: TextStyle(
-                              color: Colors.blue,
-                              decoration: TextDecoration.underline,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ],
+    List<String> parts = normalized
+        .split(RegExp(r'\n|;'))
+        .map(
+          (part) =>
+              part.trim().replaceFirst(RegExp(r'^[-*\d\s.)]+'), '').trim(),
+        )
+        .where((part) => part.isNotEmpty)
+        .toList(growable: false);
+
+    if (parts.length <= 1) {
+      parts = normalized
+          .split(RegExp(r'(?<=[.!?])\s+'))
+          .map(
+            (part) =>
+                part.trim().replaceFirst(RegExp(r'^[-*\d\s.)]+'), '').trim(),
+          )
+          .where((part) => part.isNotEmpty)
+          .toList(growable: false);
+    }
+
+    if (parts.isEmpty && normalized.trim().isNotEmpty) {
+      return <String>[normalized.trim()];
+    }
+
+    return parts;
+  }
+
+  Widget _buildPremiumMetricCard({
+    required IconData icon,
+    required String value,
+    required Color color,
+  }) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 96),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: <Color>[color.withValues(alpha: 0.16), Colors.white],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: 0.28)),
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: color.withValues(alpha: 0.12),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Container(
+            width: 24,
+            height: 24,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(icon, color: color, size: 15),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.1,
+              color: color.withValues(alpha: 0.95),
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cerrar'),
-            ),
-          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildShortInstructionCard(String text) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF4DE),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFF5D8A6)),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 12,
+          height: 1.25,
+          fontWeight: FontWeight.w600,
+          color: Color(0xFF5F4A24),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInstructionTag(String text) {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 260),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF6F7FB),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFFE0E5F2)),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 12,
+          height: 1.25,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+
+  void _showEjercicioImage(PlanFitEjercicio ejercicio) {
+    final imageBase64 = (ejercicio.fotoBase64 ?? '').trim().isNotEmpty
+        ? ejercicio.fotoBase64!.trim()
+        : (ejercicio.fotoMiniatura ?? '').trim();
+    if (imageBase64.isEmpty) return;
+
+    showImageViewerDialog(
+      context: context,
+      base64Image: imageBase64,
+      title: ejercicio.nombre,
+    );
+  }
+
+  Future<String> _buildNutriFitClipboardSignature() async {
+    try {
+      final param = await _apiService.getParametro('nutricionista_nombre');
+      final nutricionistaNombre = (param?['valor'] ?? '').toString().trim();
+      if (nutricionistaNombre.isNotEmpty) {
+        return 'App NutriFit $nutricionistaNombre';
+      }
+    } catch (_) {}
+    return 'App NutriFit';
+  }
+
+  Future<void> _copyHowToText(String rawText) async {
+    final normalized = rawText.trim();
+    if (normalized.isEmpty) return;
+    final signature = await _buildNutriFitClipboardSignature();
+    await Clipboard.setData(
+      ClipboardData(text: '$normalized\n\n$signature'),
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Texto copiado al portapapeles'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _showEjercicioDetailDialog(PlanFitEjercicio ejercicio) async {
+    PlanFitEjercicio? catalogDetalle;
+    final codigoCatalogo = ejercicio.codigoEjercicioCatalogo;
+    if (codigoCatalogo != null && codigoCatalogo > 0) {
+      try {
+        catalogDetalle = await _apiService
+            .getPlanFitEjercicioCatalogWithFoto(codigoCatalogo);
+      } catch (_) {}
+    }
+
+    final shortInstructions = (ejercicio.instrucciones ?? '').trim().isNotEmpty
+        ? (ejercicio.instrucciones ?? '').trim()
+        : (catalogDetalle?.instrucciones ?? '').trim();
+    final detailedInstructions =
+        (ejercicio.instruccionesDetalladas ?? '').trim().isNotEmpty
+            ? (ejercicio.instruccionesDetalladas ?? '').trim()
+            : (catalogDetalle?.instruccionesDetalladas ?? '').trim();
+    final instructionTags = _extractInstructionTags(detailedInstructions);
+    final hasDetailedInstructions = detailedInstructions.isNotEmpty;
+    final hasVideo =
+        ejercicio.urlVideo != null && ejercicio.urlVideo!.trim().isNotEmpty;
+
+    const coverSubtitleMaxChars = 50;
+    final coverSubtitle = shortInstructions.isNotEmpty
+        ? (shortInstructions.length > coverSubtitleMaxChars
+            ? '${shortInstructions.substring(0, coverSubtitleMaxChars)}...'
+            : shortInstructions)
+        : 'Movimiento premium listo para incorporar a tu rutina.';
+    final showReadMoreLink = shortInstructions.length > coverSubtitleMaxChars &&
+        (hasDetailedInstructions || shortInstructions.isNotEmpty);
+
+    final imageBase64 = (catalogDetalle?.fotoBase64 ?? '').trim().isNotEmpty
+        ? (catalogDetalle?.fotoBase64 ?? '').trim()
+        : (ejercicio.fotoBase64 ?? '').trim().isNotEmpty
+            ? (ejercicio.fotoBase64 ?? '').trim()
+            : (catalogDetalle?.fotoMiniatura ?? '').trim().isNotEmpty
+                ? (catalogDetalle?.fotoMiniatura ?? '').trim()
+                : (ejercicio.fotoMiniatura ?? '').trim();
+    final hasImage = imageBase64.isNotEmpty;
+
+    final metricCards = <Widget>[
+      if ((ejercicio.tiempo ?? 0) > 0)
+        _buildPremiumMetricCard(
+          icon: Icons.schedule_rounded,
+          value: '${ejercicio.tiempo}s',
+          color: const Color(0xFFFF8A3D),
+        ),
+      if ((ejercicio.repeticiones ?? 0) > 0)
+        _buildPremiumMetricCard(
+          icon: Icons.repeat_rounded,
+          value: '${ejercicio.repeticiones}',
+          color: const Color(0xFF4F7CFF),
+        ),
+      if ((ejercicio.kilos ?? 0) > 0)
+        _buildPremiumMetricCard(
+          icon: Icons.fitness_center_rounded,
+          value: '${ejercicio.kilos} kg',
+          color: const Color(0xFF13A57A),
+        ),
+      if ((ejercicio.descanso ?? 0) > 0)
+        _buildPremiumMetricCard(
+          icon: Icons.airline_seat_individual_suite_rounded,
+          value: '${ejercicio.descanso}s',
+          color: const Color(0xFF8E59FF),
+        ),
+    ];
+
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        bool expandHowTo = false;
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding:
+                  const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+              child: ConstrainedBox(
+                constraints:
+                    const BoxConstraints(maxWidth: 760, maxHeight: 860),
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(30),
+                    gradient: const LinearGradient(
+                      colors: <Color>[Color(0xFFFFFCF7), Color(0xFFF5F8FF)],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                    ),
+                    boxShadow: const <BoxShadow>[
+                      BoxShadow(
+                        color: Color(0x2A000000),
+                        blurRadius: 30,
+                        offset: Offset(0, 18),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(30),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Container(
+                            height: hasImage ? 250 : 160,
+                            width: double.infinity,
+                            decoration: const BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: <Color>[
+                                  Color(0xFFFFB06A),
+                                  Color(0xFFFFDFA5),
+                                ],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                            ),
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: hasImage
+                                  ? () => showImageViewerDialog(
+                                        context: context,
+                                        base64Image: imageBase64,
+                                        title: ejercicio.nombre,
+                                      )
+                                  : null,
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: <Widget>[
+                                  if (hasImage)
+                                    Opacity(
+                                      opacity: 0.24,
+                                      child: Image.memory(
+                                        base64Decode(imageBase64),
+                                        fit: BoxFit.cover,
+                                      ),
+                                    ),
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        colors: <Color>[
+                                          Colors.black.withValues(alpha: 0.05),
+                                          Colors.black.withValues(alpha: 0.22),
+                                        ],
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    top: 14,
+                                    right: 14,
+                                    child: IconButton(
+                                      onPressed: () => Navigator.pop(context),
+                                      style: IconButton.styleFrom(
+                                        backgroundColor: Colors.white
+                                            .withValues(alpha: 0.22),
+                                      ),
+                                      icon: const Icon(
+                                        Icons.close,
+                                        color: Colors.white,
+                                      ),
+                                      tooltip: 'Cerrar',
+                                    ),
+                                  ),
+                                  if (hasImage)
+                                    Positioned(
+                                      top: 16,
+                                      left: 16,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 6,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white
+                                              .withValues(alpha: 0.22),
+                                          borderRadius:
+                                              BorderRadius.circular(999),
+                                          border: Border.all(
+                                            color: Colors.white
+                                                .withValues(alpha: 0.28),
+                                          ),
+                                        ),
+                                        child: const Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: <Widget>[
+                                            Icon(
+                                              Icons.zoom_in,
+                                              size: 14,
+                                              color: Colors.white,
+                                            ),
+                                            SizedBox(width: 4),
+                                            Text(
+                                              'Toca para ampliar',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  Positioned(
+                                    left: 22,
+                                    right: 22,
+                                    bottom: 22,
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: <Widget>[
+                                        Text(
+                                          ejercicio.nombre,
+                                          style: const TextStyle(
+                                            color: Color(0xFF2E1D12),
+                                            fontSize: 21,
+                                            height: 1.1,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        const SizedBox(height: 8),
+                                        RichText(
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          text: TextSpan(
+                                            style: TextStyle(
+                                              color: const Color(0xFF4A321E)
+                                                  .withValues(alpha: 0.95),
+                                              fontSize: 14,
+                                              height: 1.35,
+                                            ),
+                                            children: [
+                                              TextSpan(text: coverSubtitle),
+                                              if (showReadMoreLink)
+                                                WidgetSpan(
+                                                  alignment:
+                                                      PlaceholderAlignment
+                                                          .baseline,
+                                                  baseline:
+                                                      TextBaseline.alphabetic,
+                                                  child: GestureDetector(
+                                                    onTap: () {
+                                                      setStateDialog(() {
+                                                        expandHowTo = true;
+                                                      });
+                                                    },
+                                                    child: Text(
+                                                      ' Leer más',
+                                                      style: const TextStyle(
+                                                        color:
+                                                            Color(0xFF2F2014),
+                                                        fontSize: 12,
+                                                        fontWeight:
+                                                            FontWeight.w700,
+                                                        decoration:
+                                                            TextDecoration
+                                                                .underline,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(22, 12, 22, 24),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: <Widget>[
+                                if (metricCards.isNotEmpty)
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: metricCards,
+                                  ),
+                                if (hasDetailedInstructions ||
+                                    shortInstructions.isNotEmpty) ...<Widget>[
+                                  const SizedBox(height: 16),
+                                  Card(
+                                    margin: EdgeInsets.zero,
+                                    elevation: 0,
+                                    color: Colors.transparent,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(22),
+                                    ),
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(22),
+                                        gradient: const LinearGradient(
+                                          colors: <Color>[
+                                            Color(0xFFEAF2FF),
+                                            Color(0xFFF4F8FF),
+                                          ],
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                        ),
+                                        border: Border.all(
+                                          color: const Color(0xFFBFD3FF),
+                                        ),
+                                        boxShadow: const <BoxShadow>[
+                                          BoxShadow(
+                                            color: Color(0x16000000),
+                                            blurRadius: 14,
+                                            offset: Offset(0, 8),
+                                          ),
+                                        ],
+                                      ),
+                                      child: Theme(
+                                        data: Theme.of(context).copyWith(
+                                          dividerColor: Colors.transparent,
+                                        ),
+                                        child: ExpansionTile(
+                                          key: ValueKey<bool>(expandHowTo),
+                                          initiallyExpanded: expandHowTo,
+                                          onExpansionChanged: (expanded) {
+                                            setStateDialog(() {
+                                              expandHowTo = expanded;
+                                            });
+                                          },
+                                          tilePadding:
+                                              const EdgeInsets.symmetric(
+                                            horizontal: 18,
+                                            vertical: 6,
+                                          ),
+                                          leading: Container(
+                                            width: 30,
+                                            height: 30,
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFF4F7CFF)
+                                                  .withValues(alpha: 0.15),
+                                              borderRadius:
+                                                  BorderRadius.circular(10),
+                                            ),
+                                            child: const Icon(
+                                              Icons.auto_awesome_rounded,
+                                              size: 18,
+                                              color: Color(0xFF2F5FE5),
+                                            ),
+                                          ),
+                                          childrenPadding:
+                                              const EdgeInsets.fromLTRB(
+                                            18,
+                                            0,
+                                            18,
+                                            18,
+                                          ),
+                                          title: GestureDetector(
+                                            behavior: HitTestBehavior.opaque,
+                                            onLongPress: () => _copyHowToText(
+                                              hasDetailedInstructions
+                                                  ? detailedInstructions
+                                                  : shortInstructions,
+                                            ),
+                                            child: const Text(
+                                              'Cómo se hace...',
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.w800,
+                                                color: Color(0xFF1D3266),
+                                              ),
+                                            ),
+                                          ),
+                                          children: <Widget>[
+                                            Wrap(
+                                              spacing: 10,
+                                              runSpacing: 10,
+                                              children: [
+                                                if (shortInstructions
+                                                    .isNotEmpty)
+                                                  _buildShortInstructionCard(
+                                                    shortInstructions,
+                                                  ),
+                                                ...instructionTags
+                                                    .map(_buildInstructionTag)
+                                                    .toList(growable: false),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 10),
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: Colors.amber.shade100,
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: Colors.amber.shade300,
+                                    ),
+                                  ),
+                                  child: RichText(
+                                    text: TextSpan(
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.black87,
+                                      ),
+                                      children: [
+                                        TextSpan(
+                                          text: 'Aviso importante... ',
+                                          style: TextStyle(
+                                            color: Colors.red.shade700,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        const TextSpan(
+                                          text:
+                                              'Antes de realizar este ejercicio, contacta con tu entrenador, para que te guie y lo personalice acorde a tus necesidades.',
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: FilledButton.icon(
+                                    onPressed: () {
+                                      showDialog(
+                                        context: context,
+                                        builder: (_) =>
+                                            const ContactNutricionistaDialog(),
+                                      );
+                                    },
+                                    icon: const Icon(
+                                      Icons.support_agent,
+                                      size: 18,
+                                    ),
+                                    label:
+                                        const Text('Contactar con entrenador'),
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor: Colors.orange.shade700,
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 12,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                if (hasVideo) ...[
+                                  const SizedBox(height: 10),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: OutlinedButton.icon(
+                                      onPressed: () => _launchUrlExternal(
+                                        ejercicio.urlVideo ?? '',
+                                      ),
+                                      icon: const Icon(
+                                        Icons.play_circle_fill,
+                                        size: 18,
+                                      ),
+                                      label: const Text('Ver vídeo'),
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: Colors.blue.shade700,
+                                        side: BorderSide(
+                                          color: Colors.blue.shade300,
+                                        ),
+                                        backgroundColor: Colors.blue.shade50,
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 12,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
         );
       },
     );
@@ -718,6 +1266,8 @@ class _PlanesFitPacienteListScreenState
     final hasVideo =
         ejercicio.urlVideo != null && ejercicio.urlVideo!.trim().isNotEmpty;
 
+    final thumbnailBytes = _tryDecodeBase64Image(ejercicio.fotoMiniatura);
+
     return InkWell(
       borderRadius: BorderRadius.circular(12),
       onTap: () => _showEjercicioDetailDialog(ejercicio),
@@ -727,15 +1277,14 @@ class _PlanesFitPacienteListScreenState
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (ejercicio.fotoMiniatura != null &&
-                ejercicio.fotoMiniatura!.isNotEmpty)
+            if (thumbnailBytes != null)
               Container(
                 height: 100,
                 width: double.infinity,
                 padding: const EdgeInsets.all(4),
                 color: Colors.grey[100],
                 child: Image.memory(
-                  base64Decode(ejercicio.fotoMiniatura!),
+                  thumbnailBytes,
                   width: double.infinity,
                   height: 92,
                   fit: BoxFit.contain,
@@ -913,7 +1462,7 @@ class _PlanesFitPacienteListScreenState
         final ejerciciosCount = ejerciciosDia.length;
 
         return Card(
-          margin: const EdgeInsets.only(bottom: 10),
+          margin: const EdgeInsets.only(bottom: 8),
           child: ExpansionTile(
             key: PageStorageKey<String>(key),
             initiallyExpanded: expanded,
@@ -922,14 +1471,34 @@ class _PlanesFitPacienteListScreenState
                 _diasExpandidos[key] = value;
               });
             },
-            title: Text(
-              _buildDiaNombre(dia),
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-            subtitle: Text(
-              ejerciciosCount == 1
-                  ? '1 ejercicio'
-                  : '$ejerciciosCount ejercicios',
+            tilePadding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+            title: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _buildDiaNombre(dia),
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                Container(
+                  width: 24,
+                  height: 24,
+                  alignment: Alignment.center,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF2F6BFF),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    '$ejerciciosCount',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
             ),
             childrenPadding: const EdgeInsets.symmetric(
               horizontal: 12,

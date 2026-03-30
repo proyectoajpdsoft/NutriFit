@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:nutri_app/models/plan_nutricional.dart';
+import 'package:nutri_app/models/plan_nutri_estructura.dart';
+import 'package:nutri_app/screens/planes_nutricionales/plan_nutri_paciente_detail_screen.dart';
 import 'package:nutri_app/services/adherencia_service.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
+import 'package:nutri_app/services/plan_nutri_pdf_service.dart';
 import 'package:nutri_app/services/user_settings_service.dart';
 import 'package:nutri_app/widgets/adherencia_calendar_view.dart';
 import 'package:nutri_app/widgets/app_drawer.dart';
@@ -38,6 +41,9 @@ class _PlanesPacienteListScreenState extends State<PlanesPacienteListScreen> {
   bool _hasPlanFit = false;
   String _calendarViewMode = 'month';
   Map<String, Map<AdherenciaTipo, AdherenciaEstado>> _adherenciaDias = {};
+  final Map<int, Future<bool>> _planHasVisibleStructureCache = {};
+  final Map<int, Future<_PlanHarvardSummary?>> _planHarvardSummaryCache = {};
+  bool _isNutricionista = false;
 
   @override
   void initState() {
@@ -45,6 +51,8 @@ class _PlanesPacienteListScreenState extends State<PlanesPacienteListScreen> {
     final authService = Provider.of<AuthService>(context, listen: false);
     _patientCode = authService.patientCode;
     _userCode = authService.userCode ?? authService.patientCode;
+    _isNutricionista =
+        (authService.userType ?? '').trim().toLowerCase() == 'nutricionista';
 
     // Si es modo guest, mostrar diálogo después de que se construya el widget
     if (authService.isGuestMode) {
@@ -76,6 +84,76 @@ class _PlanesPacienteListScreenState extends State<PlanesPacienteListScreen> {
     if (_calendarViewMode == 'week') return 7;
     if (_calendarViewMode == 'twoWeeks') return 14;
     return 42;
+  }
+
+  String _truncateRecomendaciones(String text, {int maxChars = 30}) {
+    final normalized = text.trim();
+    if (normalized.length <= maxChars) return normalized;
+    return '${normalized.substring(0, maxChars)}\u2026';
+  }
+
+  void _showRecomendacionesDialog(
+    String recomendaciones,
+    PlanNutricional plan,
+  ) {
+    final apiService = ApiService();
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.lightbulb_outlined,
+                color: Colors.amber.shade700, size: 20),
+            const SizedBox(width: 8),
+            const Text('Recomendaciones'),
+          ],
+        ),
+        content: SizedBox(
+          width: 360,
+          height: 320,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              recomendaciones,
+              style: const TextStyle(fontSize: 14, height: 1.5),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton.icon(
+            icon: const Icon(Icons.copy_outlined, size: 18),
+            label: const Text('Copiar'),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: recomendaciones));
+              Navigator.of(dialogCtx).pop();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Recomendaciones copiadas'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            },
+          ),
+          TextButton.icon(
+            icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
+            label: const Text('PDF'),
+            onPressed: () {
+              Navigator.of(dialogCtx).pop();
+              PlanNutriPdfService.generateRecomendacionesPdf(
+                context: context,
+                apiService: apiService,
+                recomendaciones: recomendaciones,
+                tituloPlan: plan.tituloPlan ?? 'Plan nutricional',
+                pacienteNombre: plan.nombrePaciente,
+              );
+            },
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadCalendarViewMode() async {
@@ -265,32 +343,36 @@ class _PlanesPacienteListScreenState extends State<PlanesPacienteListScreen> {
   Widget _buildCumplimientoCircle({
     required int percent,
     required VoidCallback onTap,
+    bool isEnabled = true,
   }) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(20),
-      onTap: onTap,
-      child: SizedBox(
-        width: 38,
-        height: 38,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            CircularProgressIndicator(
-              value: (percent.clamp(0, 100)) / 100,
-              strokeWidth: 4,
-              backgroundColor: Colors.grey.shade300,
-              valueColor: AlwaysStoppedAnimation<Color>(
-                _adherenciaColorByPercent(percent),
+    return Opacity(
+      opacity: isEnabled ? 1.0 : 0.5,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: isEnabled ? onTap : null,
+        child: SizedBox(
+          width: 38,
+          height: 38,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              CircularProgressIndicator(
+                value: (percent.clamp(0, 100)) / 100,
+                strokeWidth: 4,
+                backgroundColor: Colors.grey.shade300,
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  _adherenciaColorByPercent(percent),
+                ),
               ),
-            ),
-            Text(
-              '$percent%',
-              style: const TextStyle(
-                fontSize: 9,
-                fontWeight: FontWeight.w700,
+              Text(
+                '$percent%',
+                style: const TextStyle(
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -314,6 +396,8 @@ class _PlanesPacienteListScreenState extends State<PlanesPacienteListScreen> {
   }
 
   void _refreshPlanes() {
+    _planHasVisibleStructureCache.clear();
+    _planHarvardSummaryCache.clear();
     setState(() {
       if (_patientCode != null && _patientCode!.isNotEmpty) {
         try {
@@ -326,6 +410,428 @@ class _PlanesPacienteListScreenState extends State<PlanesPacienteListScreen> {
         _planesFuture = Future.value([]);
       }
     });
+  }
+
+  bool _hasVisibleStructure(PlanNutriEstructura estructura) {
+    if (estructura.semanas.isEmpty) return false;
+    for (final semana in estructura.semanas) {
+      for (final dia in semana.dias) {
+        for (final ingesta in dia.ingestas) {
+          if (ingesta.items.isNotEmpty) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  Future<bool> _loadPlanHasVisibleStructure(int planCodigo) async {
+    try {
+      final estructura = await _apiService.getPlanNutriEstructura(planCodigo);
+      return _hasVisibleStructure(estructura);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> _planHasVisibleStructure(int planCodigo) {
+    return _planHasVisibleStructureCache.putIfAbsent(
+      planCodigo,
+      () => _loadPlanHasVisibleStructure(planCodigo),
+    );
+  }
+
+  String _normalizeMealType(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u')
+        .replaceAll('ü', 'u')
+        .replaceAll('ñ', 'n')
+        .trim();
+  }
+
+  String? _mainMealKey(String tipoIngesta) {
+    final normalized = _normalizeMealType(tipoIngesta);
+    if (normalized.contains('comida')) return 'comida';
+    return null;
+  }
+
+  Widget _buildHarvardCircularSummary(
+    _PlanHarvardSummary summary,
+    Color color,
+  ) {
+    final progress = (summary.avgScore / 4).clamp(0.0, 1.0);
+    return Row(
+      children: [
+        SizedBox(
+          width: 54,
+          height: 54,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              SizedBox.expand(
+                child: CircularProgressIndicator(
+                  value: progress,
+                  strokeWidth: 6,
+                  backgroundColor: color.withAlpha(40),
+                  valueColor: AlwaysStoppedAnimation<Color>(color),
+                ),
+              ),
+              Text(
+                '${summary.avgPercent}%',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            'Media semanal ${summary.avgScore.toStringAsFixed(2)}/4 (${summary.avgPercent}%)',
+            style: TextStyle(
+              fontSize: 14,
+              color: color,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  static const _harvardEvitar = {'proteina_procesada', 'bebida_azucarada'};
+
+  Map<String, dynamic> _computeHarvardComplianceCore(
+    List<PlanNutriItem> items,
+  ) {
+    final tagged =
+        items.where((e) => (e.harvardCategoria ?? '').isNotEmpty).toList();
+    final bySeccion = <String, int>{};
+    final evitar = <String>{};
+
+    for (final item in tagged) {
+      final sec = item.harvardSeccion ?? 'otro';
+      final cod = item.harvardCategoria ?? 'otro';
+      bySeccion[sec] = (bySeccion[sec] ?? 0) + 1;
+      if (_harvardEvitar.contains(cod)) evitar.add(cod);
+    }
+
+    var score = 0;
+    for (final item in tagged) {
+      final itemScore = _harvardItemScore(item);
+      if (itemScore > score) {
+        score = itemScore;
+      }
+    }
+
+    return {
+      'taggedItems': tagged.length,
+      'evitarCodigos': evitar,
+      'score': score,
+    };
+  }
+
+  Color? _parseHarvardItemColor(PlanNutriItem item) {
+    if ((item.harvardColor ?? '').isEmpty) return null;
+    try {
+      final hex = item.harvardColor!.replaceFirst('#', '');
+      return Color(int.parse('FF$hex', radix: 16));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  int _harvardItemScore(PlanNutriItem item) {
+    final color = _parseHarvardItemColor(item);
+    if (color != null) {
+      final hsl = HSLColor.fromColor(color);
+      final hue = hsl.hue;
+      final saturation = hsl.saturation;
+      final lightness = hsl.lightness;
+
+      if (saturation < 0.1) return 0;
+      if (hue >= 85 && hue <= 160) return 4;
+      if (hue > 55 && hue < 85) return 3;
+      if (hue >= 25 && hue <= 55) return 2;
+      if (hue < 25 || hue >= 345) return 1;
+      if (lightness > 0.72) return 3;
+    }
+
+    final section = (item.harvardSeccion ?? '').trim().toLowerCase();
+    if (section == 'medio_plato') return 4;
+    if (section == 'cuarto_proteinas') return 3;
+    if (section == 'cuarto_cereales') return 2;
+    return (item.harvardCategoria ?? '').isNotEmpty ? 1 : 0;
+  }
+
+  List<PlanNutriItem> _resolveMealItemsOptimistically(
+      List<PlanNutriItem> items) {
+    final fixedItems = items
+        .where((e) => (e.opcion ?? '').trim().toUpperCase() != 'S')
+        .toList();
+    final optionalItems = items
+        .where((e) => (e.opcion ?? '').trim().toUpperCase() == 'S')
+        .toList();
+
+    if (optionalItems.isEmpty) {
+      return items;
+    }
+
+    PlanNutriItem? bestOption;
+    Map<String, dynamic>? bestCompliance;
+
+    for (final candidate in optionalItems) {
+      final compliance =
+          _computeHarvardComplianceCore([...fixedItems, candidate]);
+      if (bestCompliance == null) {
+        bestOption = candidate;
+        bestCompliance = compliance;
+        continue;
+      }
+
+      final candidateScore = compliance['score'] as int;
+      final bestScore = bestCompliance['score'] as int;
+      final candidateTagged = compliance['taggedItems'] as int;
+      final bestTagged = bestCompliance['taggedItems'] as int;
+      final candidateEvitar =
+          (compliance['evitarCodigos'] as Set<String>).length;
+      final bestEvitar =
+          (bestCompliance['evitarCodigos'] as Set<String>).length;
+
+      final isBetter = candidateScore > bestScore ||
+          (candidateScore == bestScore && candidateEvitar < bestEvitar) ||
+          (candidateScore == bestScore &&
+              candidateEvitar == bestEvitar &&
+              candidateTagged > bestTagged);
+
+      if (isBetter) {
+        bestOption = candidate;
+        bestCompliance = compliance;
+      }
+    }
+
+    return [
+      ...fixedItems,
+      if (bestOption != null) bestOption,
+    ];
+  }
+
+  Map<String, dynamic> _computeHarvardComplianceFromItems(
+    List<PlanNutriItem> items,
+  ) {
+    return _computeHarvardComplianceCore(items);
+  }
+
+  Future<_PlanHarvardSummary?> _loadPlanHarvardSummary(int planCodigo) async {
+    try {
+      final estructura = await _apiService.getPlanNutriEstructura(planCodigo);
+      final hasVisibleStructure = _hasVisibleStructure(estructura);
+      if (!hasVisibleStructure) {
+        return const _PlanHarvardSummary(
+          hasVisibleStructure: false,
+          samples: 0,
+          samplesWithTag: 0,
+          totalMeals: 0,
+          totalTaggedItems: 0,
+          redFlagMeals: 0,
+          avgScore: 0,
+          avgPercent: 0,
+          fulfilled: false,
+        );
+      }
+
+      int samples = 0;
+      int samplesWithTag = 0;
+      int totalTaggedItems = 0;
+      int redFlagMeals = 0;
+      double totalScore = 0;
+
+      for (final semana in estructura.semanas) {
+        for (final dia in semana.dias) {
+          final itemsByMeal = <String, List<PlanNutriItem>>{};
+          for (final ingesta in dia.ingestas) {
+            final mealKey = _mainMealKey(ingesta.tipoIngesta);
+            if (mealKey == null) continue;
+            itemsByMeal.putIfAbsent(mealKey, () => <PlanNutriItem>[]).addAll(
+                  _resolveMealItemsOptimistically(ingesta.items),
+                );
+          }
+
+          for (final mealItems in itemsByMeal.values) {
+            final compliance = _computeHarvardComplianceFromItems(mealItems);
+            samples++;
+            totalScore += (compliance['score'] as int).toDouble();
+            final mealTaggedItems = compliance['taggedItems'] as int;
+            totalTaggedItems += mealTaggedItems;
+            if (mealTaggedItems > 0) {
+              samplesWithTag++;
+            }
+            if ((compliance['evitarCodigos'] as Set<String>).isNotEmpty) {
+              redFlagMeals++;
+            }
+          }
+        }
+      }
+
+      final avgScore = samples == 0 ? 0.0 : totalScore / samples;
+      final avgPercent = samples == 0 ? 0 : ((avgScore / 4) * 100).round();
+      final fulfilled = samples > 0 && avgScore >= 3.0;
+
+      return _PlanHarvardSummary(
+        hasVisibleStructure: true,
+        samples: samples,
+        samplesWithTag: samplesWithTag,
+        totalMeals: samples,
+        totalTaggedItems: totalTaggedItems,
+        redFlagMeals: redFlagMeals,
+        avgScore: avgScore,
+        avgPercent: avgPercent,
+        fulfilled: fulfilled,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<_PlanHarvardSummary?> _planHarvardSummary(int planCodigo) {
+    return _planHarvardSummaryCache.putIfAbsent(
+      planCodigo,
+      () => _loadPlanHarvardSummary(planCodigo),
+    );
+  }
+
+  Color _harvardSummaryColor(_PlanHarvardSummary summary) {
+    if (summary.samples == 0) return Colors.grey.shade400;
+    if (summary.redFlagMeals > 0) return Colors.red.shade600;
+    if (summary.fulfilled) return Colors.green.shade600;
+    if (summary.avgScore >= 2.5) return Colors.lightGreen.shade600;
+    if (summary.avgScore >= 2.0) return Colors.orange.shade600;
+    return Colors.deepOrange.shade600;
+  }
+
+  void _showHarvardPlanSummaryDialog(
+    _PlanHarvardSummary summary,
+    PlanNutricional plan,
+  ) {
+    final color = _harvardSummaryColor(summary);
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        titlePadding: const EdgeInsets.fromLTRB(12, 8, 8, 0),
+        title: Row(
+          children: [
+            Container(
+              width: 12,
+              height: 12,
+              margin: const EdgeInsets.only(right: 8),
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            ),
+            Expanded(
+              child: Text(
+                'Harvard del plan',
+                style: const TextStyle(fontSize: 15),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Cerrar',
+              onPressed: () => Navigator.of(ctx).pop(),
+              icon: const Icon(Icons.close, size: 18),
+              style: IconButton.styleFrom(
+                shape: const CircleBorder(),
+                minimumSize: const Size(32, 32),
+                padding: EdgeInsets.zero,
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: 360,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (summary.samples == 0)
+                Text(
+                  'Este plan no tiene Comidas evaluables todavía.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: color,
+                    fontWeight: FontWeight.w600,
+                  ),
+                )
+              else
+                _buildHarvardCircularSummary(summary, color),
+              if (summary.samples > 0) ...[
+                const SizedBox(height: 10),
+                if (_isNutricionista)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '• Comidas clasificadas: ${summary.samples} (total comidas: ${summary.totalMeals}, con evitar: ${summary.redFlagMeals})',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: Colors.black87,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '• Alimentos con categorización Harvard: ${summary.totalTaggedItems}',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: Colors.black87,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+              ],
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: const Text(
+                  'Solo se contabilizan las Comidas, y solo alimentos con categoría Harvard asignada.',
+                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => PlanNutriPacienteDetailScreen(
+                    plan: plan,
+                  ),
+                ),
+              );
+            },
+            icon: const Icon(Icons.visibility_outlined, size: 18),
+            label: const Text('Ver detalle'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _downloadAndOpenFile(int codigo, String fileName) async {
@@ -424,11 +930,22 @@ class _PlanesPacienteListScreenState extends State<PlanesPacienteListScreen> {
                       }
 
                       final planes = snapshot.data!;
+                      final bottomSafePadding =
+                          MediaQuery.of(context).padding.bottom;
                       return ListView.builder(
-                        padding: const EdgeInsets.all(12.0),
+                        padding: EdgeInsets.fromLTRB(
+                          12,
+                          8,
+                          12,
+                          28 + bottomSafePadding + 24,
+                        ),
                         itemCount: planes.length,
                         itemBuilder: (context, index) {
                           final plan = planes[index];
+                          final isMobileDevice = Theme.of(context).platform ==
+                                  TargetPlatform.iOS ||
+                              Theme.of(context).platform ==
+                                  TargetPlatform.android;
 
                           return Card(
                             margin: const EdgeInsets.only(bottom: 12.0),
@@ -447,147 +964,333 @@ class _PlanesPacienteListScreenState extends State<PlanesPacienteListScreen> {
                                         ?.copyWith(fontWeight: FontWeight.bold),
                                   ),
                                   const SizedBox(height: 8),
-                                  Row(
-                                    children: [
-                                      const Text(
-                                        'Cumplimiento',
-                                        style: TextStyle(
-                                            fontWeight: FontWeight.w700),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      _loadingAdherenciaNutri
-                                          ? const SizedBox(
-                                              width: 20,
-                                              height: 20,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            )
-                                          : _buildCumplimientoCircle(
-                                              percent: _adherenciaNutri
-                                                      ?.porcentaje ??
-                                                  0,
-                                              onTap:
-                                                  _showAdherenciaRegistroRapidoNutri,
-                                            ),
-                                      const Spacer(),
-                                      TextButton.icon(
-                                        onPressed:
-                                            _showAdherenciaRegistroRapidoNutri,
-                                        icon: const Icon(
-                                            Icons.edit_calendar_outlined,
-                                            size: 18),
-                                        label: const Text('Registrar hoy'),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 12),
-
-                                  // Semanas (recuadro ancho)
                                   if (plan.semanas != null &&
                                       plan.semanas!.isNotEmpty)
                                     Container(
                                       width: double.infinity,
                                       padding: const EdgeInsets.symmetric(
-                                        horizontal: 12.0,
-                                        vertical: 8.0,
+                                        horizontal: 10,
+                                        vertical: 6,
                                       ),
                                       decoration: BoxDecoration(
                                         color: Colors.blue[50],
-                                        borderRadius: BorderRadius.circular(8),
+                                        borderRadius: BorderRadius.circular(16),
                                         border: Border.all(
                                           color: Colors.blue[200]!,
                                           width: 1,
                                         ),
                                       ),
                                       child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
                                         children: [
                                           const Icon(Icons.calendar_today,
-                                              size: 16),
-                                          const SizedBox(width: 8),
-                                          Expanded(
-                                            child:
-                                                Text('${plan.semanas} semanas'),
+                                              size: 14),
+                                          const SizedBox(width: 6),
+                                          Flexible(
+                                            child: Text(
+                                              '${plan.semanas} semanas',
+                                              textAlign: TextAlign.center,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
                                           ),
                                         ],
                                       ),
                                     ),
                                   if (plan.semanas != null &&
                                       plan.semanas!.isNotEmpty)
-                                    const SizedBox(height: 12),
+                                    const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      const Text(
+                                        'Cto.',
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.w700),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      () {
+                                        final isPlanExpired = plan.hasta !=
+                                                null &&
+                                            DateTime.now().isAfter(plan.hasta!);
+                                        return Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.end,
+                                          children: [
+                                            _loadingAdherenciaNutri
+                                                ? const SizedBox(
+                                                    width: 20,
+                                                    height: 20,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                    ),
+                                                  )
+                                                : _buildCumplimientoCircle(
+                                                    percent: _adherenciaNutri
+                                                            ?.porcentaje ??
+                                                        0,
+                                                    onTap:
+                                                        _showAdherenciaRegistroRapidoNutri,
+                                                    isEnabled: !isPlanExpired,
+                                                  ),
+                                          ],
+                                        );
+                                      }(),
+                                      const Spacer(),
+                                      if (!(plan.hasta != null &&
+                                          DateTime.now().isAfter(plan.hasta!)))
+                                        TextButton.icon(
+                                          onPressed:
+                                              _showAdherenciaRegistroRapidoNutri,
+                                          icon: const Icon(
+                                              Icons.edit_calendar_outlined,
+                                              size: 18),
+                                          label: const Text('Registrar hoy'),
+                                        ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
 
-                                  // Indicaciones (recuadro amarillo, sin label)
-                                  if (plan.planIndicacionesVisibleUsuario !=
+                                  // Indicaciones (recuadro amarillo, con leer mas)
+                                  if (!isMobileDevice &&
+                                      plan.planIndicacionesVisibleUsuario !=
                                           null &&
                                       plan.planIndicacionesVisibleUsuario!
                                           .isNotEmpty) ...[
                                     Container(
                                       width: double.infinity,
-                                      padding: const EdgeInsets.all(12.0),
+                                      padding: const EdgeInsets.fromLTRB(
+                                          12, 8, 12, 4),
                                       decoration: BoxDecoration(
-                                        color: Colors.amber[100],
+                                        color: Colors.amber[50],
                                         borderRadius: BorderRadius.circular(8),
                                         border: Border.all(
                                           color: Colors.amber[300]!,
                                           width: 1,
                                         ),
                                       ),
-                                      child: Text(
-                                        plan.planIndicacionesVisibleUsuario!,
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall,
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Icon(
+                                                Icons.lightbulb_outlined,
+                                                color: Colors.amber.shade800,
+                                                size: 15,
+                                              ),
+                                              const SizedBox(width: 5),
+                                              Text(
+                                                'Recomendaciones',
+                                                style: TextStyle(
+                                                  fontWeight: FontWeight.w700,
+                                                  color: Colors.amber.shade900,
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            _truncateRecomendaciones(
+                                              plan.planIndicacionesVisibleUsuario!,
+                                            ),
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodySmall,
+                                          ),
+                                          Align(
+                                            alignment: Alignment.centerRight,
+                                            child: TextButton.icon(
+                                              icon: const Icon(
+                                                Icons.read_more_outlined,
+                                                size: 14,
+                                              ),
+                                              label: const Text(
+                                                'Leer mas',
+                                                style: TextStyle(fontSize: 12),
+                                              ),
+                                              style: TextButton.styleFrom(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                  horizontal: 6,
+                                                  vertical: 0,
+                                                ),
+                                                minimumSize: Size.zero,
+                                                tapTargetSize:
+                                                    MaterialTapTargetSize
+                                                        .shrinkWrap,
+                                              ),
+                                              onPressed: () =>
+                                                  _showRecomendacionesDialog(
+                                                plan.planIndicacionesVisibleUsuario!,
+                                                plan,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                     const SizedBox(height: 12),
                                   ],
-
-                                  // Botones (URL + descarga en la misma linea)
-                                  if ((plan.url != null &&
-                                          plan.url!.isNotEmpty) ||
-                                      (plan.planDocumentoNombre != null &&
-                                          plan.planDocumentoNombre!.isNotEmpty))
+                                  // Botón Web (si existe URL)
+                                  if (plan.url != null && plan.url!.isNotEmpty)
                                     Padding(
                                       padding:
                                           const EdgeInsets.only(bottom: 12.0),
                                       child: Row(
                                         children: [
-                                          if (plan.url != null &&
-                                              plan.url!.isNotEmpty)
-                                            Expanded(
-                                              child: ElevatedButton.icon(
-                                                onPressed: () =>
-                                                    _launchUrlExternal(
-                                                        plan.url ?? ''),
-                                                icon: const Icon(
-                                                    Icons.open_in_browser),
-                                                label: const Text('Web'),
-                                              ),
+                                          Expanded(
+                                            child: ElevatedButton.icon(
+                                              onPressed: () =>
+                                                  _launchUrlExternal(
+                                                      plan.url ?? ''),
+                                              icon: const Icon(
+                                                  Icons.open_in_browser),
+                                              label: const Text('Web'),
                                             ),
-                                          if (plan.url != null &&
-                                              plan.url!.isNotEmpty)
-                                            const SizedBox(width: 12),
-                                          if (plan.planDocumentoNombre !=
-                                                  null &&
-                                              plan.planDocumentoNombre!
-                                                  .isNotEmpty)
-                                            Expanded(
-                                              child: ElevatedButton.icon(
-                                                icon: const Icon(
-                                                  Icons
-                                                      .download_for_offline_outlined,
-                                                ),
-                                                label: const Text('Descargar'),
-                                                onPressed: () =>
-                                                    _downloadAndOpenFile(
-                                                  plan.codigo,
-                                                  plan.planDocumentoNombre!,
-                                                ),
-                                              ),
-                                            ),
+                                          ),
                                         ],
                                       ),
                                     ),
+                                  FutureBuilder<_PlanHarvardSummary?>(
+                                    future: _planHarvardSummary(plan.codigo),
+                                    builder: (context, structureSnapshot) {
+                                      final summary = structureSnapshot.data;
+                                      final canShowPlanActions =
+                                          summary?.hasVisibleStructure ?? false;
+                                      final showHarvardChip = summary != null &&
+                                          summary.hasVisibleStructure &&
+                                          summary.totalTaggedItems >= 2;
+                                      final harvardColor = summary == null
+                                          ? Colors.grey.shade400
+                                          : _harvardSummaryColor(summary);
+
+                                      return Column(
+                                        children: [
+                                          if (showHarvardChip)
+                                            Align(
+                                              alignment: Alignment.centerLeft,
+                                              child: Tooltip(
+                                                message: summary.samples == 0
+                                                    ? 'Harvard del plan: sin datos para evaluar'
+                                                    : 'Harvard del plan: ${summary.fulfilled ? 'cumple' : 'no cumple'} — media ${summary.avgScore.toStringAsFixed(2)}/4 (${summary.avgPercent}%)',
+                                                child: InkWell(
+                                                  onTap: () =>
+                                                      _showHarvardPlanSummaryDialog(
+                                                    summary,
+                                                    plan,
+                                                  ),
+                                                  borderRadius:
+                                                      BorderRadius.circular(14),
+                                                  child: Container(
+                                                    margin:
+                                                        const EdgeInsets.only(
+                                                            bottom: 8),
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
+                                                      horizontal: 10,
+                                                      vertical: 5,
+                                                    ),
+                                                    decoration: BoxDecoration(
+                                                      color: harvardColor
+                                                          .withAlpha(30),
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              14),
+                                                      border: Border.all(
+                                                        color: harvardColor,
+                                                      ),
+                                                    ),
+                                                    child: const Text(
+                                                      '🥗 Harvard',
+                                                      style: TextStyle(
+                                                        fontSize: 12,
+                                                        fontWeight:
+                                                            FontWeight.w700,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          if (canShowPlanActions)
+                                            SizedBox(
+                                              width: double.infinity,
+                                              child: OutlinedButton.icon(
+                                                icon: const Icon(
+                                                  Icons.table_view_outlined,
+                                                  size: 18,
+                                                ),
+                                                label: const Text('Ver plan'),
+                                                onPressed: () {
+                                                  Navigator.of(context).push(
+                                                    MaterialPageRoute(
+                                                      builder: (context) =>
+                                                          PlanNutriPacienteDetailScreen(
+                                                        plan: plan,
+                                                      ),
+                                                    ),
+                                                  );
+                                                },
+                                              ),
+                                            ),
+                                          if (canShowPlanActions)
+                                            const SizedBox(height: 8),
+                                          Row(
+                                            children: [
+                                              if (canShowPlanActions)
+                                                Expanded(
+                                                  child: OutlinedButton.icon(
+                                                    icon: const Icon(
+                                                      Icons
+                                                          .picture_as_pdf_outlined,
+                                                      size: 18,
+                                                    ),
+                                                    label: const Text('PDF'),
+                                                    onPressed: () =>
+                                                        PlanNutriPdfService
+                                                            .generateWithOptions(
+                                                      context: context,
+                                                      apiService: _apiService,
+                                                      plan: plan,
+                                                    ),
+                                                  ),
+                                                ),
+                                              if (canShowPlanActions &&
+                                                  plan.planDocumentoNombre !=
+                                                      null &&
+                                                  plan.planDocumentoNombre!
+                                                      .isNotEmpty)
+                                                const SizedBox(width: 8),
+                                              if (plan.planDocumentoNombre !=
+                                                      null &&
+                                                  plan.planDocumentoNombre!
+                                                      .isNotEmpty)
+                                                Expanded(
+                                                  child: OutlinedButton.icon(
+                                                    icon: const Icon(
+                                                      Icons
+                                                          .download_for_offline_outlined,
+                                                      size: 18,
+                                                    ),
+                                                    label:
+                                                        const Text('Descargar'),
+                                                    onPressed: () =>
+                                                        _downloadAndOpenFile(
+                                                      plan.codigo,
+                                                      plan.planDocumentoNombre!,
+                                                    ),
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        ],
+                                      );
+                                    },
+                                  ),
                                 ],
                               ),
                             ),
@@ -625,4 +1328,28 @@ class _PlanesPacienteListScreenState extends State<PlanesPacienteListScreen> {
       }
     }
   }
+}
+
+class _PlanHarvardSummary {
+  const _PlanHarvardSummary({
+    required this.hasVisibleStructure,
+    required this.samples,
+    required this.samplesWithTag,
+    required this.totalMeals,
+    required this.totalTaggedItems,
+    required this.redFlagMeals,
+    required this.avgScore,
+    required this.avgPercent,
+    required this.fulfilled,
+  });
+
+  final bool hasVisibleStructure;
+  final int samples;
+  final int samplesWithTag;
+  final int totalMeals;
+  final int totalTaggedItems;
+  final int redFlagMeals;
+  final double avgScore;
+  final int avgPercent;
+  final bool fulfilled;
 }

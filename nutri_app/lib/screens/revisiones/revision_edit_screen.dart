@@ -86,7 +86,10 @@ class _RevisionEditScreenState extends State<RevisionEditScreen> {
 
   Future<bool> _confirmDiscardChanges() async {
     if (!_hasChanges) return true;
-    return showUnsavedChangesDialog(context);
+    return showUnsavedChangesDialog(
+      context,
+      onSave: () => _saveForm(closeOnSuccess: false),
+    );
   }
 
   Future<void> _handleBack() async {
@@ -169,9 +172,14 @@ class _RevisionEditScreenState extends State<RevisionEditScreen> {
         _fechaRealizacion = newDateTime;
       }
     });
+    _markDirty();
   }
 
-  void _submitForm() async {
+  void _submitForm() {
+    _saveForm(closeOnSuccess: true);
+  }
+
+  Future<bool> _saveForm({required bool closeOnSuccess}) async {
     if (_formKey.currentState!.validate()) {
       final revisionData = Revision(
         codigo: widget.revision?.codigo ?? 0,
@@ -195,6 +203,7 @@ class _RevisionEditScreenState extends State<RevisionEditScreen> {
         }
 
         if (success) {
+          _hasChanges = false;
           // Mostrar mensaje según sea alta o modificación
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -204,7 +213,10 @@ class _RevisionEditScreenState extends State<RevisionEditScreen> {
               backgroundColor: Colors.green,
             ),
           );
-          Navigator.of(context).pop();
+          if (closeOnSuccess && mounted) {
+            Navigator.of(context).pop(true);
+          }
+          return true;
         } else {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
               content: Text('Error al guardar'), backgroundColor: Colors.red));
@@ -214,6 +226,7 @@ class _RevisionEditScreenState extends State<RevisionEditScreen> {
             SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
       }
     }
+    return false;
   }
 
   @override
@@ -269,6 +282,7 @@ class _RevisionEditScreenState extends State<RevisionEditScreen> {
                               setState(() {
                                 _selectedPacienteId = value;
                               });
+                              _markDirty();
                             },
                             validator: (value) =>
                                 value == null ? 'Selecciona un paciente' : null,
@@ -301,13 +315,18 @@ class _RevisionEditScreenState extends State<RevisionEditScreen> {
                         SwitchListTile(
                           title: const Text('Completada'),
                           value: _completada,
-                          onChanged: (value) =>
-                              setState(() => _completada = value),
+                          onChanged: (value) {
+                            setState(() => _completada = value);
+                            _markDirty();
+                          },
                         ),
                         SwitchListTile(
                           title: const Text('Online'),
                           value: _online,
-                          onChanged: (value) => setState(() => _online = value),
+                          onChanged: (value) {
+                            setState(() => _online = value);
+                            _markDirty();
+                          },
                         ),
                         TextFormField(
                           controller: _semanasController,

@@ -29,6 +29,7 @@ try {
             p.codigo,
             p.nombre,
             COALESCE(COUNT(DISTINCT pn.codigo), 0) as total_planes,
+            MAX(pn.desde) as fecha_ultimo_plan,
             COALESCE(COUNT(DISTINCT pe.codigo), 0) as total_entrevistas,
             COALESCE(COUNT(DISTINCT pef.codigo), 0) as total_entrevistas_fit,
             COALESCE(COUNT(DISTINCT pnf.codigo), 0) as total_planes_fit,

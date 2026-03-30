@@ -1,11 +1,14 @@
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:image/image.dart' as img;
 import 'package:nutri_app/models/paciente.dart';
 import 'package:nutri_app/models/usuario.dart';
 import 'package:nutri_app/services/api_service.dart';
+import 'package:nutri_app/services/auth_service.dart';
 import 'package:provider/provider.dart';
 import 'package:nutri_app/services/config_service.dart';
+import 'package:nutri_app/widgets/password_requirements_checklist.dart';
 import 'package:nutri_app/widgets/profile_image_picker.dart';
 import 'package:nutri_app/widgets/unsaved_changes_dialog.dart';
 
@@ -25,8 +28,17 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
   bool _isLoadingDefaults = true;
   bool _hasChanges = false;
   bool _isDisablingTwoFactor = false;
+  bool _premiumPanelExpanded = true;
+  String _passwordInput = '';
   int _maxImageWidth = 400;
   int _maxImageHeight = 400;
+
+  // Card expansion states
+  bool _datosUsuarioExpanded = false;
+  bool _datosProvidedoExpanded = false;
+  bool _cambioPasswordExpanded = false;
+  bool _tipoPatientExpanded = false;
+  bool _auditoriaPremiumExpanded = false;
 
   // Controllers
   late String _nick = '';
@@ -37,15 +49,31 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
   int? _codigoPaciente;
   int? _edad;
   int? _altura;
+  int? _premiumPeriodoMeses;
+  int? _premiumPeriodoMesesSolicitado;
+  DateTime? _premiumDesdeFecha;
+  DateTime? _premiumHastaFecha;
+  String? _premiumFormaPagoSolicitada;
+  String _premiumSolicitudPendiente = 'N';
+  DateTime? _premiumFechaSolicitud;
+  List<Map<String, dynamic>> _premiumAuditLog = const [];
+  bool _loadingPremiumAudit = false;
   bool _activo = true;
   bool _accesoWeb = true;
   String? _imageBase64;
 
-  final List<String> _tiposUsuario = ['Usuario', 'Paciente', 'Nutricionista'];
+  final List<String> _tiposUsuario = [
+    'Usuario',
+    'Paciente',
+    'Premium',
+    'Nutricionista',
+  ];
 
   @override
   void initState() {
     super.initState();
+    _refreshPasswordPolicies();
+    _loadCardStates();
     _pacientesFuture = _apiService.getPacientes();
     _loadMaxImageDimensions();
 
@@ -58,14 +86,31 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
       _codigoPaciente = u.codigoPaciente;
       _edad = u.edad;
       _altura = u.altura;
+      _premiumPeriodoMeses = u.premiumPeriodoMeses;
+      _premiumPeriodoMesesSolicitado = u.premiumPeriodoMesesSolicitado;
+      _premiumDesdeFecha = u.premiumDesdeFecha;
+      _premiumHastaFecha = u.premiumHastaFecha ?? u.premiumExpiraFecha;
+      _premiumFormaPagoSolicitada = u.premiumFormaPagoSolicitada;
+      _premiumSolicitudPendiente =
+          (u.premiumSolicitudPendiente ?? 'N').toUpperCase() == 'S' ? 'S' : 'N';
+      _premiumFechaSolicitud = u.premiumFechaSolicitud;
       _activo = u.activo == 'S';
       _accesoWeb = u.accesoweb == 'S';
       _imageBase64 = u.imgPerfil;
       _isLoadingDefaults = false;
+
+      _loadPremiumAuditLog();
     } else {
       // Si es nuevo usuario, cargar valores por defecto locales
       _loadDefaults();
     }
+  }
+
+  Future<void> _refreshPasswordPolicies() async {
+    final configService = context.read<ConfigService>();
+    await configService.loadPasswordPoliciesFromDatabase(_apiService);
+    if (!mounted) return;
+    setState(() {});
   }
 
   Future<void> _loadMaxImageDimensions() async {
@@ -95,11 +140,536 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
     setState(() => _isLoadingDefaults = false);
   }
 
+  Future<void> _loadCardStates() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (widget.usuario == null) return;
+    final userId = widget.usuario!.codigo;
+    final key = 'usuario_edit_card_states_$userId';
+    final states = prefs.getString(key);
+    if (states != null) {
+      try {
+        final decoded = jsonDecode(states) as Map<String, dynamic>;
+        if (!mounted) return;
+        setState(() {
+          _datosUsuarioExpanded = decoded['datosUsuario'] ?? false;
+          _datosProvidedoExpanded = decoded['datosSalud'] ?? false;
+          _cambioPasswordExpanded = decoded['cambioPassword'] ?? false;
+          _tipoPatientExpanded = decoded['tipoPaciente'] ?? false;
+          _auditoriaPremiumExpanded = decoded['auditoriaPremium'] ?? false;
+        });
+      } catch (_) {
+        // Si hay error, mantener valores por defecto
+      }
+    }
+  }
+
+  Future<void> _saveCardStates() async {
+    if (widget.usuario == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    final userId = widget.usuario!.codigo;
+    final key = 'usuario_edit_card_states_$userId';
+    final states = jsonEncode({
+      'datosUsuario': _datosUsuarioExpanded,
+      'datosSalud': _datosProvidedoExpanded,
+      'cambioPassword': _cambioPasswordExpanded,
+      'tipoPaciente': _tipoPatientExpanded,
+      'auditoriaPremium': _auditoriaPremiumExpanded,
+    });
+    await prefs.setString(key, states);
+  }
+
   void _markDirty() {
     if (_hasChanges) return;
     setState(() {
       _hasChanges = true;
     });
+  }
+
+  String _formatDate(DateTime? date) {
+    if (date == null) return '-';
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    final year = date.year.toString();
+    return '$day/$month/$year';
+  }
+
+  String _toIsoDate(DateTime? date) {
+    if (date == null) return '';
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    final year = date.year.toString();
+    return '$year-$month-$day';
+  }
+
+  DateTime _dateOnly(DateTime value) {
+    return DateTime(value.year, value.month, value.day);
+  }
+
+  DateTime _computePremiumHasta(DateTime desde, int months) {
+    final base = _dateOnly(desde);
+    return DateTime(base.year, base.month + months, base.day);
+  }
+
+  Future<void> _pickPremiumDesdeDate() async {
+    final initialDate = _premiumDesdeFecha ?? DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (picked == null) return;
+
+    setState(() {
+      _premiumDesdeFecha = _dateOnly(picked);
+      final months = _premiumPeriodoMeses ?? 1;
+      _premiumHastaFecha = _computePremiumHasta(_premiumDesdeFecha!, months);
+    });
+    _markDirty();
+  }
+
+  Future<void> _pickPremiumHastaDate() async {
+    final initialDate = _premiumHastaFecha ??
+        _computePremiumHasta(
+            _premiumDesdeFecha ?? DateTime.now(), _premiumPeriodoMeses ?? 1);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (picked == null) return;
+
+    setState(() {
+      _premiumHastaFecha = _dateOnly(picked);
+    });
+    _markDirty();
+  }
+
+  void _applySuggestedPremiumDates() {
+    final months = _premiumPeriodoMeses ?? 1;
+    final desde = _premiumDesdeFecha ?? DateTime.now();
+    setState(() {
+      _premiumDesdeFecha = _dateOnly(desde);
+      _premiumHastaFecha = _computePremiumHasta(_premiumDesdeFecha!, months);
+    });
+    _markDirty();
+  }
+
+  Future<void> _pickPremiumSolicitudDate() async {
+    final initialDate = _premiumFechaSolicitud ?? DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (picked == null) return;
+
+    setState(() {
+      _premiumFechaSolicitud = _dateOnly(picked);
+    });
+    _markDirty();
+  }
+
+  bool _canEditPremiumPanel(AuthService authService) {
+    if (widget.usuario == null) return false;
+    final userType = (authService.userType ?? '').trim().toLowerCase();
+    return userType == 'nutricionista' || userType == 'admin';
+  }
+
+  bool _hasPremiumPeriodData() {
+    return _premiumPeriodoMeses != null ||
+        _premiumDesdeFecha != null ||
+        _premiumHastaFecha != null;
+  }
+
+  Widget _buildPremiumCardSubtitle() {
+    final hasPremiumData = _hasPremiumPeriodData();
+    final hasPendingRequest = _premiumSolicitudPendiente == 'S';
+
+    if (hasPremiumData) {
+      final effectivePeriodoMeses =
+          _premiumPeriodoMeses ?? _premiumPeriodoMesesSolicitado;
+      final isSolicitadoFallback = _premiumPeriodoMeses == null &&
+          _premiumPeriodoMesesSolicitado != null;
+      final periodo = effectivePeriodoMeses != null
+          ? '$effectivePeriodoMeses mes${effectivePeriodoMeses == 1 ? '' : 'es'}${isSolicitadoFallback ? ' (solicitado)' : ''}'
+          : '-';
+      final desde = _formatDate(_premiumDesdeFecha);
+      final hasta = _formatDate(_premiumHastaFecha);
+
+      return Text(
+        'Período: $periodo | Desde: $desde | Hasta: $hasta',
+        style: TextStyle(
+          fontSize: 12,
+          color: Colors.grey.shade700,
+        ),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+
+    if (hasPendingRequest) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.orange.shade100,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.orange.shade300),
+          ),
+          child: Text(
+            'Solicitud Premium pendiente',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.orange.shade900,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Text(
+      'No hay solicitud Premium',
+      style: TextStyle(
+        fontSize: 12,
+        color: Colors.grey.shade700,
+      ),
+    );
+  }
+
+  Widget _buildPremiumManagementCard({required bool includeAudit}) {
+    return Card(
+      child: Column(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.workspace_premium_outlined),
+            title: const Text(
+              'Gestión Premium',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            subtitle: _buildPremiumCardSubtitle(),
+            trailing: Icon(
+              _premiumPanelExpanded ? Icons.expand_less : Icons.expand_more,
+            ),
+            onTap: () {
+              setState(() {
+                _premiumPanelExpanded = !_premiumPanelExpanded;
+              });
+            },
+          ),
+          if (_premiumPanelExpanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  DropdownButtonFormField<int>(
+                    initialValue: _premiumPeriodoMeses ?? 1,
+                    decoration: const InputDecoration(
+                      labelText: 'Período Premium (meses)',
+                      helperText:
+                          'Se propone un período desde/hasta, editable por nutricionista. Solo aplica para tipo Premium.',
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 1, child: Text('1 mes')),
+                      DropdownMenuItem(value: 3, child: Text('3 meses')),
+                      DropdownMenuItem(value: 6, child: Text('6 meses')),
+                      DropdownMenuItem(value: 12, child: Text('12 meses')),
+                    ],
+                    validator: (value) {
+                      if (_tipo != 'Premium') return null;
+                      if (value == null) {
+                        return 'Selecciona una duración para Premium';
+                      }
+                      return null;
+                    },
+                    onChanged: (value) {
+                      setState(() {
+                        _premiumPeriodoMeses = value;
+                        if (value != null && _premiumDesdeFecha != null) {
+                          _premiumHastaFecha =
+                              _computePremiumHasta(_premiumDesdeFecha!, value);
+                        }
+                      });
+                      _markDirty();
+                    },
+                    onSaved: (value) => _premiumPeriodoMeses = value,
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _pickPremiumDesdeDate,
+                          icon: const Icon(Icons.event_available),
+                          label: Text(
+                            'Desde: ${_formatDate(_premiumDesdeFecha)}',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _pickPremiumHastaDate,
+                          icon: const Icon(Icons.event_busy),
+                          label: Text(
+                            'Hasta: ${_formatDate(_premiumHastaFecha)}',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: _applySuggestedPremiumDates,
+                      icon: const Icon(Icons.auto_fix_high),
+                      label: const Text('Recalcular fechas sugeridas'),
+                    ),
+                  ),
+                  if (widget.usuario?.premiumExpiraFecha != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        'Vencimiento anterior: ${_formatDate(widget.usuario?.premiumExpiraFecha)}',
+                        style: TextStyle(
+                          color: Colors.grey.shade700,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    initialValue:
+                        _premiumPeriodoMesesSolicitado?.toString() ?? '',
+                    decoration: const InputDecoration(
+                      labelText: 'Período meses solicitado',
+                    ),
+                    keyboardType: TextInputType.number,
+                    onChanged: (value) {
+                      final parsed = int.tryParse(value.trim());
+                      _premiumPeriodoMesesSolicitado =
+                          (parsed != null && parsed > 0) ? parsed : null;
+                      _markDirty();
+                    },
+                    onSaved: (value) {
+                      final parsed = int.tryParse((value ?? '').trim());
+                      _premiumPeriodoMesesSolicitado =
+                          (parsed != null && parsed > 0) ? parsed : null;
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    initialValue: _premiumFormaPagoSolicitada ?? '',
+                    decoration: const InputDecoration(
+                      labelText: 'Forma de pago solicitada',
+                    ),
+                    onChanged: (value) {
+                      _premiumFormaPagoSolicitada =
+                          value.trim().isEmpty ? null : value.trim();
+                      _markDirty();
+                    },
+                    onSaved: (value) => _premiumFormaPagoSolicitada =
+                        (value ?? '').trim().isEmpty ? null : value!.trim(),
+                  ),
+                  const SizedBox(height: 4),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Solicitud premium pendiente'),
+                    value: _premiumSolicitudPendiente == 'S',
+                    onChanged: (value) {
+                      setState(() {
+                        _premiumSolicitudPendiente = value ? 'S' : 'N';
+                      });
+                      _markDirty();
+                    },
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _pickPremiumSolicitudDate,
+                          icon: const Icon(Icons.event_note),
+                          label: Text(
+                            'Fecha solicitud: ${_formatDate(_premiumFechaSolicitud)}',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        tooltip: 'Limpiar fecha solicitud',
+                        onPressed: () {
+                          setState(() {
+                            _premiumFechaSolicitud = null;
+                          });
+                          _markDirty();
+                        },
+                        icon: const Icon(Icons.clear),
+                      ),
+                    ],
+                  ),
+                  if (includeAudit) ...[
+                    const SizedBox(height: 8),
+                    Card(
+                      child: ExpansionTile(
+                        title: const Text('Auditoría premium'),
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: TextButton.icon(
+                                        onPressed: _loadingPremiumAudit
+                                            ? null
+                                            : _loadPremiumAuditLog,
+                                        icon:
+                                            const Icon(Icons.refresh, size: 16),
+                                        label: const Text('Actualizar'),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                if (_loadingPremiumAudit)
+                                  const Padding(
+                                    padding: EdgeInsets.only(top: 8),
+                                    child:
+                                        LinearProgressIndicator(minHeight: 2),
+                                  ),
+                                if (!_loadingPremiumAudit &&
+                                    _premiumAuditLog.isEmpty)
+                                  const Padding(
+                                    padding: EdgeInsets.only(top: 8),
+                                    child: Text(
+                                      'Sin eventos de auditoría premium para este usuario.',
+                                      style: TextStyle(fontSize: 13),
+                                    ),
+                                  ),
+                                if (_premiumAuditLog.isNotEmpty)
+                                  ..._premiumAuditLog.take(20).map((row) {
+                                    final fecha =
+                                        (row['fecha_accion'] ?? '').toString();
+                                    final accion =
+                                        (row['accion'] ?? '-').toString();
+                                    final detalle = (row['detalle'] ?? '')
+                                        .toString()
+                                        .trim();
+                                    final periodo =
+                                        (row['periodo_meses'] ?? '').toString();
+                                    final forma =
+                                        (row['forma_pago'] ?? '').toString();
+                                    final desde =
+                                        (row['premium_desde'] ?? '').toString();
+                                    final hasta =
+                                        (row['premium_hasta'] ?? '').toString();
+                                    return Padding(
+                                      padding: const EdgeInsets.only(top: 8),
+                                      child: Container(
+                                        width: double.infinity,
+                                        padding: const EdgeInsets.all(10),
+                                        decoration: BoxDecoration(
+                                          color: Colors.grey.shade50,
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          border: Border.all(
+                                            color: Colors.grey.shade300,
+                                          ),
+                                        ),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              accion,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w700,
+                                                fontSize: 13,
+                                              ),
+                                            ),
+                                            if (detalle.isNotEmpty)
+                                              Text(
+                                                detalle,
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                            Text(
+                                              'Fecha: ${fecha.isEmpty ? '-' : fecha}',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.grey.shade700,
+                                              ),
+                                            ),
+                                            Text(
+                                              'Desde: ${desde.trim().isEmpty ? '-' : desde} | Hasta: ${hasta.trim().isEmpty ? '-' : hasta}',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.grey.shade700,
+                                              ),
+                                            ),
+                                            if (periodo.isNotEmpty ||
+                                                forma.trim().isNotEmpty)
+                                              Text(
+                                                'Periodo: ${periodo.isEmpty ? '-' : periodo} | Pago: ${forma.trim().isEmpty ? '-' : forma}',
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.grey.shade700,
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  }),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _loadPremiumAuditLog() async {
+    final usuario = widget.usuario;
+    if (usuario == null) return;
+    setState(() {
+      _loadingPremiumAudit = true;
+    });
+    try {
+      final rows = await _apiService.getUsuarioPremiumAuditLog(usuario.codigo);
+      if (!mounted) return;
+      setState(() {
+        _premiumAuditLog = rows;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _premiumAuditLog = const [];
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _loadingPremiumAudit = false;
+      });
+    }
   }
 
   Future<bool> _confirmDiscardChanges() async {
@@ -182,9 +752,22 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
       // Redimensionar la imagen si excede los límites
       await _resizeImageIfNeeded();
 
-      // Si se asocia un paciente y el tipo no es Nutricionista, cambiar a Paciente
-      if (_codigoPaciente != null && _tipo != 'Nutricionista') {
+      // Si se asocia un paciente y el tipo es Usuario, cambiar a Paciente.
+      // Si ya es Premium, mantener Premium (caso: Paciente + Premium).
+      if (_codigoPaciente != null && _tipo == 'Usuario') {
         _tipo = 'Paciente';
+      }
+
+      if (_tipo == 'Premium') {
+        _premiumPeriodoMeses ??= 1;
+        _premiumDesdeFecha ??= _dateOnly(DateTime.now());
+        _premiumHastaFecha ??=
+            _computePremiumHasta(_premiumDesdeFecha!, _premiumPeriodoMeses!);
+        _premiumSolicitudPendiente = 'N';
+      } else {
+        _premiumPeriodoMeses = null;
+        _premiumDesdeFecha = null;
+        _premiumHastaFecha = null;
       }
 
       // Calcular automáticamente si es administrador según el tipo
@@ -204,6 +787,15 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
         'accesoweb': _accesoWeb ? 'S' : 'N',
         'administrador': isAdmin,
         'img_perfil': _imageBase64,
+        'premium_periodo_meses': _premiumPeriodoMeses,
+        'premium_desde_fecha':
+            _premiumDesdeFecha != null ? _toIsoDate(_premiumDesdeFecha) : null,
+        'premium_hasta_fecha':
+            _premiumHastaFecha != null ? _toIsoDate(_premiumHastaFecha) : null,
+        'premium_periodo_meses_solicitado': _premiumPeriodoMesesSolicitado,
+        'premium_forma_pago_solicitada': _premiumFormaPagoSolicitada,
+        'premium_solicitud_pendiente': _premiumSolicitudPendiente,
+        'premium_fecha_solicitud': _premiumFechaSolicitud?.toIso8601String(),
       };
 
       try {
@@ -376,6 +968,11 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final authService = context.watch<AuthService>();
+    final canEditPremiumPanel = _canEditPremiumPanel(authService);
+    final showPremiumPanel = canEditPremiumPanel ||
+        (widget.usuario == null && (_tipo ?? '') == 'Premium');
+
     if (_isLoadingDefaults) {
       return Scaffold(
         appBar: AppBar(
@@ -420,156 +1017,324 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
                     ),
                   ),
                   const SizedBox(height: 24),
-                  TextFormField(
-                    initialValue: widget.usuario?.nick,
-                    decoration:
-                        const InputDecoration(labelText: 'Nick / Usuario'),
-                    validator: (value) => (value == null || value.isEmpty)
-                        ? 'El nick es obligatorio'
-                        : null,
-                    onSaved: (value) => _nick = value!,
-                  ),
-                  TextFormField(
-                    initialValue: widget.usuario?.nombre ?? '',
-                    decoration:
-                        const InputDecoration(labelText: 'Nombre Completo'),
-                    onSaved: (value) => _nombre = value,
-                  ),
-                  TextFormField(
-                    initialValue: widget.usuario?.email ?? '',
-                    decoration: const InputDecoration(labelText: 'Email'),
-                    keyboardType: TextInputType.emailAddress,
-                    onSaved: (value) => _email = value,
-                  ),
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.orange.shade200),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  Card(
+                    child: ExpansionTile(
+                      title: const Text('Datos usuario'),
+                      onExpansionChanged: (expanded) {
+                        setState(() => _datosUsuarioExpanded = expanded);
+                        _saveCardStates();
+                      },
+                      initiallyExpanded: _datosUsuarioExpanded,
+                      subtitle: Text(
+                        '${_nick.isNotEmpty ? _nick : ""} ${_nombre?.isNotEmpty ?? false ? "/ ${_nombre}" : ""} ${_email?.isNotEmpty ?? false ? "/ ${_email}" : ""}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12),
+                      ),
                       children: [
-                        Icon(
-                          Icons.info_outline,
-                          color: Colors.orange.shade800,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            'Para habilitar cálculo de IMC, MVP y métricas de salud, indica Edad y Altura del usuario.',
-                            style: TextStyle(
-                              color: Colors.orange.shade900,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                            ),
+                        Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            children: [
+                              TextFormField(
+                                initialValue: widget.usuario?.nick,
+                                decoration: const InputDecoration(
+                                    labelText: 'Nick / Usuario'),
+                                validator: (value) =>
+                                    (value == null || value.isEmpty)
+                                        ? 'El nick es obligatorio'
+                                        : null,
+                                onSaved: (value) => _nick = value!,
+                                onChanged: (value) =>
+                                    setState(() => _nick = value),
+                              ),
+                              const SizedBox(height: 12),
+                              TextFormField(
+                                initialValue: widget.usuario?.nombre ?? '',
+                                decoration: const InputDecoration(
+                                    labelText: 'Nombre Completo'),
+                                onSaved: (value) => _nombre = value,
+                                onChanged: (value) =>
+                                    setState(() => _nombre = value),
+                              ),
+                              const SizedBox(height: 12),
+                              TextFormField(
+                                initialValue: widget.usuario?.email ?? '',
+                                decoration:
+                                    const InputDecoration(labelText: 'Email'),
+                                keyboardType: TextInputType.emailAddress,
+                                onSaved: (value) => _email = value,
+                                onChanged: (value) =>
+                                    setState(() => _email = value),
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(height: 12),
-                  TextFormField(
-                    initialValue: _edad?.toString() ?? '',
-                    decoration: const InputDecoration(labelText: 'Edad'),
-                    keyboardType: TextInputType.number,
-                    validator: (value) {
-                      if ((value ?? '').trim().isEmpty) return null;
-                      final parsed = int.tryParse(value!.trim());
-                      if (parsed == null || parsed <= 0 || parsed > 120) {
-                        return 'Edad no válida';
-                      }
-                      return null;
-                    },
-                    onSaved: (value) {
-                      final parsed = int.tryParse((value ?? '').trim());
-                      _edad = (parsed != null && parsed > 0) ? parsed : null;
-                    },
-                  ),
-                  TextFormField(
-                    initialValue: _altura?.toString() ?? '',
-                    decoration: const InputDecoration(labelText: 'Altura (cm)'),
-                    keyboardType: TextInputType.number,
-                    validator: (value) {
-                      if ((value ?? '').trim().isEmpty) return null;
-                      final parsed = int.tryParse(value!.trim());
-                      if (parsed == null || parsed < 80 || parsed > 250) {
-                        return 'Altura no válida';
-                      }
-                      return null;
-                    },
-                    onSaved: (value) {
-                      final parsed = int.tryParse((value ?? '').trim());
-                      _altura = (parsed != null && parsed > 0) ? parsed : null;
-                    },
-                  ),
-                  TextFormField(
-                    obscureText: true,
-                    decoration: InputDecoration(
-                        labelText: widget.usuario != null
-                            ? 'Nueva Contraseña (dejar en blanco para no cambiar)'
-                            : 'Contraseña',
-                        errorMaxLines: 3),
-                    validator: (value) {
-                      final configService = context.read<ConfigService>();
-
-                      // Solo obligatorio al crear nuevo usuario
-                      if (widget.usuario == null &&
-                          (value == null || value.isEmpty)) {
-                        return 'La contraseña es obligatoria';
-                      }
-
-                      // Si hay contraseña (nueva o creación), validar políticas
-                      if (value != null && value.isNotEmpty) {
-                        return configService.validatePassword(value);
-                      }
-
-                      return null;
-                    },
-                    onSaved: (value) => _password = value ?? '',
-                  ),
-                  const SizedBox(height: 16),
-                  DropdownButtonFormField<String>(
-                    initialValue: _tipo,
-                    decoration:
-                        const InputDecoration(labelText: 'Tipo de Usuario'),
-                    items: _tiposUsuario
-                        .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                        .toList(),
-                    validator: (value) => (value == null || value.isEmpty)
-                        ? 'El tipo de usuario es obligatorio'
-                        : null,
-                    onChanged: (value) => setState(() => _tipo = value),
-                    onSaved: (value) => _tipo = value,
-                  ),
-                  if (_tipo == 'Paciente') _buildPacientesDropdown(),
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.blue.shade200),
-                    ),
-                    child: Row(
+                  Card(
+                    child: ExpansionTile(
+                      title: const Text('Datos de Salud'),
+                      onExpansionChanged: (expanded) {
+                        setState(() => _datosProvidedoExpanded = expanded);
+                        _saveCardStates();
+                      },
+                      initiallyExpanded: _datosProvidedoExpanded,
                       children: [
-                        Icon(Icons.info_outline, color: Colors.blue.shade700),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            'Nutricionista = Administrador (control total)\nPaciente = Usuario con paciente asociado\nUsuario = Usuario registrado sin paciente',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Colors.blue.shade900,
-                            ),
+                        Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            children: [
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.shade50,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border:
+                                      Border.all(color: Colors.orange.shade200),
+                                ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Icon(
+                                      Icons.info_outline,
+                                      color: Colors.orange.shade800,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        'Para habilitar cálculo de IMC, MVP y métricas de salud, indica Edad y Altura del usuario.',
+                                        style: TextStyle(
+                                          color: Colors.orange.shade900,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              TextFormField(
+                                initialValue: _edad?.toString() ?? '',
+                                decoration:
+                                    const InputDecoration(labelText: 'Edad'),
+                                keyboardType: TextInputType.number,
+                                validator: (value) {
+                                  if ((value ?? '').trim().isEmpty) return null;
+                                  final parsed = int.tryParse(value!.trim());
+                                  if (parsed == null ||
+                                      parsed <= 0 ||
+                                      parsed > 120) {
+                                    return 'Edad no válida';
+                                  }
+                                  return null;
+                                },
+                                onSaved: (value) {
+                                  final parsed =
+                                      int.tryParse((value ?? '').trim());
+                                  _edad = (parsed != null && parsed > 0)
+                                      ? parsed
+                                      : null;
+                                },
+                              ),
+                              const SizedBox(height: 12),
+                              TextFormField(
+                                initialValue: _altura?.toString() ?? '',
+                                decoration: const InputDecoration(
+                                    labelText: 'Altura (cm)'),
+                                keyboardType: TextInputType.number,
+                                validator: (value) {
+                                  if ((value ?? '').trim().isEmpty) return null;
+                                  final parsed = int.tryParse(value!.trim());
+                                  if (parsed == null ||
+                                      parsed < 80 ||
+                                      parsed > 250) {
+                                    return 'Altura no válida';
+                                  }
+                                  return null;
+                                },
+                                onSaved: (value) {
+                                  final parsed =
+                                      int.tryParse((value ?? '').trim());
+                                  _altura = (parsed != null && parsed > 0)
+                                      ? parsed
+                                      : null;
+                                },
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  Card(
+                    child: ExpansionTile(
+                      title: const Text('Cambio de Contraseña'),
+                      onExpansionChanged: (expanded) {
+                        setState(() => _cambioPasswordExpanded = expanded);
+                        _saveCardStates();
+                      },
+                      initiallyExpanded: _cambioPasswordExpanded,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            children: [
+                              TextFormField(
+                                obscureText: true,
+                                decoration: InputDecoration(
+                                    labelText: widget.usuario != null
+                                        ? 'Nueva Contraseña (dejar en blanco para no cambiar)'
+                                        : 'Contraseña',
+                                    errorMaxLines: 3),
+                                validator: (value) {
+                                  final configService =
+                                      context.read<ConfigService>();
+
+                                  // Solo obligatorio al crear nuevo usuario
+                                  if (widget.usuario == null &&
+                                      (value == null || value.isEmpty)) {
+                                    return 'La contraseña es obligatoria';
+                                  }
+
+                                  // Si hay contraseña (nueva o creación), validar políticas
+                                  if (value != null && value.isNotEmpty) {
+                                    return configService
+                                        .validatePassword(value);
+                                  }
+
+                                  return null;
+                                },
+                                onSaved: (value) => _password = value ?? '',
+                                onChanged: (value) {
+                                  setState(() {
+                                    _passwordInput = value;
+                                  });
+                                },
+                              ),
+                              const SizedBox(height: 12),
+                              PasswordRequirementsChecklist(
+                                policy: PasswordPolicyRequirements.fromConfig(
+                                  context.read<ConfigService>(),
+                                ),
+                                password: _passwordInput,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Card(
+                    child: ExpansionTile(
+                      title: const Text('Tipo, Paciente'),
+                      onExpansionChanged: (expanded) {
+                        setState(() => _tipoPatientExpanded = expanded);
+                        _saveCardStates();
+                      },
+                      initiallyExpanded: _tipoPatientExpanded,
+                      subtitle: FutureBuilder<String>(
+                        future: _getPacienteNombre(),
+                        builder: (context, snapshot) {
+                          final pacienteNombre = snapshot.data ?? '';
+                          final displayText = pacienteNombre.isEmpty
+                              ? (_tipo ?? 'Sin tipo')
+                              : '${_tipo ?? 'Sin tipo'} / $pacienteNombre';
+                          return Text(
+                            displayText,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12),
+                          );
+                        },
+                      ),
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            children: [
+                              DropdownButtonFormField<String>(
+                                initialValue: _tipo,
+                                decoration: const InputDecoration(
+                                    labelText: 'Tipo de Usuario'),
+                                items: _tiposUsuario
+                                    .map((t) => DropdownMenuItem(
+                                        value: t, child: Text(t)))
+                                    .toList(),
+                                validator: (value) =>
+                                    (value == null || value.isEmpty)
+                                        ? 'El tipo de usuario es obligatorio'
+                                        : null,
+                                onChanged: (value) => setState(() {
+                                  _tipo = value;
+                                  if (_tipo == 'Premium') {
+                                    _premiumPeriodoMeses ??= 1;
+                                    _premiumDesdeFecha ??=
+                                        _dateOnly(DateTime.now());
+                                    _premiumHastaFecha ??= _computePremiumHasta(
+                                      _premiumDesdeFecha!,
+                                      _premiumPeriodoMeses!,
+                                    );
+                                    _premiumSolicitudPendiente = 'N';
+                                  } else {
+                                    _premiumPeriodoMeses = null;
+                                    _premiumDesdeFecha = null;
+                                    _premiumHastaFecha = null;
+                                  }
+                                }),
+                                onSaved: (value) => _tipo = value,
+                              ),
+                              const SizedBox(height: 12),
+                              if (_tipo == 'Paciente' || _tipo == 'Premium')
+                                Column(
+                                  children: [
+                                    _buildPacientesDropdown(),
+                                    const SizedBox(height: 12),
+                                  ],
+                                ),
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue.shade50,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border:
+                                      Border.all(color: Colors.blue.shade200),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.info_outline,
+                                        color: Colors.blue.shade700),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        'Nutricionista = Administrador (control total)\nPaciente = Usuario con paciente asociado\nPremium = Usuario suscrito (con acceso ampliado)\nUsuario = Usuario registrado sin paciente',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: Colors.blue.shade900,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (showPremiumPanel) ...[
+                    const SizedBox(height: 12),
+                    _buildPremiumManagementCard(
+                      includeAudit: widget.usuario != null,
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   SwitchListTile(
                     title: const Text('Activo'),
@@ -664,5 +1429,17 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
         );
       },
     );
+  }
+
+  Future<String> _getPacienteNombre() async {
+    if (_codigoPaciente == null) return '';
+    try {
+      final pacientes = await _pacientesFuture;
+      final paciente = pacientes.firstWhere((p) => p.codigo == _codigoPaciente,
+          orElse: () => Paciente(codigo: 0, nombre: ''));
+      return paciente.nombre;
+    } catch (_) {
+      return '';
+    }
   }
 }

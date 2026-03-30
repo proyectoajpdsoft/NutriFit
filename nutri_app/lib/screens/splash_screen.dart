@@ -36,7 +36,7 @@ class _SplashScreenState extends State<SplashScreen> {
       if (!mounted) return;
 
       if (auth.isLoggedIn || auth.isGuestMode) {
-        if (auth.userType == 'Paciente' || auth.userType == 'Guest') {
+        if (auth.isPatientAreaUser) {
           Navigator.of(context).pushReplacement(
               MaterialPageRoute(builder: (_) => const PacienteHomeScreen()));
         } else {

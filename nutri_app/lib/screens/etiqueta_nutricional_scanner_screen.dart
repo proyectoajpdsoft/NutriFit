@@ -7,8 +7,11 @@ import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:camera/camera.dart';
+import 'package:image/image.dart' as img;
 import 'package:nutri_app/screens/contacto_nutricionista_screen.dart';
 import 'package:nutri_app/services/open_food_product_pdf_service.dart';
+import 'package:nutri_app/services/user_settings_service.dart';
 import 'package:nutri_app/widgets/image_viewer_dialog.dart'
     show showImageViewerDialog;
 import 'package:nutri_app/services/api_service.dart';
@@ -30,6 +33,12 @@ class _EtiquetaNutricionalScannerScreenState
     extends State<EtiquetaNutricionalScannerScreen> {
   static const String _trainingPrefsKey = 'ocr_training_entries_v1';
   static const String _trainingRemoteParamName = 'ocr_training_rules_json';
+  static const String _detectionModePrefsKey = 'scanner_detection_mode_v1';
+  static const String _infoBannerExpandedPrefsKey =
+      'scanner_info_banner_expanded_v1';
+  static const String _autoHintDismissedKey = 'scanner_hint_auto_v1';
+  static const String _barcodeHintDismissedKey = 'scanner_hint_barcode_v1';
+  static const String _ocrHintDismissedKey = 'scanner_hint_ocr_v1';
   final ImagePicker _picker = ImagePicker();
   final ApiService _apiService = ApiService();
 
@@ -43,13 +52,130 @@ class _EtiquetaNutricionalScannerScreenState
   _ScannerDetectionMode _detectionMode = _ScannerDetectionMode.auto;
   bool _modoEntrenamiento = false;
   bool _aprendizajeAplicado = false;
+  bool _infoBannerExpanded = true;
+  bool _autoHintDismissed = false;
+  bool _barcodeHintDismissed = false;
+  bool _ocrHintDismissed = false;
   List<_OcrTrainingEntry> _trainingEntries = const [];
 
   @override
   void initState() {
     super.initState();
+    _cargarModoDeteccion();
+    _cargarEstadoInfoBanner();
+    _cargarEstadoHints();
     _cargarEntrenamiento();
     _sincronizarReglasRemotasSilencioso();
+  }
+
+  String _serializeDetectionMode(_ScannerDetectionMode mode) {
+    switch (mode) {
+      case _ScannerDetectionMode.auto:
+        return 'auto';
+      case _ScannerDetectionMode.barcode:
+        return 'barcode';
+      case _ScannerDetectionMode.ocr:
+        return 'ocr';
+    }
+  }
+
+  _ScannerDetectionMode _parseDetectionMode(String? raw) {
+    switch ((raw ?? '').trim().toLowerCase()) {
+      case 'barcode':
+        return _ScannerDetectionMode.barcode;
+      case 'ocr':
+        return _ScannerDetectionMode.ocr;
+      case 'auto':
+      default:
+        return _ScannerDetectionMode.auto;
+    }
+  }
+
+  Future<void> _cargarModoDeteccion() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_detectionModePrefsKey);
+    final mode = _parseDetectionMode(raw);
+    if (!mounted) return;
+    setState(() {
+      _detectionMode = mode;
+    });
+  }
+
+  Future<void> _guardarModoDeteccion(_ScannerDetectionMode mode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+        _detectionModePrefsKey, _serializeDetectionMode(mode));
+  }
+
+  Future<void> _cargarEstadoInfoBanner() async {
+    final prefs = await SharedPreferences.getInstance();
+    final isExpanded = prefs.getBool(_infoBannerExpandedPrefsKey) ?? true;
+    if (!mounted) return;
+    setState(() {
+      _infoBannerExpanded = isExpanded;
+    });
+  }
+
+  Future<void> _guardarEstadoInfoBanner(bool isExpanded) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_infoBannerExpandedPrefsKey, isExpanded);
+  }
+
+  Future<void> _toggleInfoBannerExpanded() async {
+    final next = !_infoBannerExpanded;
+    if (!mounted) return;
+    setState(() {
+      _infoBannerExpanded = next;
+    });
+    await _guardarEstadoInfoBanner(next);
+  }
+
+  Future<void> _cargarEstadoHints() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _autoHintDismissed = prefs.getBool(_autoHintDismissedKey) ?? false;
+      _barcodeHintDismissed = prefs.getBool(_barcodeHintDismissedKey) ?? false;
+      _ocrHintDismissed = prefs.getBool(_ocrHintDismissedKey) ?? false;
+    });
+  }
+
+  Future<void> _dismissModeHint(_ScannerDetectionMode mode) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = mode == _ScannerDetectionMode.auto
+        ? _autoHintDismissedKey
+        : mode == _ScannerDetectionMode.barcode
+            ? _barcodeHintDismissedKey
+            : _ocrHintDismissedKey;
+    await prefs.setBool(key, true);
+    if (!mounted) return;
+    setState(() {
+      if (mode == _ScannerDetectionMode.auto) {
+        _autoHintDismissed = true;
+      } else if (mode == _ScannerDetectionMode.barcode)
+        _barcodeHintDismissed = true;
+      else
+        _ocrHintDismissed = true;
+    });
+  }
+
+  Future<void> _restoreModeHint(_ScannerDetectionMode mode) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = mode == _ScannerDetectionMode.auto
+        ? _autoHintDismissedKey
+        : mode == _ScannerDetectionMode.barcode
+            ? _barcodeHintDismissedKey
+            : _ocrHintDismissedKey;
+    await prefs.setBool(key, false);
+    if (!mounted) return;
+    setState(() {
+      if (mode == _ScannerDetectionMode.auto) {
+        _autoHintDismissed = false;
+      } else if (mode == _ScannerDetectionMode.barcode)
+        _barcodeHintDismissed = false;
+      else
+        _ocrHintDismissed = false;
+    });
   }
 
   Future<void> _cargarEntrenamiento() async {
@@ -287,10 +413,7 @@ class _EtiquetaNutricionalScannerScreenState
         'entries': _trainingEntries.map((entry) => entry.toJson()).toList(),
       });
 
-      final response = await _apiService.put(
-        'api/ocr_reglas.php',
-        body: body,
-      );
+      final response = await _apiService.put('api/ocr_reglas.php', body: body);
 
       if (!mounted) return;
       if (response.statusCode == 200) {
@@ -305,9 +428,9 @@ class _EtiquetaNutricionalScannerScreenState
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error al subir reglas: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error al subir reglas: $e')));
     }
   }
 
@@ -317,9 +440,7 @@ class _EtiquetaNutricionalScannerScreenState
       if (entries.isEmpty) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('No hay reglas remotas disponibles.'),
-          ),
+          const SnackBar(content: Text('No hay reglas remotas disponibles.')),
         );
         return;
       }
@@ -339,9 +460,9 @@ class _EtiquetaNutricionalScannerScreenState
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error al descargar reglas: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error al descargar reglas: $e')));
     }
   }
 
@@ -540,10 +661,12 @@ class _EtiquetaNutricionalScannerScreenState
       return;
     }
 
-    final azucarCtrl =
-        TextEditingController(text: current.azucarGr?.toStringAsFixed(2) ?? '');
-    final salCtrl =
-        TextEditingController(text: current.salGr?.toStringAsFixed(2) ?? '');
+    final azucarCtrl = TextEditingController(
+      text: current.azucarGr?.toStringAsFixed(2) ?? '',
+    );
+    final salCtrl = TextEditingController(
+      text: current.salGr?.toStringAsFixed(2) ?? '',
+    );
     final grasasCtrl = TextEditingController(
       text: current.grasasGr?.toStringAsFixed(2) ?? '',
     );
@@ -634,8 +757,9 @@ class _EtiquetaNutricionalScannerScreenState
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content:
-            Text('Corrección guardada. Se aplicará a etiquetas similares.'),
+        content: Text(
+          'Corrección guardada. Se aplicará a etiquetas similares.',
+        ),
         backgroundColor: Colors.green,
       ),
     );
@@ -677,7 +801,8 @@ class _EtiquetaNutricionalScannerScreenState
   }
 
   Future<_OpenFoodFactsProduct?> _buscarProductoOffPorCodigo(
-      String barcode) async {
+    String barcode,
+  ) async {
     final uri = Uri.parse(
       'https://world.openfoodfacts.org/api/v2/product/$barcode.json',
     );
@@ -709,20 +834,23 @@ class _EtiquetaNutricionalScannerScreenState
   }
 
   Future<_OpenFoodFactsProduct?> _buscarProductoOffPorNombre(
-      String query) async {
+    String query,
+  ) async {
     final normalized = query.trim();
     if (normalized.length < 3) {
       return null;
     }
 
-    final uri = Uri.parse('https://world.openfoodfacts.org/cgi/search.pl')
-        .replace(queryParameters: {
-      'search_terms': normalized,
-      'search_simple': '1',
-      'action': 'process',
-      'json': '1',
-      'page_size': '10',
-    });
+    final uri =
+        Uri.parse('https://world.openfoodfacts.org/cgi/search.pl').replace(
+      queryParameters: {
+        'search_terms': normalized,
+        'search_simple': '1',
+        'action': 'process',
+        'json': '1',
+        'page_size': '10',
+      },
+    );
 
     final response = await http.get(
       uri,
@@ -770,8 +898,9 @@ class _EtiquetaNutricionalScannerScreenState
     double? parseServingSizeGr(String? text) {
       if (text == null || text.trim().isEmpty) return null;
       final normalized = text.toLowerCase().replaceAll(',', '.');
-      final match =
-          RegExp(r'([0-9]+(?:\.[0-9]+)?)\s*(g|ml)\b').firstMatch(normalized);
+      final match = RegExp(
+        r'([0-9]+(?:\.[0-9]+)?)\s*(g|ml)\b',
+      ).firstMatch(normalized);
       if (match == null) return null;
       return double.tryParse(match.group(1)!);
     }
@@ -851,13 +980,19 @@ class _EtiquetaNutricionalScannerScreenState
 
   Future<void> _seleccionarYAnalizar(ImageSource source) async {
     try {
-      final picked = await _picker.pickImage(source: source, imageQuality: 85);
+      XFile? picked;
+      if (source == ImageSource.camera) {
+        picked = await _capturarImagenBarcodeConRecuadro();
+      } else {
+        picked = await _picker.pickImage(source: source, imageQuality: 85);
+      }
       if (picked == null) {
         return;
       }
+      final pickedFile = picked;
 
       setState(() {
-        _imagenSeleccionada = File(picked.path);
+        _imagenSeleccionada = File(pickedFile.path);
         _analizando = true;
         _textoDetectado = '';
         _nutrientes = null;
@@ -870,7 +1005,7 @@ class _EtiquetaNutricionalScannerScreenState
         throw Exception('OCR no disponible en esta plataforma');
       }
 
-      final inputImage = InputImage.fromFilePath(picked.path);
+      final inputImage = InputImage.fromFilePath(pickedFile.path);
       String? barcode;
       _OpenFoodFactsProduct? offProduct;
       NutrientesPorPorcion? parsed;
@@ -894,8 +1029,9 @@ class _EtiquetaNutricionalScannerScreenState
         await recognizer.close();
 
         raw = recognizedText.text;
-        final parsedBase =
-            NutrientesPorPorcion.parseRecognizedText(recognizedText);
+        final parsedBase = NutrientesPorPorcion.parseRecognizedText(
+          recognizedText,
+        );
         final parsedOcr = _aplicarEntrenamientoSiExiste(raw, parsedBase);
 
         if (parsedOcr.hasAnyValue) {
@@ -960,6 +1096,113 @@ class _EtiquetaNutricionalScannerScreenState
     }
   }
 
+  Future<XFile?> _capturarImagenBarcodeConRecuadro() async {
+    final frameRect = await _getBarcodeFrameRect();
+
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      return _picker.pickImage(source: ImageSource.camera, imageQuality: 85);
+    }
+
+    final capturedPath = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
+        builder: (_) =>
+            _BarcodeCameraCaptureScreen(frameRectNormalized: frameRect),
+      ),
+    );
+
+    if (capturedPath == null || capturedPath.trim().isEmpty) {
+      return null;
+    }
+
+    try {
+      final cropped = await _cropImageWithNormalizedRect(
+        filePath: capturedPath,
+        normalizedRect: frameRect,
+      );
+      return XFile(cropped ?? capturedPath);
+    } catch (_) {
+      return XFile(capturedPath);
+    }
+  }
+
+  Future<Rect> _getBarcodeFrameRect() async {
+    final authService = context.read<AuthService>();
+    final scope = UserSettingsService.buildScopeKey(
+      isGuestMode: authService.isGuestMode,
+      userCode: authService.userCode,
+      patientCode: authService.patientCode,
+      userType: authService.userType,
+    );
+    final width = await UserSettingsService.getBarcodeFrameWidthNormalized(
+      scope,
+    );
+    final height = await UserSettingsService.getBarcodeFrameHeightNormalized(
+      scope,
+    );
+
+    return _buildCenteredFrameRect(width: width, height: height, top: 0.36);
+  }
+
+  Rect _buildCenteredFrameRect({
+    required double width,
+    required double height,
+    required double top,
+  }) {
+    final safeWidth = width.clamp(0.1, 1.0);
+    final safeHeight = height.clamp(0.1, 1.0);
+    final left = ((1.0 - safeWidth) / 2).clamp(0.0, 1.0 - safeWidth);
+    final topClamped = top.clamp(0.0, 1.0 - safeHeight);
+    return Rect.fromLTWH(left, topClamped, safeWidth, safeHeight);
+  }
+
+  Future<String?> _cropImageWithNormalizedRect({
+    required String filePath,
+    required Rect normalizedRect,
+  }) async {
+    final sourceFile = File(filePath);
+    if (!await sourceFile.exists()) {
+      return null;
+    }
+
+    final bytes = await sourceFile.readAsBytes();
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) {
+      return null;
+    }
+
+    final left = (decoded.width * normalizedRect.left).round().clamp(
+          0,
+          decoded.width - 1,
+        );
+    final top = (decoded.height * normalizedRect.top).round().clamp(
+          0,
+          decoded.height - 1,
+        );
+
+    final maxCropWidth = decoded.width - left;
+    final maxCropHeight = decoded.height - top;
+
+    final cropWidth =
+        (decoded.width * normalizedRect.width).round().clamp(1, maxCropWidth);
+    final cropHeight = (decoded.height * normalizedRect.height)
+        .round()
+        .clamp(1, maxCropHeight);
+
+    final cropped = img.copyCrop(
+      decoded,
+      x: left,
+      y: top,
+      width: cropWidth,
+      height: cropHeight,
+    );
+
+    final outputPath =
+        '${Directory.systemTemp.path}${Platform.pathSeparator}nutrifit_barcode_crop_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    final outputFile = File(outputPath);
+    await outputFile.writeAsBytes(img.encodeJpg(cropped, quality: 92));
+    return outputFile.path;
+  }
+
   bool _esUsuarioAdmin(AuthService authService) {
     final userType = authService.userType;
     return userType == 'Nutricionista' || userType == 'Administrador';
@@ -973,9 +1216,7 @@ class _EtiquetaNutricionalScannerScreenState
     final isAdmin = _esUsuarioAdmin(authService);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Escáner de etiquetas'),
-      ),
+      appBar: AppBar(title: const Text('Escáner de etiquetas')),
       body: SafeArea(
         top: false,
         child: SingleChildScrollView(
@@ -996,25 +1237,54 @@ class _EtiquetaNutricionalScannerScreenState
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: Colors.cyan.shade300),
                 ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Icon(
-                      Icons.info_outline,
-                      color: Colors.cyan.shade800,
-                      size: 18,
-                    ),
-                    const SizedBox(width: 8),
-                    const Expanded(
-                      child: Text(
-                        'Haz una foto del código de barras de un producto (alimento) o bien selecciona una imagen de la galería. La app NutriFit detectará automáticamente, si se activa este modo, el código de barras, nombre de producto o tabla nutricional.',
-                        style: TextStyle(fontWeight: FontWeight.w600),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: _toggleInfoBannerExpanded,
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.info_outline,
+                            color: Colors.cyan.shade800,
+                            size: 18,
+                          ),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text(
+                              'Escáner de etiquetas de alimentos',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                          _buildCompactInfoButton(
+                            onPressed: _showUmbralesInfoDialog,
+                            tooltip: 'Información completa del proceso',
+                          ),
+                          const SizedBox(width: 4),
+                          Icon(
+                            _infoBannerExpanded
+                                ? Icons.expand_less
+                                : Icons.expand_more,
+                            color: Colors.cyan.shade800,
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 6),
-                    _buildCompactInfoButton(
-                      onPressed: _showUmbralesInfoDialog,
-                      tooltip: 'Información completa del proceso',
+                    AnimatedCrossFade(
+                      firstChild: const Padding(
+                        padding: EdgeInsets.only(top: 8, right: 28),
+                        child: Text(
+                          'Haz una foto del código de barras de un producto (alimento) o bien selecciona una imagen de la galería. La app NutriFit detectará automáticamente, si se activa este modo, el código de barras, nombre de producto o tabla nutricional.',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      secondChild: const SizedBox.shrink(),
+                      crossFadeState: _infoBannerExpanded
+                          ? CrossFadeState.showFirst
+                          : CrossFadeState.showSecond,
+                      duration: const Duration(milliseconds: 180),
+                      sizeCurve: Curves.easeInOut,
                     ),
                   ],
                 ),
@@ -1027,9 +1297,9 @@ class _EtiquetaNutricionalScannerScreenState
                 const SizedBox(height: 8),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Modo entrenamiento OCR (nutricionista)'),
+                  title: const Text('Modo entrenamiento OCR'),
                   subtitle: const Text(
-                    'Permite validar/corregir lecturas para mejorar futuras detecciones.',
+                    'Permite corregir lecturas para mejorar detecciones.',
                   ),
                   value: _modoEntrenamiento,
                   onChanged: _analizando
@@ -1043,6 +1313,135 @@ class _EtiquetaNutricionalScannerScreenState
               ],
               const SizedBox(height: 8),
               _buildDetectionModeSelector(),
+              if (_detectionMode == _ScannerDetectionMode.auto &&
+                  !_autoHintDismissed) ...[
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(10, 6, 4, 10),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.blue.shade200),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Icon(
+                          Icons.auto_awesome_outlined,
+                          color: Colors.blue.shade700,
+                          size: 18,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'En modo automático, la app intenta detectar primero el código de barras y, si no encuentra un producto válido, prueba con OCR sobre el nombre o la tabla nutricional.',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: () =>
+                            _dismissModeHint(_ScannerDetectionMode.auto),
+                        child: Tooltip(
+                          message:
+                              'Cerrar (mant. pulsado el botón de modo para volver a mostrarlo)',
+                          child: Icon(Icons.close,
+                              size: 14, color: Colors.blue.shade400),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              if (_detectionMode == _ScannerDetectionMode.barcode &&
+                  !_barcodeHintDismissed) ...[
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(10, 6, 4, 10),
+                  decoration: BoxDecoration(
+                    color: Colors.indigo.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.indigo.shade200),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Icon(
+                          Icons.crop_free,
+                          color: Colors.indigo.shade700,
+                          size: 18,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'En modo código de barras, la cámara muestra un recuadro guía y la app analiza sólo esa zona para mejorar la precisión.',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: () =>
+                            _dismissModeHint(_ScannerDetectionMode.barcode),
+                        child: Tooltip(
+                          message:
+                              'Cerrar (mant. pulsado el botón de modo para volver a mostrarlo)',
+                          child: Icon(Icons.close,
+                              size: 14, color: Colors.indigo.shade400),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              if (_detectionMode == _ScannerDetectionMode.ocr &&
+                  !_ocrHintDismissed) ...[
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(10, 6, 4, 10),
+                  decoration: BoxDecoration(
+                    color: Colors.deepOrange.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.deepOrange.shade200),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Icon(
+                          Icons.text_snippet_outlined,
+                          color: Colors.deepOrange.shade700,
+                          size: 18,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'En modo tabla nutricional, la app prioriza la lectura OCR del nombre y de la tabla nutricional, sin depender del código de barras.',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: () =>
+                            _dismissModeHint(_ScannerDetectionMode.ocr),
+                        child: Tooltip(
+                          message:
+                              'Cerrar (mant. pulsado el botón de modo para volver a mostrarlo)',
+                          child: Icon(Icons.close,
+                              size: 14, color: Colors.deepOrange.shade400),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 14),
               if (_analizando) ...[
                 const SizedBox(height: 20),
@@ -1228,9 +1627,9 @@ class _EtiquetaNutricionalScannerScreenState
                       margin: const EdgeInsets.only(bottom: 8),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(8),
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surfaceContainerHighest,
                       ),
                       child: Text(
                         _textoDetectado,
@@ -1266,9 +1665,9 @@ class _EtiquetaNutricionalScannerScreenState
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo abrir la imagen: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('No se pudo abrir la imagen: $e')));
     }
   }
 
@@ -1288,16 +1687,13 @@ class _EtiquetaNutricionalScannerScreenState
           padding: EdgeInsets.zero,
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
-        child: const Icon(
-          Icons.info_outline,
-          size: 18,
-          color: Colors.blue,
-        ),
+        child: const Icon(Icons.info_outline, size: 18, color: Colors.blue),
       ),
     );
   }
 
   Widget _buildDetectionModeSelector() {
+    // ── Botones de configuración de modo (pequeños, tipo toggle) ─────────
     Widget modeButton(
       _ScannerDetectionMode mode,
       IconData icon,
@@ -1314,7 +1710,9 @@ class _EtiquetaNutricionalScannerScreenState
                   setState(() {
                     _detectionMode = mode;
                   });
+                  _guardarModoDeteccion(mode);
                 },
+          onLongPress: _analizando ? null : () => _restoreModeHint(mode),
           child: Container(
             width: 42,
             height: 42,
@@ -1345,150 +1743,191 @@ class _EtiquetaNutricionalScannerScreenState
       );
     }
 
-    Widget searchButton() {
-      return Tooltip(
-        message: 'Buscar producto por nombre',
-        child: InkWell(
-          borderRadius: BorderRadius.circular(10),
-          onTap: _analizando ? null : _buscarProductoManualDialog,
-          child: Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Theme.of(context).dividerColor),
-            ),
-            child: Icon(
-              Icons.search,
-              size: 22,
-              color: Theme.of(context).colorScheme.onSurface,
-            ),
-          ),
-        ),
-      );
-    }
-
-    Widget captureButton({
+    // ── Botones de acción (anchos, con icono + etiqueta) ─────────────────
+    Widget actionButton({
       required IconData icon,
-      required String tooltip,
+      required String label,
       required Color color,
-      required VoidCallback onTap,
+      required VoidCallback? onTap,
     }) {
+      final disabled = _analizando;
       return Tooltip(
-        message: tooltip,
+        message: label,
         child: InkWell(
-          borderRadius: BorderRadius.circular(10),
-          onTap: _analizando ? null : onTap,
+          borderRadius: BorderRadius.circular(12),
+          onTap: disabled ? null : onTap,
           child: Container(
-            width: 42,
-            height: 42,
+            height: 54,
             decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(10),
+              color: disabled
+                  ? Theme.of(context).colorScheme.surface
+                  : color.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: color.withValues(alpha: 0.55),
-                width: 1.2,
+                color: disabled
+                    ? Theme.of(context).dividerColor
+                    : color.withValues(alpha: 0.55),
+                width: 1.4,
               ),
             ),
-            child: Icon(
-              icon,
-              size: 22,
-              color: _analizando
-                  ? Theme.of(context)
-                      .colorScheme
-                      .onSurface
-                      .withValues(alpha: 0.35)
-                  : color,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  icon,
+                  size: 24,
+                  color: disabled
+                      ? Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.35)
+                      : color,
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: disabled
+                        ? Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.35)
+                        : color,
+                  ),
+                ),
+              ],
             ),
           ),
         ),
       );
     }
 
-    return Wrap(
-      spacing: 6,
-      runSpacing: 6,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        modeButton(
-          _ScannerDetectionMode.auto,
-          Icons.auto_awesome,
-          'Modo automático',
+        // Fila 1: selector de modo (configuración)
+        Row(
+          children: [
+            Text(
+              'Modo',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurface
+                    .withValues(alpha: 0.50),
+              ),
+            ),
+            const SizedBox(width: 10),
+            modeButton(_ScannerDetectionMode.auto, Icons.auto_awesome,
+                'Modo automático'),
+            const SizedBox(width: 6),
+            modeButton(_ScannerDetectionMode.barcode, Icons.qr_code,
+                'Modo código de barras'),
+            const SizedBox(width: 6),
+            modeButton(_ScannerDetectionMode.ocr, Icons.table_chart_outlined,
+                'Modo tabla nutricional'),
+          ],
         ),
-        modeButton(
-          _ScannerDetectionMode.barcode,
-          Icons.qr_code,
-          'Modo código de barras',
-        ),
-        modeButton(
-          _ScannerDetectionMode.ocr,
-          Icons.table_chart_outlined,
-          'Modo tabla nutricional',
-        ),
-        searchButton(),
-        captureButton(
-          icon: Icons.photo_camera_outlined,
-          tooltip: 'Tomar foto',
-          color: Colors.deepPurple,
-          onTap: () => _seleccionarYAnalizar(ImageSource.camera),
-        ),
-        captureButton(
-          icon: Icons.photo_library_outlined,
-          tooltip: 'Galería',
-          color: Colors.teal,
-          onTap: () => _seleccionarYAnalizar(ImageSource.gallery),
+        const SizedBox(height: 10),
+        // Fila 2: botones de acción
+        Row(
+          children: [
+            Expanded(
+              child: actionButton(
+                icon: Icons.search,
+                label: 'Buscar',
+                color: Colors.blueGrey.shade600,
+                onTap: _buscarProductoManualDialog,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: actionButton(
+                icon: Icons.photo_camera_outlined,
+                label: 'Foto',
+                color: Colors.deepPurple,
+                onTap: () => _seleccionarYAnalizar(ImageSource.camera),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: actionButton(
+                icon: Icons.photo_library_outlined,
+                label: 'Galería',
+                color: Colors.teal,
+                onTap: () => _seleccionarYAnalizar(ImageSource.gallery),
+              ),
+            ),
+          ],
         ),
       ],
     );
   }
 
   Future<void> _buscarProductoManualDialog() async {
-    final controller = TextEditingController();
+    if (!mounted) return;
+    final screenContext = context;
+    String draftQuery = '';
     final query = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Buscar en Open Food Facts'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          textInputAction: TextInputAction.search,
-          decoration: const InputDecoration(
-            hintText: 'Nombre del producto',
-            border: OutlineInputBorder(),
+      context: screenContext,
+      useRootNavigator: true,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Buscar en Open Food Facts'),
+          content: TextField(
+            autofocus: true,
+            textInputAction: TextInputAction.search,
+            decoration: const InputDecoration(
+              hintText: 'Nombre del producto',
+              border: OutlineInputBorder(),
+            ),
+            onChanged: (value) {
+              setDialogState(() {
+                draftQuery = value;
+              });
+            },
+            onSubmitted: (value) =>
+                Navigator.of(dialogContext).pop(value.trim()),
           ),
-          onSubmitted: (value) => Navigator.pop(context, value.trim()),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(draftQuery.trim()),
+              child: const Text('Buscar'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('Buscar'),
-          ),
-        ],
       ),
     );
-    controller.dispose();
+
+    if (!mounted) return;
 
     if (query == null || query.trim().length < 3) {
       return;
     }
+    final searchQuery = query.trim();
 
     setState(() {
       _analizando = true;
     });
 
     try {
-      final product = await _buscarProductoOffPorNombre(query.trim());
+      final product = await _buscarProductoOffPorNombre(searchQuery);
       if (!mounted) return;
 
       if (product == null) {
         setState(() {
           _analizando = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
+        ScaffoldMessenger.of(screenContext).showSnackBar(
           const SnackBar(
             content: Text('No se encontró un producto válido con ese nombre.'),
           ),
@@ -1503,12 +1942,12 @@ class _EtiquetaNutricionalScannerScreenState
         _nutrientes = nutrientes;
         _fuenteLectura = 'Búsqueda manual por nombre (Open Food Facts)';
         if (_textoDetectado.trim().isEmpty) {
-          _textoDetectado = query.trim();
+          _textoDetectado = searchQuery;
         }
         _analizando = false;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(screenContext).showSnackBar(
         const SnackBar(content: Text('Producto encontrado en Open Food Facts')),
       );
     } catch (e) {
@@ -1516,9 +1955,9 @@ class _EtiquetaNutricionalScannerScreenState
       setState(() {
         _analizando = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error al buscar producto: $e')),
-      );
+      ScaffoldMessenger.of(
+        screenContext,
+      ).showSnackBar(SnackBar(content: Text('Error al buscar producto: $e')));
     }
   }
 
@@ -1585,8 +2024,10 @@ class _EtiquetaNutricionalScannerScreenState
     final barcode = _barcodeDetectado ?? product.barcode;
 
     bool isDangerousAdditive(String additive) {
-      final normalized =
-          additive.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+      final normalized = additive.toLowerCase().replaceAll(
+            RegExp(r'[^a-z0-9]'),
+            '',
+          );
       const dangerousCodes = {
         'e102',
         'e104',
@@ -1789,50 +2230,51 @@ class _EtiquetaNutricionalScannerScreenState
               runSpacing: 8,
               children: [
                 if (product.nutriScore.isNotEmpty)
-                  Builder(builder: (context) {
-                    final scoreColor = nutriScoreColor(product.nutriScore);
-                    return ActionChip(
-                      onPressed: _showNutriScoreInfoDialog,
-                      tooltip: '¿Qué significa Nutri-Score?',
-                      label: Text(
-                        'Nutri-Score ${product.nutriScore.toUpperCase()}',
-                        style: TextStyle(
-                          color: scoreColor,
-                          fontWeight: FontWeight.w700,
+                  Builder(
+                    builder: (context) {
+                      final scoreColor = nutriScoreColor(product.nutriScore);
+                      return ActionChip(
+                        onPressed: _showNutriScoreInfoDialog,
+                        tooltip: '¿Qué significa Nutri-Score?',
+                        label: Text(
+                          'Nutri-Score ${product.nutriScore.toUpperCase()}',
+                          style: TextStyle(
+                            color: scoreColor,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-                      backgroundColor: scoreColor.withValues(alpha: 0.16),
-                      side: BorderSide(
-                        color: scoreColor.withValues(alpha: 0.7),
-                      ),
-                      visualDensity: VisualDensity.compact,
-                    );
-                  }),
-                if (product.novaGroup != null)
-                  Builder(builder: (context) {
-                    final groupColor = novaColor(product.novaGroup);
-                    return ActionChip(
-                      onPressed: _showNovaInfoDialog,
-                      tooltip: '¿Qué significa NOVA?',
-                      label: Text(
-                        'NOVA ${product.novaGroup}',
-                        style: TextStyle(
-                          color: groupColor,
-                          fontWeight: FontWeight.w700,
+                        backgroundColor: scoreColor.withValues(alpha: 0.16),
+                        side: BorderSide(
+                          color: scoreColor.withValues(alpha: 0.7),
                         ),
-                      ),
-                      backgroundColor: groupColor.withValues(alpha: 0.14),
-                      side: BorderSide(
-                        color: groupColor.withValues(alpha: 0.45),
-                      ),
-                      visualDensity: VisualDensity.compact,
-                    );
-                  }),
-                if (product.nutriScore.isEmpty && product.novaGroup == null)
-                  const Text(
-                    'No disponible',
-                    style: TextStyle(fontSize: 12),
+                        visualDensity: VisualDensity.compact,
+                      );
+                    },
                   ),
+                if (product.novaGroup != null)
+                  Builder(
+                    builder: (context) {
+                      final groupColor = novaColor(product.novaGroup);
+                      return ActionChip(
+                        onPressed: _showNovaInfoDialog,
+                        tooltip: '¿Qué significa NOVA?',
+                        label: Text(
+                          'NOVA ${product.novaGroup}',
+                          style: TextStyle(
+                            color: groupColor,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        backgroundColor: groupColor.withValues(alpha: 0.14),
+                        side: BorderSide(
+                          color: groupColor.withValues(alpha: 0.45),
+                        ),
+                        visualDensity: VisualDensity.compact,
+                      );
+                    },
+                  ),
+                if (product.nutriScore.isEmpty && product.novaGroup == null)
+                  const Text('No disponible', style: TextStyle(fontSize: 12)),
               ],
             ),
             const SizedBox(height: 10),
@@ -1853,16 +2295,22 @@ class _EtiquetaNutricionalScannerScreenState
                 carbohidratos != null ||
                 sodio != null) ...[
               if (energiaKcal != null)
-                Text('Energía: $energiaKcal',
-                    style: const TextStyle(fontSize: 12)),
+                Text(
+                  'Energía: $energiaKcal',
+                  style: const TextStyle(fontSize: 12),
+                ),
               if (carbohidratos != null)
-                Text('Carbohidratos: $carbohidratos',
-                    style: const TextStyle(fontSize: 12)),
+                Text(
+                  'Carbohidratos: $carbohidratos',
+                  style: const TextStyle(fontSize: 12),
+                ),
               if (fibra != null)
                 Text('Fibra: $fibra', style: const TextStyle(fontSize: 12)),
               if (grasasSat != null)
-                Text('Grasas saturadas: $grasasSat',
-                    style: const TextStyle(fontSize: 12)),
+                Text(
+                  'Grasas saturadas: $grasasSat',
+                  style: const TextStyle(fontSize: 12),
+                ),
               if (sodio != null)
                 Text('Sodio: $sodio', style: const TextStyle(fontSize: 12)),
             ] else
@@ -1937,7 +2385,8 @@ class _EtiquetaNutricionalScannerScreenState
   }
 
   Future<void> _generarPdfProductoOpenFood(
-      _OpenFoodFactsProduct product) async {
+    _OpenFoodFactsProduct product,
+  ) async {
     await OpenFoodProductPdfService.generateProductPdf(
       context: context,
       apiService: _apiService,
@@ -1964,7 +2413,8 @@ class _EtiquetaNutricionalScannerScreenState
   }
 
   Future<void> _copiarDatosProductoOpenFood(
-      _OpenFoodFactsProduct product) async {
+    _OpenFoodFactsProduct product,
+  ) async {
     String joinList(List<String> values) =>
         values.isEmpty ? '-' : values.join(', ');
 
@@ -1972,17 +2422,22 @@ class _EtiquetaNutricionalScannerScreenState
       ..writeln('Producto: ${product.nombre}')
       ..writeln('Marca: ${product.marca.isEmpty ? '-' : product.marca}')
       ..writeln(
-          'Código de barras: ${(_barcodeDetectado ?? product.barcode).isEmpty ? '-' : (_barcodeDetectado ?? product.barcode)}')
+        'Código de barras: ${(_barcodeDetectado ?? product.barcode).isEmpty ? '-' : (_barcodeDetectado ?? product.barcode)}',
+      )
       ..writeln('Formato: ${product.quantity.isEmpty ? '-' : product.quantity}')
       ..writeln(
-          'Porción: ${(product.servingSize ?? '').trim().isEmpty ? '-' : product.servingSize}')
+        'Porción: ${(product.servingSize ?? '').trim().isEmpty ? '-' : product.servingSize}',
+      )
       ..writeln(
-          'Fuente: ${_fuenteLectura.trim().isEmpty ? '-' : _fuenteLectura}')
+        'Fuente: ${_fuenteLectura.trim().isEmpty ? '-' : _fuenteLectura}',
+      )
       ..writeln(
-          'Nutri-Score: ${product.nutriScore.isEmpty ? '-' : product.nutriScore.toUpperCase()}')
+        'Nutri-Score: ${product.nutriScore.isEmpty ? '-' : product.nutriScore.toUpperCase()}',
+      )
       ..writeln('NOVA: ${product.novaGroup?.toString() ?? '-'}')
       ..writeln(
-          'Ingredientes: ${product.ingredientes.isEmpty ? '-' : product.ingredientes}')
+        'Ingredientes: ${product.ingredientes.isEmpty ? '-' : product.ingredientes}',
+      )
       ..writeln('Etiquetas: ${joinList(product.labels)}')
       ..writeln('Categorías: ${joinList(product.categories)}')
       ..writeln('Países: ${joinList(product.countries)}')
@@ -2013,8 +2468,9 @@ class _EtiquetaNutricionalScannerScreenState
     if (authService.isGuestMode) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content:
-              Text('Regístrate para añadir productos a la lista de compra'),
+          content: Text(
+            'Regístrate para añadir productos a la lista de compra',
+          ),
         ),
       );
       return;
@@ -2022,9 +2478,9 @@ class _EtiquetaNutricionalScannerScreenState
 
     final ownerCode = authService.userCode;
     if (ownerCode == null || ownerCode.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Usuario no identificado')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Usuario no identificado')));
       return;
     }
 
@@ -2060,14 +2516,36 @@ class _EtiquetaNutricionalScannerScreenState
     };
 
     try {
-      final response = await _apiService.post(
-        'api/lista_compra.php',
-        body: jsonEncode(payload),
+      final existingItem = await _buscarItemListaCompraPorNombre(
+        ownerCode: ownerCode,
+        nombre: product.nombre,
       );
+
+      final response = existingItem != null
+          ? await _apiService.put(
+              'api/lista_compra.php',
+              body: jsonEncode(
+                _fusionarPayloadEscanerConItemExistente(
+                  existingItem: existingItem,
+                  scannerPayload: payload,
+                ),
+              ),
+            )
+          : await _apiService.post(
+              'api/lista_compra.php',
+              body: jsonEncode(payload),
+            );
 
       if (!mounted) return;
 
-      if (response.statusCode == 201) {
+      if (existingItem != null && response.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('El alimento ya existe, se ha actualizado'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      } else if (response.statusCode == 201) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Producto añadido a la lista de compra'),
@@ -2085,10 +2563,88 @@ class _EtiquetaNutricionalScannerScreenState
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error al añadir a la lista: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error al añadir a la lista: $e')));
     }
+  }
+
+  Future<Map<String, dynamic>?> _buscarItemListaCompraPorNombre({
+    required String ownerCode,
+    required String nombre,
+  }) async {
+    final response =
+        await _apiService.get('api/lista_compra.php?usuario=$ownerCode');
+    if (response.statusCode != 200) {
+      throw Exception('No se pudo consultar la lista de compra');
+    }
+
+    final List<dynamic> data = jsonDecode(response.body) as List<dynamic>;
+    final normalizedNombre = _normalizarNombreListaCompra(nombre);
+
+    for (final item in data) {
+      if (item is! Map<String, dynamic>) {
+        continue;
+      }
+      if (_normalizarNombreListaCompra(item['nombre']?.toString() ?? '') ==
+          normalizedNombre) {
+        return item;
+      }
+    }
+
+    return null;
+  }
+
+  Map<String, dynamic> _fusionarPayloadEscanerConItemExistente({
+    required Map<String, dynamic> existingItem,
+    required Map<String, dynamic> scannerPayload,
+  }) {
+    return <String, dynamic>{
+      ...existingItem,
+      ...scannerPayload,
+      'codigo': existingItem['codigo'],
+      'codigo_usuario':
+          existingItem['codigo_usuario'] ?? scannerPayload['codigo_usuario'],
+      'cantidad': existingItem['cantidad'],
+      'unidad': existingItem['unidad'],
+      'comprado': existingItem['comprado'] ?? 'N',
+      'fecha_caducidad': existingItem['fecha_caducidad'],
+      'fecha_compra': existingItem['fecha_compra'],
+      'notas': existingItem['notas'] ?? scannerPayload['notas'],
+    };
+  }
+
+  String _normalizarNombreListaCompra(String value) {
+    const replacements = <String, String>{
+      'á': 'a',
+      'à': 'a',
+      'ä': 'a',
+      'â': 'a',
+      'é': 'e',
+      'è': 'e',
+      'ë': 'e',
+      'ê': 'e',
+      'í': 'i',
+      'ì': 'i',
+      'ï': 'i',
+      'î': 'i',
+      'ó': 'o',
+      'ò': 'o',
+      'ö': 'o',
+      'ô': 'o',
+      'ú': 'u',
+      'ù': 'u',
+      'ü': 'u',
+      'û': 'u',
+      'ñ': 'n',
+    };
+
+    var normalized = value.trim().toLowerCase();
+    replacements.forEach((key, replacement) {
+      normalized = normalized.replaceAll(key, replacement);
+    });
+
+    return normalized.replaceAll(RegExp(r'\s+'), ' ');
   }
 
   String _inferirCategoriaListaCompra(_OpenFoodFactsProduct product) {
@@ -2243,14 +2799,18 @@ class _EtiquetaNutricionalScannerScreenState
                     SizedBox(height: 6),
                     Text('• Enfoca solo el código de barras.'),
                     Text(
-                        '• Si no tiene código de barras, enfoca únicamente la tabla de información nutricional.'),
+                      '• Si no tiene código de barras, enfoca únicamente la tabla de información nutricional.',
+                    ),
                     Text(
-                        '• Si fotografías el código de barras, que se vea completo y nítido.'),
+                      '• Si fotografías el código de barras, que se vea completo y nítido.',
+                    ),
                     Text('• Evita sombras, reflejos y baja iluminación.'),
                     Text(
-                        '• Mantén el móvil estable y el texto lo más recto posible.'),
+                      '• Mantén el móvil estable y el texto lo más recto posible.',
+                    ),
                     Text(
-                        '• Comprueba que números y unidades (g/ml) se lean nítidos.'),
+                      '• Comprueba que números y unidades (g/ml) se lean nítidos.',
+                    ),
                     Text('• Evita fotografiar etiquetas arrugadas o dañadas.'),
                   ],
                 ),
@@ -2295,7 +2855,8 @@ class _EtiquetaNutricionalScannerScreenState
             ),
             const SizedBox(width: 8),
             Expanded(
-                child: Text(meaning, style: const TextStyle(fontSize: 12))),
+              child: Text(meaning, style: const TextStyle(fontSize: 12)),
+            ),
           ],
         ),
       );
@@ -2352,7 +2913,8 @@ class _EtiquetaNutricionalScannerScreenState
             ),
             const SizedBox(width: 8),
             Expanded(
-                child: Text(meaning, style: const TextStyle(fontSize: 12))),
+              child: Text(meaning, style: const TextStyle(fontSize: 12)),
+            ),
           ],
         ),
       );
@@ -2425,15 +2987,38 @@ class _EtiquetaNutricionalScannerScreenState
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: Colors.blue.shade200),
       ),
-      child: const Row(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.info_outline, color: Colors.blue),
-          SizedBox(width: 8),
+          const Icon(Icons.info_outline, color: Colors.blue),
+          const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              'Si quieres información más exacta debes registrarte (es gratis) e indicar tu edad y medidas (peso, cintura, cadera, ...).',
-              style: TextStyle(fontSize: 13),
+            child: RichText(
+              text: TextSpan(
+                style: const TextStyle(fontSize: 13, color: Colors.black),
+                children: [
+                  const TextSpan(
+                      text: 'Si quieres información más exacta\u00A0'),
+                  WidgetSpan(
+                    alignment: PlaceholderAlignment.baseline,
+                    baseline: TextBaseline.alphabetic,
+                    child: GestureDetector(
+                      onTap: () {
+                        Navigator.pushNamed(context, '/register');
+                      },
+                      child: const Text(
+                        'regístrate (es gratis)',
+                        style: TextStyle(
+                          color: Colors.blue,
+                          fontWeight: FontWeight.w600,
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const TextSpan(text: '\u00A0e indica tu edad y altura.'),
+                ],
+              ),
             ),
           ),
         ],
@@ -2470,15 +3055,15 @@ class _EtiquetaNutricionalScannerScreenState
           Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              'Para obtener valores correctos, la imagen debe enfocarse bien sobre la tabla de información nutricional.',
+              'Para obtener valores correctos, la imagen debe enfocarse bien sobre el código de barras o sobre la tabla de información nutricional.',
             ),
           ),
           SizedBox(height: 6),
           Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              '• Centra la tabla completa dentro de la foto.\n'
-              '• Si buscas por API, encuadra bien el código de barras.\n'
+              '• Si escaneas el código de barras, céntralo en el recuadro.\n'
+              '• Si escaneas la tabla nutricional, asegúrate de que toda la tabla esté visible.\n'
               '• Evita fotos movidas, borrosas o con reflejos.\n'
               '• Usa buena luz y acércate lo suficiente para leer números.\n'
               '• Si el resultado no cuadra, repite la foto desde otro ángulo.',
@@ -2523,7 +3108,7 @@ class _EtiquetaNutricionalScannerScreenState
           ),
           const SizedBox(height: 6),
           const Text(
-            'Estos cálculos e información son orientativos y dependen, además, de la calidad de la foto/imagen. Para una valoración personalizada, consulta siempre tu dietista online.',
+            'Estos cálculos e información son orientativos y dependen, además, de la calidad de la foto/imagen y de si el producto existe en la base de datos Open Food Facts. Para una valoración personalizada, consulta siempre tu dietista online.',
             style: TextStyle(fontSize: 12),
           ),
           const SizedBox(height: 8),
@@ -2638,7 +3223,8 @@ class _EtiquetaNutricionalScannerScreenState
               const DataColumn(label: Text('Nutriente')),
               if (showPortionColumn)
                 DataColumn(
-                    label: Text('Porción (${_formatPorcionLabel(porcion)})')),
+                  label: Text('Porción (${_formatPorcionLabel(porcion)})'),
+                ),
               const DataColumn(label: Text('100 g')),
               const DataColumn(label: Text('Estado (100 g)')),
             ],
@@ -2649,10 +3235,12 @@ class _EtiquetaNutricionalScannerScreenState
                       DataCell(Text(item['nombre'] as String)),
                       if (showPortionColumn)
                         DataCell(
-                            Text(_formatGrValue(item['porcion'] as double?))),
+                          Text(_formatGrValue(item['porcion'] as double?)),
+                        ),
                       DataCell(Text(_formatGrValue(item['cien'] as double?))),
                       DataCell(
-                          _buildEstadoTag(item['estado'] as _EstadoNutriente)),
+                        _buildEstadoTag(item['estado'] as _EstadoNutriente),
+                      ),
                     ],
                   ),
                 )
@@ -2732,7 +3320,8 @@ class NutrientesPorPorcion {
       proteinaGr != null;
 
   static NutrientesPorPorcion parseRecognizedText(
-      RecognizedText recognizedText) {
+    RecognizedText recognizedText,
+  ) {
     final ocrLines = <_OcrLine>[];
     for (final block in recognizedText.blocks) {
       for (final line in block.lines) {
@@ -2780,22 +3369,13 @@ class NutrientesPorPorcion {
     final sal = _extractNutrientFromStructured(
       ocrLines,
       preferRightColumn: preferRightColumn,
-      keywords: const [
-        'sal',
-        'salt',
-        'sale',
-        'sel',
-      ],
+      keywords: const ['sal', 'salt', 'sale', 'sel'],
     );
 
     final sodio = _extractNutrientFromStructured(
       ocrLines,
       preferRightColumn: preferRightColumn,
-      keywords: const [
-        'sodio',
-        'sodium',
-        'natrium',
-      ],
+      keywords: const ['sodio', 'sodium', 'natrium'],
     );
 
     final grasas = _extractNutrientFromStructured(
@@ -2869,22 +3449,13 @@ class NutrientesPorPorcion {
     final sal = _extractNutrientePorPorcion(
       lines,
       preferRightColumn: preferRightColumn,
-      keywords: const [
-        'sal',
-        'salt',
-        'sale',
-        'sel',
-      ],
+      keywords: const ['sal', 'salt', 'sale', 'sel'],
     );
 
     final sodio = _extractNutrientePorPorcion(
       lines,
       preferRightColumn: preferRightColumn,
-      keywords: const [
-        'sodio',
-        'sodium',
-        'natrium',
-      ],
+      keywords: const ['sodio', 'sodium', 'natrium'],
     );
 
     final grasas = _extractNutrientePorPorcion(
@@ -2976,10 +3547,12 @@ class NutrientesPorPorcion {
     return text.replaceAll(',', '.');
   }
 
-  static final RegExp _valueRegex =
-      RegExp(r'([0-9o]{1,4}(?:\.[0-9o]{1,3})?)\s*(g|mg|ml)\b');
-  static final RegExp _numberOnlyRegex =
-      RegExp(r'([0-9o]{1,4}(?:\.[0-9o]{1,3})?)');
+  static final RegExp _valueRegex = RegExp(
+    r'([0-9o]{1,4}(?:\.[0-9o]{1,3})?)\s*(g|mg|ml)\b',
+  );
+  static final RegExp _numberOnlyRegex = RegExp(
+    r'([0-9o]{1,4}(?:\.[0-9o]{1,3})?)',
+  );
 
   static const List<String> _servingHints = [
     'porcion',
@@ -3097,8 +3670,11 @@ class NutrientesPorPorcion {
           if (hasPer100AndDual && index == candidates.length - 1) {
             score += 12;
           }
-          final scored =
-              _ValorUnidad(candidate.value, candidate.unit, score: score);
+          final scored = _ValorUnidad(
+            candidate.value,
+            candidate.unit,
+            score: score,
+          );
           if (best == null || scored.score > best.score) {
             best = scored;
           }
@@ -3160,8 +3736,11 @@ class NutrientesPorPorcion {
             }
           }
 
-          final scored =
-              _ValorUnidad(candidate.value, candidate.unit, score: score);
+          final scored = _ValorUnidad(
+            candidate.value,
+            candidate.unit,
+            score: score,
+          );
           if (best == null || scored.score > best.score) {
             best = scored;
           }
@@ -3270,8 +3849,11 @@ class NutrientesPorPorcion {
           }
         }
 
-        final scored =
-            _ValorUnidad(candidate.value, candidate.unit, score: score);
+        final scored = _ValorUnidad(
+          candidate.value,
+          candidate.unit,
+          score: score,
+        );
         if (best == null || scored.score > best.score) {
           best = scored;
         }
@@ -3296,6 +3878,295 @@ class _ValorUnidad {
   final double value;
   final String unit;
   final int score;
+}
+
+class _BarcodeCameraCaptureScreen extends StatefulWidget {
+  const _BarcodeCameraCaptureScreen({required this.frameRectNormalized});
+
+  final Rect frameRectNormalized;
+
+  @override
+  State<_BarcodeCameraCaptureScreen> createState() =>
+      _BarcodeCameraCaptureScreenState();
+}
+
+class _BarcodeCameraCaptureScreenState
+    extends State<_BarcodeCameraCaptureScreen> {
+  CameraController? _controller;
+  bool _initializing = true;
+  bool _capturing = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _initCamera();
+  }
+
+  Future<void> _initCamera() async {
+    try {
+      final cameras = await availableCameras();
+      if (cameras.isEmpty) {
+        setState(() {
+          _error = 'No se encontro camara disponible.';
+          _initializing = false;
+        });
+        return;
+      }
+
+      final camera = cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.back,
+        orElse: () => cameras.first,
+      );
+
+      final controller = CameraController(
+        camera,
+        ResolutionPreset.high,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
+
+      await controller.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+
+      await controller.setFlashMode(FlashMode.off);
+
+      setState(() {
+        _controller = controller;
+        _initializing = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'No se pudo iniciar la camara: $e';
+        _initializing = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _capture() async {
+    final controller = _controller;
+    if (controller == null || _capturing || !controller.value.isInitialized) {
+      return;
+    }
+
+    setState(() {
+      _capturing = true;
+    });
+
+    try {
+      final file = await controller.takePicture();
+      if (!mounted) return;
+      Navigator.of(context).pop(file.path);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _capturing = false;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('No se pudo tomar la foto: $e')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final topLabelRightInset =
+        screenWidth < 360 ? 102.0 : (screenWidth < 420 ? 94.0 : 86.0);
+    final captureButtonWidth =
+        screenWidth < 360 ? 264.0 : (screenWidth < 420 ? 296.0 : 320.0);
+    final captureLabelSize = screenWidth < 360 ? 21.0 : 24.0;
+    final captureIconSize = screenWidth < 360 ? 30.0 : 34.0;
+    final captureHorizontalInset = screenWidth < 360 ? 16.0 : 24.0;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (_controller != null && _controller!.value.isInitialized)
+              CameraPreview(_controller!),
+            if (_initializing) const Center(child: CircularProgressIndicator()),
+            if (_error != null)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Text(
+                    _error!,
+                    style: const TextStyle(color: Colors.white),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            if (!_initializing && _error == null)
+              CustomPaint(
+                painter: _BarcodeFocusFramePainter(
+                  normalizedRect: widget.frameRectNormalized,
+                ),
+              ),
+            if (!_initializing && _error == null)
+              Positioned(
+                top: 16,
+                left: 16,
+                right: topLabelRightInset,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Text(
+                    'Centra la etiqueta/codigo de barras dentro del recuadro',
+                    textAlign: TextAlign.left,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            if (!_initializing && _error == null)
+              Positioned(
+                top: 14,
+                right: 14,
+                child: Material(
+                  color: Colors.black54,
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    tooltip: 'Cancelar',
+                    onPressed:
+                        _capturing ? null : () => Navigator.of(context).pop(),
+                    icon:
+                        const Icon(Icons.close, color: Colors.white, size: 32),
+                    padding: const EdgeInsets.all(12),
+                  ),
+                ),
+              ),
+            Positioned(
+              left: captureHorizontalInset,
+              right: captureHorizontalInset,
+              bottom: 16,
+              child: Center(
+                child: SizedBox(
+                  width: captureButtonWidth,
+                  child: FilledButton.icon(
+                    onPressed: _capturing ? null : _capture,
+                    icon: _capturing
+                        ? const SizedBox(
+                            width: 28,
+                            height: 28,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 3,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Icon(Icons.camera_alt_outlined,
+                            size: captureIconSize),
+                    label: Text(
+                      'Capturar',
+                      style: TextStyle(
+                        fontSize: captureLabelSize,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.indigo,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 20),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BarcodeFocusFramePainter extends CustomPainter {
+  const _BarcodeFocusFramePainter({required this.normalizedRect});
+
+  final Rect normalizedRect;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final frame = Rect.fromLTWH(
+      size.width * normalizedRect.left,
+      size.height * normalizedRect.top,
+      size.width * normalizedRect.width,
+      size.height * normalizedRect.height,
+    );
+
+    final outer = Path()..addRect(Offset.zero & size);
+    final inner = Path()
+      ..addRRect(RRect.fromRectAndRadius(frame, const Radius.circular(14)));
+
+    final overlayPath = Path.combine(PathOperation.difference, outer, inner);
+    canvas.drawPath(overlayPath, Paint()..color = Colors.black54);
+
+    final borderPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(frame, const Radius.circular(14)),
+      borderPaint,
+    );
+
+    const corner = 22.0;
+    final cornerPaint = Paint()
+      ..color = Colors.lightGreenAccent
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4
+      ..strokeCap = StrokeCap.round;
+
+    void drawCorner(Offset p1, Offset p2, Offset p3) {
+      canvas.drawLine(p1, p2, cornerPaint);
+      canvas.drawLine(p2, p3, cornerPaint);
+    }
+
+    drawCorner(
+      Offset(frame.left, frame.top + corner),
+      Offset(frame.left, frame.top),
+      Offset(frame.left + corner, frame.top),
+    );
+    drawCorner(
+      Offset(frame.right - corner, frame.top),
+      Offset(frame.right, frame.top),
+      Offset(frame.right, frame.top + corner),
+    );
+    drawCorner(
+      Offset(frame.left, frame.bottom - corner),
+      Offset(frame.left, frame.bottom),
+      Offset(frame.left + corner, frame.bottom),
+    );
+    drawCorner(
+      Offset(frame.right - corner, frame.bottom),
+      Offset(frame.right, frame.bottom),
+      Offset(frame.right, frame.bottom - corner),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _BarcodeFocusFramePainter oldDelegate) {
+    return oldDelegate.normalizedRect != normalizedRect;
+  }
 }
 
 class _OcrTrainingEntry {

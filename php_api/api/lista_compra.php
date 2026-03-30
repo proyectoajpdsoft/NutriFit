@@ -110,15 +110,17 @@ function get_item($db, $codigo) {
     }
 }
 
-// Función para crear un item
-function create_item($db, $data, $codigo_usuario_auth) {
+// Función para crear un item.
+// $codigo_usuario_destino: usuario al que pertenecerá el item (puede diferir del autor cuando el nutricionista recomienda).
+// $codigo_usuario_auth:    usuario autenticado, se guarda en codusuarioa para auditoría.
+function create_item($db, $data, $codigo_usuario_destino, $codigo_usuario_auth) {
     try {
         $query = "INSERT INTO nu_lista_compra (codigo_usuario, nombre, descripcion, categoria, cantidad, unidad, comprado, fecha_caducidad, fecha_compra, notas, escaner_fuente, off_codigo_barras, off_nombre_producto, off_marca, off_nutri_score, off_nova_group, off_cantidad, off_porcion, off_ingredientes, off_nutriments_json, off_raw_json, codusuarioa, fechaa) VALUES (:codigo_usuario, :nombre, :descripcion, :categoria, :cantidad, :unidad, :comprado, :fecha_caducidad, :fecha_compra, :notas, :escaner_fuente, :off_codigo_barras, :off_nombre_producto, :off_marca, :off_nutri_score, :off_nova_group, :off_cantidad, :off_porcion, :off_ingredientes, :off_nutriments_json, :off_raw_json, :codusuarioa, NOW())";
         
         $stmt = $db->prepare($query);
         
         // Preparar variables con valores por defecto
-        $codigo_usuario = $codigo_usuario_auth;
+        $codigo_usuario = $codigo_usuario_destino;
         $nombre = isset($data['nombre']) ? $data['nombre'] : null;
         $descripcion = isset($data['descripcion']) ? $data['descripcion'] : null;
         $categoria = isset($data['categoria']) ? $data['categoria'] : null;
@@ -363,7 +365,14 @@ if ($method == 'GET') {
                 echo json_encode(array("message" => "Error al eliminar items"));
             }
         } else {
-            $item_id = create_item($db, $data, $codigo_usuario_auth);
+            // Nutricionistas y administradores pueden crear items en la lista de otro usuario
+            $tipo_auth = strtolower(trim((string)($user['tipo'] ?? '')));
+            $is_nutricionista_or_admin = ($tipo_auth === 'nutricionista' || $user['administrador'] === 'S');
+            $codigo_destino = $codigo_usuario_auth;
+            if ($is_nutricionista_or_admin && isset($data['target_usuario']) && intval($data['target_usuario']) > 0) {
+                $codigo_destino = intval($data['target_usuario']);
+            }
+            $item_id = create_item($db, $data, $codigo_destino, $codigo_usuario_auth);
             if ($item_id) {
                 http_response_code(201);
                 echo json_encode(array("message" => "Item creado", "codigo" => $item_id));

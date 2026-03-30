@@ -1,11 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:nutri_app/models/paciente.dart';
+import 'package:nutri_app/models/plan_nutri_estructura.dart';
 import 'package:nutri_app/models/plan_nutricional.dart';
 import 'package:nutri_app/screens/planes_nutricionales/plan_edit_screen.dart';
+import 'package:nutri_app/screens/planes_nutricionales/plan_nutri_estructura_screen.dart';
+import 'package:nutri_app/screens/planes_nutricionales/plan_nutri_reverse_builder_screen.dart';
 import 'package:nutri_app/services/adherencia_service.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/config_service.dart';
+import 'package:nutri_app/services/plan_nutri_pdf_service.dart';
+import 'package:nutri_app/services/plan_nutri_word_service.dart';
+import 'package:nutri_app/services/plan_nutri_excel_service.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
@@ -95,6 +101,12 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
     return null;
   }
 
+  String _truncateRecomendaciones(String text, {int maxChars = 200}) {
+    final normalized = text.trim();
+    if (normalized.length <= maxChars) return normalized;
+    return '${normalized.substring(0, maxChars)}...';
+  }
+
   bool _isTipoNutri(dynamic raw) {
     final value = raw?.toString().trim().toLowerCase() ?? '';
     return value == 'nutri' || value == 'plan_nutri';
@@ -109,6 +121,23 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
       case AdherenciaEstado.noRealizado:
         return Colors.red;
     }
+  }
+
+  bool _canOpenPlanStructure(PlanNutricional plan) {
+    if (plan.desde != null && plan.hasta != null) return true;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Primero debes introducir la fecha de inicio y la fecha de fin del plan para generar las semanas en el calendario.',
+        ),
+        backgroundColor: Colors.orange,
+      ),
+    );
+    return false;
+  }
+
+  bool _planNeedsDateRange(PlanNutricional plan) {
+    return plan.desde == null || plan.hasta == null;
   }
 
   String _estadoLabel(AdherenciaEstado estado) {
@@ -382,6 +411,7 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
     return 'Plan_${primeraPalabra}_${semanas}_Del_${desdeStr}_al_$hastaStr.pdf';
   }
 
+  // ignore: unused_element
   Future<void> _downloadAndOpenFile(PlanNutricional plan) async {
     final fileName = _buildFileName(plan);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -404,6 +434,24 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
         SnackBar(
             content: Text('Error en la descarga: $e'),
             backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  Future<void> _generatePlanPdf(PlanNutricional plan) async {
+    try {
+      await PlanNutriPdfService.generateWithOptions(
+        context: context,
+        apiService: _apiService,
+        plan: plan,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al generar PDF: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
@@ -621,12 +669,61 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
                                 ],
                               ),
                               const SizedBox(height: 8),
+                              // Indicaciones (recuadro amarillo, expandido al ancho)
+                              if (Theme.of(context).platform !=
+                                      TargetPlatform.iOS &&
+                                  Theme.of(context).platform !=
+                                      TargetPlatform.android &&
+                                  plan.planIndicacionesVisibleUsuario != null &&
+                                  plan.planIndicacionesVisibleUsuario!
+                                      .isNotEmpty) ...[
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(12.0),
+                                  decoration: BoxDecoration(
+                                    color: Colors.amber[100],
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: Colors.amber[300]!,
+                                      width: 1,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    _truncateRecomendaciones(
+                                      plan.planIndicacionesVisibleUsuario!,
+                                    ),
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                              ],
+                              const SizedBox(height: 8),
                               Builder(
                                 builder: (context) {
                                   final codigoPaciente = plan.codigoPaciente ??
                                       widget.paciente?.codigo;
+                                  final semanasWidget = (plan.semanas != null &&
+                                          plan.semanas!.isNotEmpty)
+                                      ? Chip(
+                                          avatar: const Icon(
+                                              Icons.calendar_today,
+                                              size: 16),
+                                          label:
+                                              Text('${plan.semanas} semanas'),
+                                          materialTapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                        )
+                                      : null;
                                   if (codigoPaciente == null ||
                                       codigoPaciente <= 0) {
+                                    if (semanasWidget != null) {
+                                      return Padding(
+                                        padding:
+                                            const EdgeInsets.only(bottom: 12.0),
+                                        child: semanasWidget,
+                                      );
+                                    }
                                     return const SizedBox.shrink();
                                   }
                                   return FutureBuilder<
@@ -647,86 +744,89 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
                                       }
                                       final pct =
                                           adhSnapshot.data?.porcentaje ?? 0;
-                                      return Row(
-                                        children: [
-                                          const Text(
-                                            'Cumplimiento paciente:',
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.w700,
+                                      return Padding(
+                                        padding:
+                                            const EdgeInsets.only(bottom: 12.0),
+                                        child: Wrap(
+                                          crossAxisAlignment:
+                                              WrapCrossAlignment.center,
+                                          spacing: 8,
+                                          runSpacing: 4,
+                                          children: [
+                                            if (semanasWidget != null)
+                                              semanasWidget,
+                                            Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Text(
+                                                  'Cto.:',
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 8),
+                                                _buildCumplimientoCircle(
+                                                  percent: pct,
+                                                  onTap: () =>
+                                                      _showCumplimientoDetalleNutri(
+                                                    codigoPaciente,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
-                                          ),
-                                          const SizedBox(width: 8),
-                                          _buildCumplimientoCircle(
-                                            percent: pct,
-                                            onTap: () =>
-                                                _showCumplimientoDetalleNutri(
-                                              codigoPaciente,
-                                            ),
-                                          ),
-                                        ],
+                                          ],
+                                        ),
                                       );
                                     },
                                   );
                                 },
                               ),
-                              const SizedBox(height: 12),
 
-                              // Semanas (con icono y tag)
-                              if (plan.semanas != null &&
-                                  plan.semanas!.isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(bottom: 12.0),
-                                  child: Chip(
-                                    avatar: const Icon(Icons.calendar_today,
-                                        size: 16),
-                                    label: Text('${plan.semanas} semanas'),
-                                    materialTapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                  ),
-                                ),
-
-                              // Indicaciones (recuadro amarillo, expandido al ancho)
-                              if (plan.planIndicacionesVisibleUsuario != null &&
-                                  plan.planIndicacionesVisibleUsuario!
-                                      .isNotEmpty) ...[
+                              if (_planNeedsDateRange(plan)) ...[
+                                const SizedBox(height: 8),
                                 Container(
                                   width: double.infinity,
-                                  padding: const EdgeInsets.all(12.0),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 8,
+                                  ),
                                   decoration: BoxDecoration(
-                                    color: Colors.amber[100],
+                                    color: Colors.orange.shade50,
                                     borderRadius: BorderRadius.circular(8),
                                     border: Border.all(
-                                      color: Colors.amber[300]!,
-                                      width: 1,
+                                      color: Colors.orange.shade200,
                                     ),
                                   ),
-                                  child: Text(
-                                    plan.planIndicacionesVisibleUsuario!,
-                                    style:
-                                        Theme.of(context).textTheme.bodySmall,
+                                  child: const Row(
+                                    children: [
+                                      Icon(
+                                        Icons.info_outline,
+                                        size: 16,
+                                        color: Colors.orange,
+                                      ),
+                                      SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          'Faltan fecha de inicio y/o fecha de fin. Para estructurar el plan, primero introdúcelas en Editar plan.',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.orange,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                const SizedBox(height: 12),
                               ],
 
-                              // Primera fila: Descargar, Completar, Clonar, URL
+                              // Primera fila: Completar, Clonar, Editar, Eliminar
                               Align(
                                 alignment: Alignment.centerLeft,
                                 child: Wrap(
                                   spacing: 4,
                                   runSpacing: 6,
                                   children: [
-                                    if (plan.planDocumentoNombre != null &&
-                                        plan.planDocumentoNombre!.isNotEmpty)
-                                      IconButton(
-                                        icon: const Icon(Icons
-                                            .download_for_offline_outlined),
-                                        color: Colors.blue,
-                                        onPressed: () =>
-                                            _downloadAndOpenFile(plan),
-                                        tooltip: 'Descargar',
-                                        iconSize: 30,
-                                      ),
                                     if (plan.completado != 'S')
                                       IconButton(
                                         icon: const Icon(Icons.check),
@@ -743,27 +843,6 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
                                       tooltip: 'Clonar',
                                       iconSize: 30,
                                     ),
-                                    if (plan.url != null &&
-                                        plan.url!.isNotEmpty)
-                                      IconButton(
-                                        icon: const Icon(Icons.open_in_browser),
-                                        color: Colors.blue,
-                                        onPressed: () =>
-                                            _launchUrlExternal(plan.url ?? ''),
-                                        tooltip: 'Ver en navegador',
-                                        iconSize: 30,
-                                      ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              // Segunda fila: Editar, Eliminar
-                              Align(
-                                alignment: Alignment.centerLeft,
-                                child: Wrap(
-                                  spacing: 4,
-                                  runSpacing: 6,
-                                  children: [
                                     IconButton(
                                       icon: const Icon(Icons.edit),
                                       color: Colors.blue,
@@ -778,6 +857,140 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
                                       onPressed: () =>
                                           _showDeleteConfirmation(plan),
                                       tooltip: 'Eliminar',
+                                      iconSize: 30,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              // Segunda fila: Estructurar normal, rápido, calendario, PDF
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: Wrap(
+                                  spacing: 4,
+                                  runSpacing: 6,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(
+                                          Icons.table_chart_outlined),
+                                      color: Colors.indigo,
+                                      onPressed: () async {
+                                        if (!_canOpenPlanStructure(plan)) {
+                                          return;
+                                        }
+                                        final changed =
+                                            await Navigator.of(context)
+                                                .push<bool>(
+                                          MaterialPageRoute(
+                                            builder: (context) =>
+                                                PlanNutriEstructuraScreen(
+                                              plan: plan,
+                                            ),
+                                          ),
+                                        );
+                                        if (changed == true) {
+                                          _refreshPlanes();
+                                        }
+                                      },
+                                      tooltip: 'Estructurar plan',
+                                      iconSize: 30,
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.ads_click_outlined,
+                                      ),
+                                      color: Colors.teal,
+                                      onPressed: () async {
+                                        if (!_canOpenPlanStructure(plan)) {
+                                          return;
+                                        }
+                                        await Navigator.of(context).push(
+                                          MaterialPageRoute(
+                                            builder: (context) =>
+                                                PlanNutriReverseBuilderScreen(
+                                              plan: plan,
+                                              onSwitchToNormal: () {
+                                                Navigator.of(
+                                                  context,
+                                                ).pushReplacement(
+                                                  MaterialPageRoute(
+                                                    builder: (context) =>
+                                                        PlanNutriEstructuraScreen(
+                                                      plan: plan,
+                                                    ),
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                          ),
+                                        );
+                                        _refreshPlanes();
+                                      },
+                                      tooltip: 'Estructurar rápido',
+                                      iconSize: 30,
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.calendar_month_outlined,
+                                      ),
+                                      color: Colors.amber.shade800,
+                                      onPressed: () async {
+                                        if (!_canOpenPlanStructure(plan)) {
+                                          return;
+                                        }
+                                        final changed =
+                                            await Navigator.of(context)
+                                                .push<bool>(
+                                          MaterialPageRoute(
+                                            builder: (context) =>
+                                                PlanNutriEstructuraScreen(
+                                              plan: plan,
+                                              openCalendarBuilderOnStart: true,
+                                            ),
+                                          ),
+                                        );
+                                        if (changed == true) {
+                                          _refreshPlanes();
+                                        }
+                                      },
+                                      tooltip: 'Estructurar desde calendario',
+                                      iconSize: 30,
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.picture_as_pdf_outlined,
+                                      ),
+                                      color: Colors.deepOrange,
+                                      onPressed: () => _generatePlanPdf(plan),
+                                      tooltip: 'Generar PDF del plan',
+                                      iconSize: 30,
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.article_outlined,
+                                      ),
+                                      color: Colors.blue.shade700,
+                                      onPressed: () => PlanNutriWordService
+                                          .generateWithOptions(
+                                        context: context,
+                                        apiService: _apiService,
+                                        plan: plan,
+                                      ),
+                                      tooltip: 'Word',
+                                      iconSize: 30,
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.table_chart_outlined,
+                                      ),
+                                      color: Colors.green.shade700,
+                                      onPressed: () => PlanNutriExcelService
+                                          .generateWithOptions(
+                                        context: context,
+                                        apiService: _apiService,
+                                        plan: plan,
+                                      ),
+                                      tooltip: 'Excel',
                                       iconSize: 30,
                                     ),
                                   ],
@@ -872,7 +1085,7 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Indicaciones (para el profesional):',
+                  'Indicaciones (pacciente):',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
@@ -888,7 +1101,7 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
                 ),
                 const SizedBox(height: 16),
                 const Text(
-                  'Indicaciones (visibles para el usuario):',
+                  'Indicaciones (visibles para paciente):',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
@@ -897,7 +1110,7 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
                   maxLines: 4,
                   minLines: 2,
                   decoration: const InputDecoration(
-                    hintText: 'Indicaciones visibles para el usuario...',
+                    hintText: 'Indicaciones visibles para el paciente...',
                     border: OutlineInputBorder(),
                     contentPadding: EdgeInsets.all(12),
                   ),
@@ -973,36 +1186,740 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
     }
   }
 
+  // ignore: unused_element
   String _truncateIndicaciones(String text, int maxChars) {
     if (text.length <= maxChars) return text;
     return text.substring(0, maxChars);
   }
 
-  Future<void> _clonPlan(PlanNutricional plan) async {
-    try {
-      // Confirmación de clonación
-      final confirm = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Clonar plan'),
-          content:
-              const Text('¿Desea realizar una copia del Plan Nutri actual?'),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('No')),
-            TextButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('Sí')),
+  bool _hasVisibleStructure(PlanNutriEstructura estructura) {
+    if (estructura.semanas.isEmpty) return false;
+    for (final semana in estructura.semanas) {
+      for (final dia in semana.dias) {
+        for (final ingesta in dia.ingestas) {
+          if (ingesta.items.isNotEmpty) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  String _normalizeCloneText(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u')
+        .replaceAll('ü', 'u')
+        .replaceAll('ñ', 'n')
+        .trim();
+  }
+
+  String _weekTitleForClone(PlanNutriSemana semana) {
+    final title = (semana.titulo ?? '').trim();
+    if (title.isNotEmpty) return title;
+    return 'Semana ${semana.numeroSemana}';
+  }
+
+  bool _isDefaultWeekTitle(String? title, int numeroSemana) {
+    final normalized = _normalizeCloneText(title ?? '');
+    return normalized.isEmpty || normalized == 'semana $numeroSemana';
+  }
+
+  List<_PlanNutriCloneBulkOption> _buildWeekdayBulkOptions(
+    List<_PlanNutriCloneWeekNode> weeks,
+  ) {
+    final map = <int, String>{};
+    for (final week in weeks) {
+      for (final day in week.days) {
+        map[day.dayOfWeek] = day.dayName;
+      }
+    }
+    final entries = map.entries.toList()
+      ..sort((a, b) => a.key.compareTo(b.key));
+    return entries
+        .map(
+          (entry) => _PlanNutriCloneBulkOption(
+            key: entry.key.toString(),
+            label: entry.value,
+            sortOrder: entry.key,
+          ),
+        )
+        .toList();
+  }
+
+  List<_PlanNutriCloneBulkOption> _buildMealBulkOptions(
+    List<_PlanNutriCloneWeekNode> weeks,
+  ) {
+    const mealOrder = {
+      'desayuno': 1,
+      'almuerzo': 2,
+      'comida': 3,
+      'merienda': 4,
+      'cena': 5,
+    };
+    final map = <String, _PlanNutriCloneBulkOption>{};
+    for (final week in weeks) {
+      for (final day in week.days) {
+        for (final meal in day.meals) {
+          map.putIfAbsent(
+            meal.normalizedType,
+            () => _PlanNutriCloneBulkOption(
+              key: meal.normalizedType,
+              label: meal.label,
+              sortOrder: mealOrder[meal.normalizedType] ?? 99,
+            ),
+          );
+        }
+      }
+    }
+    final values = map.values.toList()
+      ..sort((a, b) {
+        final cmp = a.sortOrder.compareTo(b.sortOrder);
+        if (cmp != 0) return cmp;
+        return a.label.compareTo(b.label);
+      });
+    return values;
+  }
+
+  List<_PlanNutriCloneWeekNode> _buildCloneSelectionTree(
+    PlanNutriEstructura estructura,
+  ) {
+    return estructura.semanas.map((semana) {
+      return _PlanNutriCloneWeekNode(
+        semana: semana,
+        selected: true,
+        days: semana.dias.map((dia) {
+          return _PlanNutriCloneDayNode(
+            dia: dia,
+            selected: true,
+            meals: dia.ingestas.map((ingesta) {
+              final label = ingesta.tipoIngesta.trim().isEmpty
+                  ? 'Ingesta'
+                  : ingesta.tipoIngesta.trim();
+              return _PlanNutriCloneMealNode(
+                ingesta: ingesta,
+                selected: true,
+                label: label,
+                normalizedType: _normalizeCloneText(label),
+              );
+            }).toList(),
+          );
+        }).toList(),
+      );
+    }).toList();
+  }
+
+  void _toggleWeekSelection(_PlanNutriCloneWeekNode week, bool selected) {
+    week.selected = selected;
+    for (final day in week.days) {
+      day.selected = selected;
+      for (final meal in day.meals) {
+        meal.selected = selected;
+      }
+    }
+  }
+
+  void _toggleDaySelection(
+      _PlanNutriCloneWeekNode week, _PlanNutriCloneDayNode day, bool selected) {
+    day.selected = selected;
+    for (final meal in day.meals) {
+      meal.selected = selected;
+    }
+    week.selected = week.days.any((entry) => entry.selected);
+  }
+
+  void _toggleMealSelection(
+    _PlanNutriCloneWeekNode week,
+    _PlanNutriCloneDayNode day,
+    _PlanNutriCloneMealNode meal,
+    bool selected,
+  ) {
+    meal.selected = selected;
+    day.selected = day.meals.any((entry) => entry.selected);
+    week.selected = week.days.any((entry) => entry.selected);
+  }
+
+  void _setAllCloneSelections(
+    List<_PlanNutriCloneWeekNode> weeks,
+    bool selected,
+  ) {
+    for (final week in weeks) {
+      _toggleWeekSelection(week, selected);
+    }
+  }
+
+  void _setWeekdaySelectionAcrossWeeks(
+    List<_PlanNutriCloneWeekNode> weeks,
+    int dayOfWeek,
+    bool selected,
+  ) {
+    for (final week in weeks) {
+      for (final day
+          in week.days.where((entry) => entry.dayOfWeek == dayOfWeek)) {
+        _toggleDaySelection(week, day, selected);
+      }
+    }
+  }
+
+  void _setMealSelectionAcrossWeeks(
+    List<_PlanNutriCloneWeekNode> weeks,
+    String normalizedMeal,
+    bool selected,
+  ) {
+    for (final week in weeks) {
+      for (final day in week.days) {
+        for (final meal in day.meals
+            .where((entry) => entry.normalizedType == normalizedMeal)) {
+          _toggleMealSelection(week, day, meal, selected);
+        }
+      }
+    }
+  }
+
+  bool _isWeekdaySelectedAcrossWeeks(
+    List<_PlanNutriCloneWeekNode> weeks,
+    int dayOfWeek,
+  ) {
+    final matchingDays = <_PlanNutriCloneDayNode>[];
+    for (final week in weeks) {
+      matchingDays.addAll(
+        week.days.where((entry) => entry.dayOfWeek == dayOfWeek),
+      );
+    }
+    if (matchingDays.isEmpty) return false;
+    return matchingDays.every((entry) => entry.selected);
+  }
+
+  bool _isMealSelectedAcrossWeeks(
+    List<_PlanNutriCloneWeekNode> weeks,
+    String normalizedMeal,
+  ) {
+    final matchingMeals = <_PlanNutriCloneMealNode>[];
+    for (final week in weeks) {
+      for (final day in week.days) {
+        matchingMeals.addAll(
+          day.meals.where((entry) => entry.normalizedType == normalizedMeal),
+        );
+      }
+    }
+    if (matchingMeals.isEmpty) return false;
+    return matchingMeals.every((entry) => entry.selected);
+  }
+
+  int _countSelectedWeeks(List<_PlanNutriCloneWeekNode> weeks) {
+    return weeks
+        .where((week) =>
+            week.days.any((day) => day.meals.any((meal) => meal.selected)))
+        .length;
+  }
+
+  PlanNutriEstructura _buildFilteredStructureForClone(
+    PlanNutriEstructura estructura,
+    List<_PlanNutriCloneWeekNode> weeks,
+  ) {
+    final clonedWeeks = <PlanNutriSemana>[];
+    var nextWeekNumber = 1;
+
+    for (final weekNode in weeks) {
+      final clonedDays = <PlanNutriDia>[];
+      for (final dayNode in weekNode.days) {
+        final clonedMeals = dayNode.meals
+            .where((meal) => meal.selected)
+            .map((meal) => PlanNutriIngesta.fromJson(meal.ingesta.toJson()))
+            .toList();
+        if (clonedMeals.isEmpty) continue;
+
+        final dayClone = PlanNutriDia.fromJson(dayNode.dia.toJson());
+        dayClone.codigo = null;
+        dayClone.ingestas = clonedMeals;
+        clonedDays.add(dayClone);
+      }
+
+      if (clonedDays.isEmpty) continue;
+
+      final weekClone = PlanNutriSemana.fromJson(weekNode.semana.toJson());
+      weekClone.codigo = null;
+      weekClone.numeroSemana = nextWeekNumber;
+      weekClone.orden = nextWeekNumber;
+      if (_isDefaultWeekTitle(weekClone.titulo, weekNode.semana.numeroSemana)) {
+        weekClone.titulo = 'Semana $nextWeekNumber';
+      }
+      weekClone.dias = clonedDays;
+      clonedWeeks.add(weekClone);
+      nextWeekNumber++;
+    }
+
+    return PlanNutriEstructura(
+      codigoPlanNutricional: 0,
+      tituloPlan: estructura.tituloPlan,
+      objetivoPlan: estructura.objetivoPlan,
+      planIndicaciones: estructura.planIndicaciones,
+      planIndicacionesVisibleUsuario: estructura.planIndicacionesVisibleUsuario,
+      recetas: const [],
+      semanas: clonedWeeks,
+    );
+  }
+
+  Future<String?> _showCloneTargetDialog() {
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        titlePadding: const EdgeInsets.fromLTRB(20, 16, 12, 0),
+        contentPadding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+        title: Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Clonar plan',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+            ),
+            Material(
+              color: Colors.grey.shade200,
+              shape: const CircleBorder(),
+              child: IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                tooltip: 'Cerrar',
+                onPressed: () => Navigator.of(context).pop(null),
+              ),
+            ),
           ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text('¿Dónde desea clonar el Plan Nutri?'),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () => Navigator.of(context).pop('mismo'),
+                    child: const Text(
+                      'Mismo paciente',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () => Navigator.of(context).pop('otro'),
+                    child: const Text(
+                      'Otro paciente',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<Paciente?> _showPacienteSelectorDialog({
+    int? initialSelectedPacienteId,
+  }) async {
+    try {
+      final pacientes = await _apiService.getPacientes();
+      if (pacientes.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No hay pacientes disponibles'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return null;
+      }
+
+      var tempSelected = initialSelectedPacienteId;
+      final searchController = TextEditingController();
+
+      final selectedId = await showDialog<int?>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setStateDialog) {
+            final query = searchController.text.trim().toLowerCase();
+            final filtered = pacientes.where((paciente) {
+              if (query.isEmpty) return true;
+              return paciente.nombre.toLowerCase().contains(query);
+            }).toList();
+
+            return AlertDialog(
+              title: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Seleccionar paciente',
+                      style: TextStyle(fontSize: 16),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 20),
+                    onPressed: () => Navigator.pop(dialogContext),
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.grey.shade200,
+                      padding: const EdgeInsets.all(4),
+                      minimumSize: const Size(32, 32),
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 520,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: searchController,
+                      decoration: const InputDecoration(
+                        hintText: 'Buscar paciente...',
+                        prefixIcon: Icon(Icons.search),
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (_) => setStateDialog(() {}),
+                    ),
+                    const SizedBox(height: 10),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 380),
+                      child: filtered.isEmpty
+                          ? const Center(child: Text('Sin resultados'))
+                          : ListView.separated(
+                              shrinkWrap: true,
+                              itemCount: filtered.length,
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (context, index) {
+                                final paciente = filtered[index];
+                                return ListTile(
+                                  dense: true,
+                                  onTap: () => setStateDialog(
+                                    () => tempSelected = paciente.codigo,
+                                  ),
+                                  leading: Radio<int>(
+                                    value: paciente.codigo,
+                                    groupValue: tempSelected,
+                                    onChanged: (value) => setStateDialog(
+                                      () => tempSelected = value,
+                                    ),
+                                  ),
+                                  title: Text(paciente.nombre),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(dialogContext, tempSelected),
+                  child: const Text('Aplicar'),
+                ),
+              ],
+            );
+          },
         ),
       );
 
-      if (confirm != true) return;
-      // Mostrar diálogo de progreso
+      if (selectedId == null) return null;
+      for (final paciente in pacientes) {
+        if (paciente.codigo == selectedId) return paciente;
+      }
+      return null;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al cargar pacientes: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return null;
+    }
+  }
+
+  Future<_PlanNutriCloneSelectionResult?> _showStructureCloneDialog(
+    PlanNutriEstructura estructura,
+  ) {
+    final weeks = _buildCloneSelectionTree(estructura);
+    final weekdayOptions = _buildWeekdayBulkOptions(weeks);
+    final mealOptions = _buildMealBulkOptions(weeks);
+
+    return showDialog<_PlanNutriCloneSelectionResult>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setStateDialog) {
+          final selectedWeekCount = _countSelectedWeeks(weeks);
+
+          return AlertDialog(
+            title: const Text('Seleccionar estructura a clonar'),
+            content: SizedBox(
+              width: 760,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 620),
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Marca las semanas, días e ingestas que quieres copiar. Los alimentos de cada ingesta marcada se clonarán completos.',
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton(
+                            onPressed: () => setStateDialog(
+                              () => _setAllCloneSelections(weeks, true),
+                            ),
+                            child: const Text('Marcar todo'),
+                          ),
+                          OutlinedButton(
+                            onPressed: () => setStateDialog(
+                              () => _setAllCloneSelections(weeks, false),
+                            ),
+                            child: const Text('Desmarcar todo'),
+                          ),
+                        ],
+                      ),
+                      if (weekdayOptions.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Días para todas las semanas',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: weekdayOptions.map((option) {
+                            final dayOfWeek = int.tryParse(option.key) ?? 0;
+                            final selected =
+                                _isWeekdaySelectedAcrossWeeks(weeks, dayOfWeek);
+                            return FilterChip(
+                              label: Text(option.label),
+                              selected: selected,
+                              onSelected: (_) => setStateDialog(
+                                () => _setWeekdaySelectionAcrossWeeks(
+                                  weeks,
+                                  dayOfWeek,
+                                  !selected,
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ],
+                      if (mealOptions.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Ingestas para todas las semanas',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: mealOptions.map((option) {
+                            final selected = _isMealSelectedAcrossWeeks(
+                              weeks,
+                              option.key,
+                            );
+                            return FilterChip(
+                              label: Text(option.label),
+                              selected: selected,
+                              onSelected: (_) => setStateDialog(
+                                () => _setMealSelectionAcrossWeeks(
+                                  weeks,
+                                  option.key,
+                                  !selected,
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      ...weeks.map((week) {
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                CheckboxListTile(
+                                  value: week.selected,
+                                  contentPadding: EdgeInsets.zero,
+                                  controlAffinity:
+                                      ListTileControlAffinity.leading,
+                                  title: Text(
+                                    _weekTitleForClone(week.semana),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    '${week.days.length} días',
+                                  ),
+                                  onChanged: (value) => setStateDialog(
+                                    () => _toggleWeekSelection(
+                                      week,
+                                      value ?? false,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                ...week.days.map((day) {
+                                  return Padding(
+                                    padding: const EdgeInsets.only(left: 12),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        CheckboxListTile(
+                                          value: day.selected,
+                                          dense: true,
+                                          contentPadding: EdgeInsets.zero,
+                                          controlAffinity:
+                                              ListTileControlAffinity.leading,
+                                          title: Text(day.dayName),
+                                          onChanged: (value) => setStateDialog(
+                                            () => _toggleDaySelection(
+                                              week,
+                                              day,
+                                              value ?? false,
+                                            ),
+                                          ),
+                                        ),
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            left: 24,
+                                            bottom: 8,
+                                          ),
+                                          child: Wrap(
+                                            spacing: 8,
+                                            runSpacing: 4,
+                                            children: day.meals.map((meal) {
+                                              return FilterChip(
+                                                label: Text(meal.label),
+                                                selected: meal.selected,
+                                                onSelected: (selected) =>
+                                                    setStateDialog(
+                                                  () => _toggleMealSelection(
+                                                    week,
+                                                    day,
+                                                    meal,
+                                                    selected,
+                                                  ),
+                                                ),
+                                              );
+                                            }).toList(),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }),
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop(
+                    _PlanNutriCloneSelectionResult(
+                      estructura: _buildFilteredStructureForClone(
+                        estructura,
+                        weeks,
+                      ),
+                      selectedWeekCount: selectedWeekCount,
+                    ),
+                  );
+                },
+                child: Text(
+                  selectedWeekCount > 0
+                      ? 'Clonar selección'
+                      : 'Clonar sin estructura',
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _clonPlan(PlanNutricional plan) async {
+    var progressVisible = false;
+    try {
+      final opcionClonacion = await _showCloneTargetDialog();
+      if (opcionClonacion == null) return;
+
+      var codigoPacienteDestino = plan.codigoPaciente;
+      var nombrePacienteDestino = plan.nombrePaciente;
+
+      if (opcionClonacion == 'otro') {
+        final pacienteDestino = await _showPacienteSelectorDialog(
+          initialSelectedPacienteId: plan.codigoPaciente,
+        );
+        if (pacienteDestino == null) return;
+        codigoPacienteDestino = pacienteDestino.codigo;
+        nombrePacienteDestino = pacienteDestino.nombre;
+      }
+
+      if (codigoPacienteDestino == null || codigoPacienteDestino <= 0) {
+        throw Exception('No se ha podido determinar el paciente de destino.');
+      }
+
+      PlanNutriEstructura? estructuraSeleccionada;
+      var selectedWeekCount = 0;
+
+      try {
+        final estructuraOriginal =
+            await _apiService.getPlanNutriEstructura(plan.codigo);
+        if (_hasVisibleStructure(estructuraOriginal)) {
+          if (!mounted) return;
+          final seleccion = await _showStructureCloneDialog(estructuraOriginal);
+          if (seleccion == null) return;
+          estructuraSeleccionada = seleccion.estructura;
+          selectedWeekCount = seleccion.selectedWeekCount;
+        }
+      } catch (e) {
+        throw Exception('No se pudo cargar la estructura del plan: $e');
+      }
+
       if (mounted) {
         showDialog(
           context: context,
+          useRootNavigator: true,
           barrierDismissible: false,
           builder: (context) => const AlertDialog(
             title: Text('Clonando plan...'),
@@ -1012,61 +1929,74 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
             ),
           ),
         );
+        progressVisible = true;
       }
 
-      // Calcular intervalo de días entre desde y hasta
       int intervaloDias = 0;
       if (plan.desde != null && plan.hasta != null) {
         intervaloDias = plan.hasta!.difference(plan.desde!).inDays;
       }
 
-      // Crear nuevo plan con fechas actualizadas
       final hoy = DateTime.now();
+      final structureSelectionShown = estructuraSeleccionada != null;
+      final hasSelectedStructure =
+          estructuraSeleccionada != null && selectedWeekCount > 0;
       final planNuevo = PlanNutricional(
-        codigo: 0, // El servidor asignará el código
-        codigoPaciente: plan.codigoPaciente,
+        codigo: 0,
+        codigoPaciente: codigoPacienteDestino,
+        tituloPlan: plan.tituloPlan,
+        objetivoPlan: plan.objetivoPlan,
         desde: hoy,
         hasta: intervaloDias > 0 ? hoy.add(Duration(days: intervaloDias)) : hoy,
-        semanas: plan.semanas,
-        completado: 'N', // Siempre 'N' para un plan clonado
-        codigoEntrevista: null, // Vacío para plan clonado
-        planDocumentoNombre: null, // Vacío, no clonamos archivo
+        semanas: hasSelectedStructure
+            ? selectedWeekCount.toString()
+            : (structureSelectionShown ? null : plan.semanas),
+        totalSemanas: hasSelectedStructure
+            ? selectedWeekCount
+            : (structureSelectionShown ? null : plan.totalSemanas),
+        usaEstructuraDetallada: hasSelectedStructure ? 'S' : 'N',
+        completado: 'N',
+        codigoEntrevista: null,
+        planDocumentoNombre: null,
         planIndicaciones: plan.planIndicaciones,
         planIndicacionesVisibleUsuario: plan.planIndicacionesVisibleUsuario,
         url: plan.url,
-        nombrePaciente: plan.nombrePaciente,
+        nombrePaciente: nombrePacienteDestino,
       );
 
-      // Crear el nuevo plan
-      await _apiService.createPlan(planNuevo, null);
+      final nuevoCodigoPlan =
+          await _apiService.createPlanAndReturnCodigo(planNuevo, null);
 
-      // Esperar un poco para que el servidor procese la creación
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // Cerrar diálogo de progreso
-      if (mounted) {
-        Navigator.of(context).pop();
+      if (hasSelectedStructure && estructuraSeleccionada != null) {
+        estructuraSeleccionada.codigoPlanNutricional = nuevoCodigoPlan;
+        await _apiService.savePlanNutriEstructura(estructuraSeleccionada);
       }
 
-      // Refrescar lista
+      if (progressVisible && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        progressVisible = false;
+      }
+
       _refreshPlanes();
 
-      // Mostrar mensaje de éxito
       if (mounted) {
+        final semanasClonadas = hasSelectedStructure
+            ? '$selectedWeekCount semana${selectedWeekCount == 1 ? '' : 's'}'
+            : 'sin estructura seleccionada';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Plan clonado exitosamente del ${DateFormat('dd/MM/yyyy').format(plan.desde ?? DateTime.now())} '
-              'al ${DateFormat('dd/MM/yyyy').format(hoy.add(Duration(days: intervaloDias)))}',
+              'Plan clonado correctamente para ${nombrePacienteDestino ?? 'el paciente destino'} ($semanasClonadas).',
             ),
             backgroundColor: Colors.green,
           ),
         );
       }
     } catch (e) {
-      // Cerrar diálogo de progreso si está abierto
+      if (progressVisible && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
       if (mounted) {
-        Navigator.of(context).pop();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error al clonar plan: $e'),
@@ -1077,6 +2007,7 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
     }
   }
 
+  // ignore: unused_element
   Future<void> _launchUrlExternal(String url) async {
     try {
       await launchUrlString(url, mode: LaunchMode.externalApplication);
@@ -1097,4 +2028,67 @@ class _PlanesListScreenState extends State<PlanesListScreen> {
       }
     }
   }
+}
+
+class _PlanNutriCloneMealNode {
+  _PlanNutriCloneMealNode({
+    required this.ingesta,
+    required this.label,
+    required this.normalizedType,
+    this.selected = true,
+  });
+
+  final PlanNutriIngesta ingesta;
+  final String label;
+  final String normalizedType;
+  bool selected;
+}
+
+class _PlanNutriCloneDayNode {
+  _PlanNutriCloneDayNode({
+    required this.dia,
+    required this.meals,
+    this.selected = true,
+  });
+
+  final PlanNutriDia dia;
+  final List<_PlanNutriCloneMealNode> meals;
+  bool selected;
+
+  int get dayOfWeek => dia.diaSemana;
+  String get dayName => dia.nombreDia;
+}
+
+class _PlanNutriCloneWeekNode {
+  _PlanNutriCloneWeekNode({
+    required this.semana,
+    required this.days,
+    this.selected = true,
+  });
+
+  final PlanNutriSemana semana;
+  final List<_PlanNutriCloneDayNode> days;
+  bool selected;
+}
+
+class _PlanNutriCloneBulkOption {
+  const _PlanNutriCloneBulkOption({
+    required this.key,
+    required this.label,
+    required this.sortOrder,
+  });
+
+  final String key;
+  final String label;
+  final int sortOrder;
+}
+
+class _PlanNutriCloneSelectionResult {
+  const _PlanNutriCloneSelectionResult({
+    required this.estructura,
+    required this.selectedWeekCount,
+  });
+
+  final PlanNutriEstructura estructura;
+  final int selectedWeekCount;
 }

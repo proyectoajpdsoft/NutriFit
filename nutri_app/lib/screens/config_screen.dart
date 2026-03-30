@@ -3,6 +3,7 @@ import 'package:nutri_app/services/config_service.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/services/nutri_push_settings_service.dart';
+import 'package:nutri_app/services/nutri_plan_settings_service.dart';
 import 'package:nutri_app/models/session.dart';
 import 'package:nutri_app/screens/parametros/parametro_edit_screen.dart'
     as parametro;
@@ -15,7 +16,7 @@ class ConfigScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 6,
+      length: 7,
       child: Scaffold(
         appBar: AppBar(
           leading: IconButton(
@@ -31,6 +32,7 @@ class ConfigScreen extends StatelessWidget {
                 isScrollable: true,
                 tabs: [
                   Tab(text: 'Parámetros'),
+                  Tab(text: 'Premium'),
                   Tab(text: 'General'),
                   Tab(text: 'Seguridad'),
                   Tab(text: 'Usuario'),
@@ -44,6 +46,7 @@ class ConfigScreen extends StatelessWidget {
         body: const TabBarView(
           children: [
             _ParametrosTab(),
+            _PremiumPaymentsTab(),
             _GeneralTab(),
             _SecurityTab(),
             _UsuarioTab(),
@@ -54,6 +57,551 @@ class ConfigScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+class _PremiumPaymentsTab extends StatefulWidget {
+  const _PremiumPaymentsTab();
+
+  @override
+  State<_PremiumPaymentsTab> createState() => _PremiumPaymentsTabState();
+}
+
+class _PremiumPaymentsTabState extends State<_PremiumPaymentsTab> {
+  static const String _category = 'Premium';
+  static const String _type = 'Pago';
+
+  late final List<_PremiumPaymentFieldSpec> _fields;
+  late final Map<String, TextEditingController> _controllers;
+  final Map<String, Map<String, dynamic>?> _existingParams = {};
+  bool _loading = true;
+  bool _saving = false;
+
+  bool get _isNutri {
+    final authService = context.read<AuthService>();
+    return authService.userType == 'Nutricionista' ||
+        authService.userType == 'Administrador';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _fields = _buildFieldSpecs();
+    _controllers = {
+      for (final field in _fields) field.name: TextEditingController()
+    };
+    _load();
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _controllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  List<_PremiumPaymentFieldSpec> _buildFieldSpecs() {
+    return const [
+      _PremiumPaymentFieldSpec(
+        name: 'premium_titulo',
+        section: 'General',
+        label: 'Título de la pantalla Premium',
+        description: 'Título principal visible en la pantalla de alta Premium.',
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_descripcion',
+        section: 'General',
+        label: 'Descripción principal',
+        description:
+            'Texto introductorio principal para explicar el servicio Premium.',
+        maxLines: 3,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_ventajas',
+        section: 'General',
+        label: 'Ventajas Premium',
+        description: 'Una ventaja por línea o separadas por |.',
+        maxLines: 4,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_metodos_pago',
+        section: 'General',
+        label: 'Resumen de métodos de pago',
+        description:
+            'Mensajes generales sobre formas de pago. Una línea por mensaje o separadas por |.',
+        maxLines: 4,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_pago_descripcion',
+        section: 'General',
+        label: 'Descripción del bloque de pago',
+        description: 'Texto que introduce la zona de pago y contratación.',
+        maxLines: 3,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_precio_1m',
+        section: 'General',
+        label: 'Precio 1 mes',
+        description: 'Ejemplo: 9,99 EUR.',
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_precio_3m',
+        section: 'General',
+        label: 'Precio 3 meses',
+        description: 'Ejemplo: 24,99 EUR.',
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_precio_6m',
+        section: 'General',
+        label: 'Precio 6 meses',
+        description: 'Ejemplo: 44,99 EUR.',
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_precio_12m',
+        section: 'General',
+        label: 'Precio 12 meses',
+        description: 'Ejemplo: 79,99 EUR.',
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_precio_texto_1m',
+        section: 'General',
+        label: 'Texto precio 1 mes',
+        description:
+            'Ejemplo: Precio: 3,00 EUR (período contratado de un mes).',
+        maxLines: 2,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_precio_texto_3m',
+        section: 'General',
+        label: 'Texto precio 3 meses',
+        description:
+            'Ejemplo: Precio: 12,00 EUR (período contratado de 3 meses, con descuento del 10%).',
+        maxLines: 2,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_precio_texto_6m',
+        section: 'General',
+        label: 'Texto precio 6 meses',
+        description: 'Texto completo que verá el usuario al elegir 6 meses.',
+        maxLines: 2,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_precio_texto_12m',
+        section: 'General',
+        label: 'Texto precio 12 meses',
+        description: 'Texto completo que verá el usuario al elegir 12 meses.',
+        maxLines: 2,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_concepto_plantilla',
+        section: 'General',
+        label: 'Plantilla concepto pago',
+        description:
+            'Variables: {periodo}, {nick}, {codigo}, {email}, {fecha}, {usuario}.',
+        maxLines: 2,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_dias_aviso_vencimiento',
+        section: 'General',
+        label: 'Días de aviso de vencimiento',
+        description:
+            'Número de días previos para avisar de próxima caducidad (ej: 7).',
+        keyboardType: TextInputType.number,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_mensaje_activacion_pago',
+        section: 'General',
+        label: 'Mensaje de activación tras pago',
+        description:
+            'Mensaje indicando que el perfil se activará en 24/48 horas una vez recibido el pago.',
+        maxLines: 3,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_notificacion_pago_email_plantilla',
+        section: 'General',
+        label: 'Plantilla email notificación pago Premium',
+        description:
+            'Variables: {codigo_usuario}, {email_usuario}, {nick_usuario}, {periodo_contratado}, {metodo_pago_elegido}, {fecha_hora_pulsacion_boton}, {precio_mostrado}, {concepto_pago}, {nombre_usuario}.',
+        maxLines: 6,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_notificacion_pago_email_asunto',
+        section: 'General',
+        label: 'Asunto email notificación pago Premium',
+        description:
+            'Variables: {codigo_usuario}, {email_usuario}, {nick_usuario}, {periodo_contratado}, {metodo_pago_elegido}, {fecha_hora_pulsacion_boton}, {precio_mostrado}, {concepto_pago}, {nombre_usuario}.',
+        maxLines: 2,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_paypal_texto',
+        section: 'PayPal',
+        label: 'Texto del método PayPal',
+        description: 'Ejemplo: Pagar por PayPal.',
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_paypal_activo',
+        section: 'PayPal',
+        label: 'PayPal activo',
+        description:
+            'Indica S para mostrar PayPal al usuario o N para ocultarlo.',
+        isToggle: true,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_paypal_url',
+        section: 'PayPal',
+        label: 'URL de PayPal',
+        description: 'Enlace directo a la pasarela o botón de pago.',
+        keyboardType: TextInputType.url,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_paypal_email',
+        section: 'PayPal',
+        label: 'Dirección PayPal',
+        description: 'Email o dirección de cuenta PayPal que recibirá el pago.',
+        keyboardType: TextInputType.emailAddress,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_paypal_concepto',
+        section: 'PayPal',
+        label: 'Concepto PayPal',
+        description: 'Concepto sugerido para identificar el pago.',
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_pasos_pago_paypal',
+        section: 'PayPal',
+        label: 'Pasos de pago PayPal (segunda pantalla)',
+        description:
+            'Admite {nick_usuario}, {email_usuario}, {url_paypal}, {email_paypal}, {boton_abrir_url_paypal}, {boton_copiar_concepto}. Separador por saltos de línea o |.',
+        maxLines: 6,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_bizum_texto',
+        section: 'Bizum',
+        label: 'Texto del método Bizum',
+        description: 'Ejemplo: Pagar por Bizum.',
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_bizum_activo',
+        section: 'Bizum',
+        label: 'Bizum activo',
+        description:
+            'Indica S para mostrar Bizum al usuario o N para ocultarlo.',
+        isToggle: true,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_bizum_telefono',
+        section: 'Bizum',
+        label: 'Teléfono Bizum',
+        description: 'Número de teléfono asociado a Bizum.',
+        keyboardType: TextInputType.phone,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_bizum_titular',
+        section: 'Bizum',
+        label: 'Titular Bizum',
+        description: 'Nombre del titular del número de Bizum.',
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_bizum_concepto',
+        section: 'Bizum',
+        label: 'Concepto Bizum',
+        description: 'Concepto sugerido para el pago por Bizum.',
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_pasos_pago_bizum',
+        section: 'Bizum',
+        label: 'Pasos de pago Bizum (segunda pantalla)',
+        description:
+            'Admite {nick_usuario}, {email_usuario}, {telefono_nutricionista}, {boton_copiar_telefono}, {boton_copiar_concepto}. Separador por saltos de línea o |.',
+        maxLines: 6,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_transferencia_texto',
+        section: 'Transferencia',
+        label: 'Texto del método transferencia',
+        description: 'Ejemplo: Pagar por transferencia.',
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_transferencia_activo',
+        section: 'Transferencia',
+        label: 'Transferencia activa',
+        description:
+            'Indica S para mostrar transferencia al usuario o N para ocultarla.',
+        isToggle: true,
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_transferencia_titular',
+        section: 'Transferencia',
+        label: 'Titular de la cuenta',
+        description: 'Nombre del titular de la cuenta bancaria.',
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_transferencia_iban',
+        section: 'Transferencia',
+        label: 'IBAN',
+        description: 'IBAN completo para recibir la transferencia.',
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_transferencia_banco',
+        section: 'Transferencia',
+        label: 'Banco',
+        description: 'Entidad bancaria de la cuenta.',
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_transferencia_concepto',
+        section: 'Transferencia',
+        label: 'Concepto transferencia',
+        description: 'Concepto sugerido para identificar la transferencia.',
+      ),
+      _PremiumPaymentFieldSpec(
+        name: 'premium_pasos_pago_transferencia',
+        section: 'Transferencia',
+        label: 'Pasos de pago transferencia (segunda pantalla)',
+        description:
+            'Admite {nick_usuario}, {email_usuario}, {boton_copiar_concepto}. Separador por saltos de línea o |.',
+        maxLines: 6,
+      ),
+    ];
+  }
+
+  Future<void> _load() async {
+    if (!_isNutri) {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+      return;
+    }
+
+    try {
+      final apiService = context.read<ApiService>();
+      for (final field in _fields) {
+        final existing = await apiService.getParametro(field.name);
+        _existingParams[field.name] = existing;
+        _controllers[field.name]!.text = existing?['valor']?.toString() ?? '';
+      }
+    } catch (_) {
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _save() async {
+    if (!_isNutri) return;
+
+    setState(() => _saving = true);
+
+    try {
+      final apiService = context.read<ApiService>();
+      for (final field in _fields) {
+        final value = _controllers[field.name]!.text.trim();
+        final existing = _existingParams[field.name];
+
+        if (existing == null) {
+          if (value.isEmpty) {
+            continue;
+          }
+          await apiService.createParametro(
+            nombre: field.name,
+            valor: value,
+            descripcion: field.description,
+            categoria: _category,
+            tipo: _type,
+          );
+        } else {
+          await apiService.updateParametro(
+            codigo: int.tryParse(existing['codigo']?.toString() ?? ''),
+            nombre: field.name,
+            nombreOriginal: field.name,
+            valor: value,
+            descripcion:
+                existing['descripcion']?.toString() ?? field.description,
+            categoria: existing['categoria']?.toString() ?? _category,
+            tipo: existing['tipo']?.toString() ?? _type,
+          );
+        }
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Configuración Premium guardada correctamente'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al guardar la configuración Premium: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  Widget _buildSection(
+      String title, List<_PremiumPaymentFieldSpec> sectionFields) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 14),
+            ...sectionFields.map(
+              (field) => Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: field.isToggle
+                    ? Card(
+                        margin: EdgeInsets.zero,
+                        color:
+                            Theme.of(context).colorScheme.surfaceContainerLow,
+                        child: SwitchListTile(
+                          value: _controllers[field.name]!
+                                  .text
+                                  .trim()
+                                  .toUpperCase() ==
+                              'S',
+                          onChanged: !_isNutri || _saving
+                              ? null
+                              : (value) {
+                                  setState(() {
+                                    _controllers[field.name]!.text =
+                                        value ? 'S' : 'N';
+                                  });
+                                },
+                          title: Text(field.label),
+                          subtitle: Text(
+                            '${field.description}\nParámetro: ${field.name}',
+                          ),
+                        ),
+                      )
+                    : TextFormField(
+                        controller: _controllers[field.name],
+                        enabled: !_saving && _isNutri,
+                        keyboardType: field.keyboardType,
+                        minLines: field.maxLines > 1 ? field.maxLines : 1,
+                        maxLines: field.maxLines,
+                        decoration: InputDecoration(
+                          labelText: field.label,
+                          helperText:
+                              '${field.description}\nParámetro: ${field.name}',
+                          border: const OutlineInputBorder(),
+                          alignLabelWithHint: field.maxLines > 1,
+                        ),
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (!_isNutri) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'La configuración de métodos de pago Premium solo está disponible para nutricionistas y administradores.',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+
+    final sections = <String, List<_PremiumPaymentFieldSpec>>{};
+    for (final field in _fields) {
+      sections.putIfAbsent(field.section, () => []).add(field);
+    }
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Configuración Premium y métodos de pago',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Desde esta pestaña puedes definir el contenido de la pantalla Premium y los datos de cobro para PayPal, Bizum y transferencia. Los cambios se guardan como parámetros globales y se reflejan en la app.',
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        ...sections.entries
+            .map((entry) => _buildSection(entry.key, entry.value)),
+        const SizedBox(height: 8),
+        ElevatedButton.icon(
+          onPressed: _saving ? null : _save,
+          icon: _saving
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.save),
+          label: const Text('Guardar configuración Premium'),
+          style: ElevatedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+          ),
+        ),
+        const SizedBox(height: 60),
+      ],
+    );
+  }
+}
+
+class _PremiumPaymentFieldSpec {
+  const _PremiumPaymentFieldSpec({
+    required this.name,
+    required this.section,
+    required this.label,
+    required this.description,
+    this.maxLines = 1,
+    this.keyboardType,
+    this.isToggle = false,
+  });
+
+  final String name;
+  final String section;
+  final String label;
+  final String description;
+  final int maxLines;
+  final TextInputType? keyboardType;
+  final bool isToggle;
 }
 
 class _MostrarTab extends StatelessWidget {
@@ -113,6 +661,11 @@ class _DefectoTab extends StatelessWidget {
           child: _PlanesTab(),
         ),
         _DefectoExpandableCard(
+          title: 'Planes nutricionales',
+          height: 300,
+          child: _NutriPlanSettingsCard(),
+        ),
+        _DefectoExpandableCard(
           title: 'Pacientes',
           height: 360,
           child: _PacientesTab(),
@@ -170,6 +723,10 @@ class _GeneralTab extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        const _NutriPushSettingsCard(),
+        const SizedBox(height: 16),
+        const _DeleteSwipePercentageCard(),
+        const SizedBox(height: 16),
         SwitchListTile(
           title: const Text('Modo Depuración (Debug)'),
           subtitle: const Text(
@@ -196,6 +753,370 @@ class _GeneralTab extends StatelessWidget {
   }
 }
 
+class _DeleteSwipePercentageCard extends StatefulWidget {
+  const _DeleteSwipePercentageCard();
+
+  @override
+  State<_DeleteSwipePercentageCard> createState() =>
+      _DeleteSwipePercentageCardState();
+}
+
+class _DeleteSwipePercentageCardState
+    extends State<_DeleteSwipePercentageCard> {
+  static const String _paramName = 'porcentaje_desplazamiento_para_eliminacion';
+
+  late final TextEditingController _percentageController;
+  bool _loading = true;
+  bool _saving = false;
+
+  bool get _isNutri {
+    final authService = context.read<AuthService>();
+    return authService.userType == 'Nutricionista' ||
+        authService.userType == 'Administrador';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _percentageController = TextEditingController();
+    _load();
+  }
+
+  String _formatPercent(double value) {
+    final normalized =
+        value % 1 == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(2);
+    return normalized.replaceAll('.', ',');
+  }
+
+  Future<void> _load() async {
+    final configService = context.read<ConfigService>();
+    _percentageController.text =
+        _formatPercent(configService.deleteSwipePercentage);
+
+    if (!_isNutri) {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+      return;
+    }
+
+    try {
+      final apiService = context.read<ApiService>();
+      final existing = await apiService.getParametro(_paramName);
+      if (existing == null) {
+        await apiService.createParametro(
+          nombre: _paramName,
+          valor: '50',
+          descripcion:
+              'Porcentaje mínimo de desplazamiento horizontal (startToEnd) necesario para activar la acción de eliminación por arrastre.',
+          categoria: 'Aplicación',
+          tipo: 'General',
+        );
+      }
+      await configService.loadDeleteSwipePercentageFromDatabase(apiService);
+      if (!mounted) return;
+      _percentageController.text =
+          _formatPercent(configService.deleteSwipePercentage);
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _save() async {
+    final parsed =
+        double.tryParse(_percentageController.text.trim().replaceAll(',', '.'));
+    if (parsed == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Introduce un porcentaje válido.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final normalized = parsed <= 1 ? parsed * 100 : parsed;
+    if (normalized < 5 || normalized > 100) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('El porcentaje debe estar entre 5 y 100.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _saving = true);
+    try {
+      final apiService = context.read<ApiService>();
+      final configService = context.read<ConfigService>();
+      final valueToStore = normalized % 1 == 0
+          ? normalized.toStringAsFixed(0)
+          : normalized.toStringAsFixed(2);
+
+      final existing = await apiService.getParametro(_paramName);
+      const description =
+          'Porcentaje mínimo de desplazamiento horizontal (startToEnd) necesario para activar la acción de eliminación por arrastre.';
+
+      if (existing == null) {
+        await apiService.createParametro(
+          nombre: _paramName,
+          valor: valueToStore,
+          descripcion: description,
+          categoria: 'Aplicación',
+          tipo: 'General',
+        );
+      } else {
+        await apiService.updateParametro(
+          codigo: int.tryParse(existing['codigo']?.toString() ?? ''),
+          nombre: _paramName,
+          nombreOriginal: _paramName,
+          valor: valueToStore,
+          descripcion: existing['descripcion']?.toString() ?? description,
+          categoria: existing['categoria']?.toString() ?? 'Aplicación',
+          tipo: 'General',
+        );
+      }
+
+      await configService.setDeleteSwipePercentage(normalized);
+      _percentageController.text =
+          _formatPercent(configService.deleteSwipePercentage);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Porcentaje de desplazamiento guardado'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo guardar el porcentaje: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _percentageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Card(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: LinearProgressIndicator(),
+        ),
+      );
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Eliminar por desplazamiento',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _isNutri
+                  ? 'Define el porcentaje mínimo de arrastre para activar eliminar.'
+                  : 'Esta configuración solo está disponible para nutricionistas y administradores.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _percentageController,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              enabled: _isNutri && !_saving,
+              decoration: const InputDecoration(
+                labelText: 'Porcentaje de desplazamiento',
+                helperText: 'Ejemplo: 50 para requerir la mitad del ancho.',
+                suffixText: '%',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: ElevatedButton.icon(
+                onPressed: _isNutri && !_saving ? _save : null,
+                icon: const Icon(Icons.save_outlined),
+                label: const Text('Guardar porcentaje'),
+              ),
+            ),
+            if (_saving) ...[
+              const SizedBox(height: 8),
+              const LinearProgressIndicator(),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NutriPushSettingsCard extends StatefulWidget {
+  const _NutriPushSettingsCard();
+
+  @override
+  State<_NutriPushSettingsCard> createState() => _NutriPushSettingsCardState();
+}
+
+class _NutriPushSettingsCardState extends State<_NutriPushSettingsCard> {
+  bool _enabled = true;
+  bool _loading = true;
+  bool _saving = false;
+
+  bool get _isNutri {
+    final authService = context.read<AuthService>();
+    return authService.userType == 'Nutricionista' ||
+        authService.userType == 'Administrador';
+  }
+
+  String _nutriScope() {
+    final authService = context.read<AuthService>();
+    final userCode = (authService.userCode ?? '').trim();
+    final userType = (authService.userType ?? '').trim();
+    return '${userType}_$userCode';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (!_isNutri) {
+      setState(() => _loading = false);
+      return;
+    }
+
+    try {
+      final api = context.read<ApiService>();
+      final scope = _nutriScope();
+      _enabled = await NutriPushSettingsService.getChatUnreadPushEnabled(scope);
+      try {
+        final serverEnabled = await api.getNutriChatUnreadPushEnabled();
+        _enabled = serverEnabled;
+        await NutriPushSettingsService.setChatUnreadPushEnabled(
+          scope,
+          serverEnabled,
+        );
+      } catch (_) {}
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _update(bool enabled) async {
+    if (!_isNutri) return;
+    final scope = _nutriScope();
+    setState(() {
+      _enabled = enabled;
+      _saving = true;
+    });
+    try {
+      await NutriPushSettingsService.setChatUnreadPushEnabled(scope, enabled);
+      await context.read<ApiService>().setNutriChatUnreadPushEnabled(
+            enabled: enabled,
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            enabled
+                ? 'Notificaciones push de chat activadas'
+                : 'Notificaciones push de chat desactivadas',
+          ),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo actualizar la preferencia push: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Card(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: LinearProgressIndicator(),
+        ),
+      );
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Notificaciones push',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _isNutri
+                  ? 'Configura qué notificaciones push recibirá el nutricionista en el dispositivo.'
+                  : 'Las notificaciones push de chat solo aplican a usuarios nutricionistas.',
+            ),
+            const SizedBox(height: 12),
+            SwitchListTile(
+              title: const Text('Activar notificaciones de chats no leídos'),
+              subtitle: const Text(
+                'Recibe una notificación cuando llegue un mensaje nuevo de chat sin leer.',
+              ),
+              value: _enabled,
+              onChanged: !_isNutri || _saving ? null : _update,
+            ),
+            if (_saving) const LinearProgressIndicator(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // Tab Seguridad
 class _SecurityTab extends StatelessWidget {
   const _SecurityTab();
@@ -203,7 +1124,7 @@ class _SecurityTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 4,
       child: Column(
         children: [
           Container(
@@ -212,8 +1133,10 @@ class _SecurityTab extends StatelessWidget {
               thumbVisibility: true,
               child: TabBar(
                 tabs: [
-                  Tab(text: 'Sesiones'),
                   Tab(text: 'Acceso'),
+                  Tab(text: 'Servidor Email'),
+                  Tab(text: 'Cifrado/Descifrado'),
+                  Tab(text: 'Sesiones'),
                 ],
               ),
             ),
@@ -221,13 +1144,50 @@ class _SecurityTab extends StatelessWidget {
           const Expanded(
             child: TabBarView(
               children: [
-                _SessionsSubTab(),
                 _AccessSubTab(),
+                _SmtpSubTab(canManageSmtp: true),
+                _CipherSecuritySubTab(),
+                _SessionsSubTab(),
               ],
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _CipherSecuritySubTab extends StatelessWidget {
+  const _CipherSecuritySubTab();
+
+  @override
+  Widget build(BuildContext context) {
+    final authService = context.read<AuthService>();
+    final isNutri = authService.userType == 'Nutricionista' ||
+        authService.userType == 'Administrador';
+
+    if (!isNutri) {
+      return ListView(
+        padding: const EdgeInsets.all(16),
+        children: const [
+          Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                'La utilidad de cifrado/descifrado solo está disponible para nutricionistas y administradores.',
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: const [
+        _TextCipherToolCard(),
+        SizedBox(height: 60),
+      ],
     );
   }
 }
@@ -1332,6 +2292,171 @@ class _ClientesTab extends StatelessWidget {
   }
 }
 
+class _NutriPlanSettingsCard extends StatefulWidget {
+  const _NutriPlanSettingsCard();
+
+  @override
+  State<_NutriPlanSettingsCard> createState() => _NutriPlanSettingsCardState();
+}
+
+class _NutriPlanSettingsCardState extends State<_NutriPlanSettingsCard> {
+  static const List<String> _planNutriMealOptions =
+      NutriPlanSettingsService.defaultMeals;
+
+  bool _loading = true;
+  List<String> _planNutriEnabledMeals =
+      List<String>.from(NutriPlanSettingsService.defaultMeals);
+
+  bool get _isNutri {
+    final authService = context.read<AuthService>();
+    return authService.userType == 'Nutricionista' ||
+        authService.userType == 'Administrador';
+  }
+
+  String _nutriScope() {
+    final authService = context.read<AuthService>();
+    final userCode = (authService.userCode ?? '').trim();
+    final userType = (authService.userType ?? '').trim();
+    return '${userType}_$userCode';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (!_isNutri) {
+      setState(() => _loading = false);
+      return;
+    }
+
+    try {
+      final scope = _nutriScope();
+      _planNutriEnabledMeals =
+          await NutriPlanSettingsService.getEnabledMeals(scope);
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  void _togglePlanNutriMeal(String meal, bool selected) {
+    setState(() {
+      if (selected) {
+        if (!_planNutriEnabledMeals.contains(meal)) {
+          _planNutriEnabledMeals.add(meal);
+        }
+      } else {
+        if (_planNutriEnabledMeals.length <= 1) {
+          return;
+        }
+        _planNutriEnabledMeals.remove(meal);
+      }
+      _planNutriEnabledMeals =
+          _planNutriMealOptions.where(_planNutriEnabledMeals.contains).toList();
+    });
+  }
+
+  Future<void> _savePlanNutriConfig() async {
+    if (!_isNutri) return;
+    if (_planNutriEnabledMeals.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Debes mantener al menos una ingesta activa.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    try {
+      final scope = _nutriScope();
+      await NutriPlanSettingsService.setEnabledMeals(
+          scope, _planNutriEnabledMeals);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Configuración de Plan nutri guardada'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al guardar Plan nutri: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Ingestas disponibles por día',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _isNutri
+                      ? 'Selecciona qué ingestas se crearán en cada día al dar de alta la estructura del plan nutricional.'
+                      : 'Esta configuración solo está disponible para nutricionistas y administradores.',
+                ),
+                const SizedBox(height: 12),
+                ..._planNutriMealOptions.map((meal) {
+                  final enabled = _planNutriEnabledMeals.contains(meal);
+                  return CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(meal),
+                    value: enabled,
+                    onChanged: !_isNutri
+                        ? null
+                        : (value) {
+                            _togglePlanNutriMeal(meal, value ?? false);
+                          },
+                  );
+                }),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _isNutri ? _savePlanNutriConfig : null,
+                    icon: const Icon(Icons.save),
+                    label: const Text('Guardar configuración Plan nutri'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 60),
+      ],
+    );
+  }
+}
+
 // Tab Usuario
 class _UsuarioTab extends StatefulWidget {
   const _UsuarioTab();
@@ -1349,21 +2474,6 @@ class _UsuarioTabState extends State<_UsuarioTab> {
   String _defaultUserType = 'Paciente';
   bool _defaultActivo = true;
   bool _defaultAcceso = true;
-  bool _nutriChatUnreadPushEnabled = true;
-  bool _isNutriPushLoading = false;
-
-  bool get _isNutri {
-    final authService = context.read<AuthService>();
-    return authService.userType == 'Nutricionista' ||
-        authService.userType == 'Administrador';
-  }
-
-  String _nutriScope() {
-    final authService = context.read<AuthService>();
-    final userCode = (authService.userCode ?? '').trim();
-    final userType = (authService.userType ?? '').trim();
-    return '${userType}_$userCode';
-  }
 
   @override
   void initState() {
@@ -1386,23 +2496,6 @@ class _UsuarioTabState extends State<_UsuarioTab> {
       _defaultUserType = configService.defaultTipoUsuario;
       _defaultActivo = configService.defaultActivoUsuario;
       _defaultAcceso = configService.defaultAccesoUsuario;
-
-      if (_isNutri) {
-        final scope = _nutriScope();
-        _nutriChatUnreadPushEnabled =
-            await NutriPushSettingsService.getChatUnreadPushEnabled(scope);
-        try {
-          final serverEnabled =
-              await _apiService.getNutriChatUnreadPushEnabled();
-          _nutriChatUnreadPushEnabled = serverEnabled;
-          await NutriPushSettingsService.setChatUnreadPushEnabled(
-            scope,
-            serverEnabled,
-          );
-        } catch (_) {
-          // Mantener preferencia local si el servidor falla.
-        }
-      }
     } catch (e) {
       // Si no existen, usar valores por defecto
     }
@@ -1444,258 +2537,144 @@ class _UsuarioTabState extends State<_UsuarioTab> {
     }
   }
 
-  Future<void> _updateNutriChatUnreadPush(bool enabled) async {
-    if (!_isNutri) return;
-
-    final scope = _nutriScope();
-    setState(() {
-      _isNutriPushLoading = true;
-      _nutriChatUnreadPushEnabled = enabled;
-    });
-
-    try {
-      await NutriPushSettingsService.setChatUnreadPushEnabled(scope, enabled);
-      await _apiService.setNutriChatUnreadPushEnabled(enabled: enabled);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            enabled
-                ? 'Notificaciones push de chat activadas'
-                : 'Notificaciones push de chat desactivadas',
-          ),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('No se pudo actualizar la preferencia push: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isNutriPushLoading = false;
-        });
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    return DefaultTabController(
-      length: 3,
-      child: Column(
-        children: [
-          Container(
-            color: Theme.of(context).colorScheme.surface,
-            child: const Scrollbar(
-              thumbVisibility: true,
-              child: TabBar(
-                tabs: [
-                  Tab(text: 'General'),
-                  Tab(text: 'Notificaciones'),
-                  Tab(text: 'SMTP'),
-                ],
-              ),
-            ),
-          ),
-          Expanded(
-            child: TabBarView(
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ListView(
-                  padding: const EdgeInsets.all(16),
+                Text(
+                  'Tamaño de imagen de perfil',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Tamaño máximo permitido: ${_maxImageSizeKb.round()} KB',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 16),
+                Slider(
+                  value: _maxImageSizeKb,
+                  min: 1,
+                  max: 3000,
+                  divisions: 2999,
+                  label: '${_maxImageSizeKb.round()} KB',
+                  onChanged: (value) {
+                    setState(() {
+                      _maxImageSizeKb = value;
+                    });
+                  },
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Tamaño de imagen de perfil',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleMedium
-                                  ?.copyWith(fontWeight: FontWeight.bold),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Tamaño máximo permitido: ${_maxImageSizeKb.round()} KB',
-                              style: Theme.of(context).textTheme.bodyMedium,
-                            ),
-                            const SizedBox(height: 16),
-                            Slider(
-                              value: _maxImageSizeKb,
-                              min: 1,
-                              max: 3000,
-                              divisions: 2999,
-                              label: '${_maxImageSizeKb.round()} KB',
-                              onChanged: (value) {
-                                setState(() {
-                                  _maxImageSizeKb = value;
-                                });
-                              },
-                            ),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  '1 KB',
-                                  style: TextStyle(color: Colors.grey[600]),
-                                ),
-                                Text(
-                                  '3000 KB',
-                                  style: TextStyle(color: Colors.grey[600]),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
+                    Text(
+                      '1 KB',
+                      style: TextStyle(color: Colors.grey[600]),
                     ),
-                    const SizedBox(height: 16),
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Valores por defecto en alta de usuario',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleMedium
-                                  ?.copyWith(fontWeight: FontWeight.bold),
-                            ),
-                            const SizedBox(height: 16),
-                            DropdownButtonFormField<String>(
-                              initialValue: _defaultUserType,
-                              decoration: const InputDecoration(
-                                labelText: 'Tipo de usuario por defecto',
-                                border: OutlineInputBorder(),
-                              ),
-                              items: const [
-                                DropdownMenuItem(
-                                  value: 'Paciente',
-                                  child: Text('Paciente'),
-                                ),
-                                DropdownMenuItem(
-                                  value: 'Nutricionista',
-                                  child: Text('Nutricionista'),
-                                ),
-                              ],
-                              onChanged: (value) {
-                                setState(() {
-                                  _defaultUserType = value ?? 'Paciente';
-                                });
-                              },
-                            ),
-                            const SizedBox(height: 16),
-                            SwitchListTile(
-                              title: const Text('Activo por defecto'),
-                              subtitle: const Text(
-                                'Los nuevos usuarios se crearán activos',
-                              ),
-                              value: _defaultActivo,
-                              onChanged: (value) {
-                                setState(() {
-                                  _defaultActivo = value;
-                                });
-                              },
-                            ),
-                            SwitchListTile(
-                              title: const Text('Permitir acceso por defecto'),
-                              subtitle: const Text(
-                                'Los nuevos usuarios tendrán acceso habilitado',
-                              ),
-                              value: _defaultAcceso,
-                              onChanged: (value) {
-                                setState(() {
-                                  _defaultAcceso = value;
-                                });
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
+                    Text(
+                      '3000 KB',
+                      style: TextStyle(color: Colors.grey[600]),
                     ),
-                    if (_isNutri) ...[
-                      const SizedBox(height: 16),
-                      const _TextCipherToolCard(),
-                    ],
-                    const SizedBox(height: 24),
-                    ElevatedButton.icon(
-                      onPressed: _saveConfig,
-                      icon: const Icon(Icons.save),
-                      label: const Text('Guardar configuración'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                      ),
-                    ),
-                    const SizedBox(height: 60),
                   ],
                 ),
-                ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Notificaciones push',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleMedium
-                                  ?.copyWith(fontWeight: FontWeight.bold),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              _isNutri
-                                  ? 'Configura qué notificaciones push recibirá el nutricionista en el dispositivo.'
-                                  : 'Las notificaciones push de chat solo aplican a usuarios nutricionistas.',
-                            ),
-                            const SizedBox(height: 12),
-                            SwitchListTile(
-                              title: const Text(
-                                'Activar notificaciones de chats no leídos',
-                              ),
-                              subtitle: const Text(
-                                'Recibe una notificación cuando llegue un mensaje nuevo de chat sin leer.',
-                              ),
-                              value: _nutriChatUnreadPushEnabled,
-                              onChanged: !_isNutri || _isNutriPushLoading
-                                  ? null
-                                  : _updateNutriChatUnreadPush,
-                            ),
-                            if (_isNutriPushLoading)
-                              const Padding(
-                                padding: EdgeInsets.only(top: 8),
-                                child: LinearProgressIndicator(),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 60),
-                  ],
-                ),
-                _SmtpSubTab(canManageSmtp: _isNutri),
               ],
             ),
           ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Valores por defecto en alta de usuario',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  initialValue: _defaultUserType,
+                  decoration: const InputDecoration(
+                    labelText: 'Tipo de usuario por defecto',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'Paciente',
+                      child: Text('Paciente'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'Premium',
+                      child: Text('Premium'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'Nutricionista',
+                      child: Text('Nutricionista'),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    setState(() {
+                      _defaultUserType = value ?? 'Paciente';
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+                SwitchListTile(
+                  title: const Text('Activo por defecto'),
+                  subtitle: const Text(
+                    'Los nuevos usuarios se crearán activos',
+                  ),
+                  value: _defaultActivo,
+                  onChanged: (value) {
+                    setState(() {
+                      _defaultActivo = value;
+                    });
+                  },
+                ),
+                SwitchListTile(
+                  title: const Text('Permitir acceso por defecto'),
+                  subtitle: const Text(
+                    'Los nuevos usuarios tendrán acceso habilitado',
+                  ),
+                  value: _defaultAcceso,
+                  onChanged: (value) {
+                    setState(() {
+                      _defaultAcceso = value;
+                    });
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
+        ElevatedButton.icon(
+          onPressed: _saveConfig,
+          icon: const Icon(Icons.save),
+          label: const Text('Guardar configuración'),
+          style: ElevatedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+          ),
+        ),
+        const SizedBox(height: 60),
+      ],
     );
   }
 }

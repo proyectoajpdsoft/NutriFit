@@ -136,13 +136,14 @@ function get_entrenamiento($db, $codigo) {
 // Función para crear un entrenamiento
 function create_entrenamiento($db, $data) {
     $titulo = isset($data['titulo']) ? $data['titulo'] : null;
+    $desnivel_acumulado = isset($data['desnivel_acumulado']) ? $data['desnivel_acumulado'] : null;
 
     $query = "INSERT INTO nu_entrenamientos 
               (codigo_paciente, actividad, titulo, descripcion_actividad, fecha, 
-               duracion_horas, duracion_minutos, duracion_kilometros, nivel_esfuerzo, notas, vueltas, codigo_plan_fit, codusuario, validado, validado_fecha, validado_usuario, fechaa) 
+               duracion_horas, duracion_minutos, duracion_kilometros, desnivel_acumulado, nivel_esfuerzo, notas, vueltas, codigo_plan_fit, codusuario, validado, validado_fecha, validado_usuario, fechaa) 
               VALUES 
               (:codigo_paciente, :actividad, :titulo, :descripcion_actividad, :fecha, 
-               :duracion_horas, :duracion_minutos, :duracion_kilometros, :nivel_esfuerzo, :notas, :vueltas, :codigo_plan_fit, :codusuario, 0, NULL, NULL, NOW())";
+               :duracion_horas, :duracion_minutos, :duracion_kilometros, :desnivel_acumulado, :nivel_esfuerzo, :notas, :vueltas, :codigo_plan_fit, :codusuario, 0, NULL, NULL, NOW())";
     
     $stmt = $db->prepare($query);
     
@@ -154,6 +155,7 @@ function create_entrenamiento($db, $data) {
     $stmt->bindParam(':duracion_horas', $data['duracion_horas']);
     $stmt->bindParam(':duracion_minutos', $data['duracion_minutos']);
     $stmt->bindParam(':duracion_kilometros', $data['duracion_kilometros']);
+    $stmt->bindParam(':desnivel_acumulado', $desnivel_acumulado);
     $stmt->bindParam(':nivel_esfuerzo', $data['nivel_esfuerzo']);
     $stmt->bindParam(':notas', $data['notas']);
     $stmt->bindParam(':vueltas', $data['vueltas']);
@@ -247,6 +249,7 @@ function delete_entrenamiento_image($db, $id_imagen) {
 
 function update_entrenamiento($db, $codigo, $data) {
     $titulo = isset($data['titulo']) ? $data['titulo'] : null;
+    $desnivel_acumulado = isset($data['desnivel_acumulado']) ? $data['desnivel_acumulado'] : null;
 
     $query = "UPDATE nu_entrenamientos SET 
               actividad = :actividad,
@@ -256,6 +259,7 @@ function update_entrenamiento($db, $codigo, $data) {
               duracion_horas = :duracion_horas,
               duracion_minutos = :duracion_minutos,
               duracion_kilometros = :duracion_kilometros,
+              desnivel_acumulado = :desnivel_acumulado,
               nivel_esfuerzo = :nivel_esfuerzo,
               notas = :notas,
               vueltas = :vueltas,
@@ -272,6 +276,7 @@ function update_entrenamiento($db, $codigo, $data) {
     $stmt->bindParam(':duracion_horas', $data['duracion_horas']);
     $stmt->bindParam(':duracion_minutos', $data['duracion_minutos']);
     $stmt->bindParam(':duracion_kilometros', $data['duracion_kilometros']);
+    $stmt->bindParam(':desnivel_acumulado', $desnivel_acumulado);
     $stmt->bindParam(':nivel_esfuerzo', $data['nivel_esfuerzo']);
     $stmt->bindParam(':notas', $data['notas']);
     $stmt->bindParam(':vueltas', $data['vueltas']);
