@@ -151,9 +151,55 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
   final AdherenciaService _adherenciaService = AdherenciaService();
 
   AdherenciaEstado _mapFitEstadoByRatio(double ratio) {
-    if (ratio >= 0.8) return AdherenciaEstado.cumplido;
-    if (ratio >= 0.3) return AdherenciaEstado.parcial;
+    if (ratio > 0.70) return AdherenciaEstado.cumplido;
+    if (ratio >= 0.20) return AdherenciaEstado.parcial;
     return AdherenciaEstado.noRealizado;
+  }
+
+  bool _isEjercicioRealizado(EntrenamientoEjercicio ejercicio) {
+    return (ejercicio.realizado ?? '').trim().toUpperCase() == 'S';
+  }
+
+  String _buildAdherenciaTituloActividad() {
+    final titulo = _tituloController.text.trim();
+    if (titulo.isNotEmpty) return titulo;
+    final actividad = _actividadController.text.trim();
+    if (actividad.isNotEmpty) return actividad;
+    return 'Actividad';
+  }
+
+  String _buildAdherenciaTiempoLabel() {
+    final totalMinutos = (_duracionHoras * 60) + _duracionMinutos;
+    return '$totalMinutos min';
+  }
+
+  String _formatKmMotivo(double kilometros) {
+    final base = kilometros.toStringAsFixed(2);
+    final normalized =
+        base.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+    return '$normalized km';
+  }
+
+  String _buildMotivoAdherenciaFit({
+    required String titulo,
+    required String tiempoLabel,
+    required double kilometros,
+    int? ejerciciosRealizados,
+    int? ejerciciosTotales,
+  }) {
+    final parts = <String>[
+      'Título: $titulo',
+      'Tiempo: $tiempoLabel',
+    ];
+
+    if (kilometros > 0) {
+      parts.add('Km: ${_formatKmMotivo(kilometros)}');
+    }
+    if (ejerciciosRealizados != null && ejerciciosTotales != null) {
+      parts.add('Ejercicios: $ejerciciosRealizados/$ejerciciosTotales');
+    }
+
+    return parts.join(' | ');
   }
 
   Future<void> _registrarAdherenciaFitAutomatica({
@@ -166,95 +212,117 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
     if (localUserKey.isEmpty || _planFitSeleccionado == null) {
       return;
     }
-    if (_entrenamientoEjercicios.isEmpty) {
-      return;
-    }
 
-    final apiService = Provider.of<ApiService>(context, listen: false);
-    final ejerciciosDelPlan = await apiService.getPlanFitEjercicios(
-      _planFitSeleccionado!,
-    );
-    if (ejerciciosDelPlan.isEmpty) {
-      return;
-    }
+    final tituloActividad = _buildAdherenciaTituloActividad();
+    final tiempoActividad = _buildAdherenciaTiempoLabel();
+    final kilometros = _duracionKilometros;
 
-    final ejerciciosPlanById = <int, PlanFitEjercicio>{
-      for (final ejercicio in ejerciciosDelPlan) ejercicio.codigo: ejercicio,
-    };
-
-    final ejerciciosActividad = _entrenamientoEjercicios
+    final ejerciciosPlanDia = _entrenamientoEjercicios
         .where((ejercicio) => (ejercicio.codigoPlanFitEjercicio ?? 0) > 0)
         .toList(growable: false);
-    if (ejerciciosActividad.isEmpty) {
-      return;
-    }
 
-    final diasTocados = <int>{};
-    for (final ejercicioActividad in ejerciciosActividad) {
-      final planId = ejercicioActividad.codigoPlanFitEjercicio;
-      if (planId == null) continue;
-      final ejercicioPlan = ejerciciosPlanById[planId];
-      final codigoDia = ejercicioPlan?.codigoDia;
-      if (codigoDia != null && codigoDia > 0) {
-        diasTocados.add(codigoDia);
-      }
-    }
+    final ejerciciosCatalogo = _entrenamientoEjercicios
+        .where((ejercicio) => (ejercicio.codigoPlanFitEjercicio ?? 0) <= 0)
+        .toList(growable: false);
 
-    if (diasTocados.isEmpty) {
-      final total = ejerciciosActividad.length;
-      final realizados = ejerciciosActividad
-          .where(
-            (ejercicio) => (ejercicio.realizado ?? '').toUpperCase() == 'S',
-          )
-          .length;
-      final ratioFallback = total <= 0 ? 0.0 : (realizados / total);
-      final estadoFallback = _mapFitEstadoByRatio(ratioFallback);
-      await _adherenciaService.registrarEstadoDia(
-        userCode: localUserKey,
-        tipo: AdherenciaTipo.fit,
-        estado: estadoFallback,
-        fecha: fecha,
-        codigoUsuarioObjetivo: codigoUsuarioObjetivo,
-        codigoPacienteObjetivo: codigoPacienteObjetivo,
-        codigoUsuarioActor: codigoUsuarioActor,
+    AdherenciaEstado estado;
+    int? ejerciciosRealizados;
+    int? ejerciciosTotales;
+
+    if (ejerciciosPlanDia.isNotEmpty) {
+      final apiService = Provider.of<ApiService>(context, listen: false);
+      final ejerciciosDelPlan = await apiService.getPlanFitEjercicios(
+        _planFitSeleccionado!,
       );
-      return;
-    }
 
-    final ratiosPorDia = <double>[];
-    for (final codigoDia in diasTocados) {
-      final idsEjerciciosDia = ejerciciosDelPlan
-          .where((ejercicio) => ejercicio.codigoDia == codigoDia)
-          .map((ejercicio) => ejercicio.codigo)
-          .toSet();
+      final ejerciciosPlanById = <int, PlanFitEjercicio>{
+        for (final ejercicio in ejerciciosDelPlan) ejercicio.codigo: ejercicio,
+      };
 
-      if (idsEjerciciosDia.isEmpty) {
-        continue;
+      final diasTocados = <int>{};
+      for (final ejercicioActividad in ejerciciosPlanDia) {
+        final planId = ejercicioActividad.codigoPlanFitEjercicio;
+        if (planId == null) continue;
+        final ejercicioPlan = ejerciciosPlanById[planId];
+        final codigoDia = ejercicioPlan?.codigoDia;
+        if (codigoDia != null && codigoDia > 0) {
+          diasTocados.add(codigoDia);
+        }
       }
 
-      final realizadosDia = ejerciciosActividad.where((ejercicioActividad) {
-        final planId = ejercicioActividad.codigoPlanFitEjercicio;
-        if (planId == null || !idsEjerciciosDia.contains(planId)) {
-          return false;
+      if (diasTocados.isNotEmpty) {
+        final idsEjerciciosDia = ejerciciosDelPlan
+            .where((ejercicio) => diasTocados.contains(ejercicio.codigoDia))
+            .map((ejercicio) => ejercicio.codigo)
+            .toSet();
+
+        ejerciciosTotales = idsEjerciciosDia.length;
+        ejerciciosRealizados = ejerciciosPlanDia.where((ejercicioActividad) {
+          final planId = ejercicioActividad.codigoPlanFitEjercicio;
+          if (planId == null || !idsEjerciciosDia.contains(planId)) {
+            return false;
+          }
+          return _isEjercicioRealizado(ejercicioActividad);
+        }).length;
+      } else {
+        ejerciciosTotales = ejerciciosPlanDia.length;
+        ejerciciosRealizados =
+            ejerciciosPlanDia.where(_isEjercicioRealizado).length;
+      }
+
+      final ratio = (ejerciciosTotales ?? 0) <= 0
+          ? 0.0
+          : ((ejerciciosRealizados ?? 0) / (ejerciciosTotales ?? 1));
+      estado = _mapFitEstadoByRatio(ratio);
+    } else if (ejerciciosCatalogo.isNotEmpty) {
+      ejerciciosTotales = ejerciciosCatalogo.length;
+      ejerciciosRealizados =
+          ejerciciosCatalogo.where(_isEjercicioRealizado).length;
+      final ratio = ejerciciosTotales <= 0
+          ? 0.0
+          : (ejerciciosRealizados / ejerciciosTotales);
+      estado = _mapFitEstadoByRatio(ratio);
+    } else if (kilometros > 0) {
+      if (kilometros > 3) {
+        estado = AdherenciaEstado.cumplido;
+      } else if (kilometros >= 1) {
+        estado = AdherenciaEstado.parcial;
+      } else if (kilometros >= 0.1) {
+        estado = AdherenciaEstado.noRealizado;
+      } else {
+        final totalMinutos = (_duracionHoras * 60) + _duracionMinutos;
+        if (totalMinutos > 30) {
+          estado = AdherenciaEstado.cumplido;
+        } else if (totalMinutos >= 10) {
+          estado = AdherenciaEstado.parcial;
+        } else {
+          estado = AdherenciaEstado.noRealizado;
         }
-        return (ejercicioActividad.realizado ?? '').toUpperCase() == 'S';
-      }).length;
-
-      final ratioDia = realizadosDia / idsEjerciciosDia.length;
-      ratiosPorDia.add(ratioDia.clamp(0.0, 1.0));
+      }
+    } else {
+      final totalMinutos = (_duracionHoras * 60) + _duracionMinutos;
+      if (totalMinutos > 30) {
+        estado = AdherenciaEstado.cumplido;
+      } else if (totalMinutos >= 10) {
+        estado = AdherenciaEstado.parcial;
+      } else {
+        estado = AdherenciaEstado.noRealizado;
+      }
     }
 
-    if (ratiosPorDia.isEmpty) {
-      return;
-    }
-
-    final ratio = ratiosPorDia.reduce((a, b) => a + b) / ratiosPorDia.length;
-    final estado = _mapFitEstadoByRatio(ratio);
+    final motivo = _buildMotivoAdherenciaFit(
+      titulo: tituloActividad,
+      tiempoLabel: tiempoActividad,
+      kilometros: kilometros,
+      ejerciciosRealizados: ejerciciosRealizados,
+      ejerciciosTotales: ejerciciosTotales,
+    );
 
     await _adherenciaService.registrarEstadoDia(
       userCode: localUserKey,
       tipo: AdherenciaTipo.fit,
       estado: estado,
+      observacion: motivo,
       fecha: fecha,
       codigoUsuarioObjetivo: codigoUsuarioObjetivo,
       codigoPacienteObjetivo: codigoPacienteObjetivo,
@@ -2624,191 +2692,188 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(30),
-                    child: SingleChildScrollView(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Container(
-                            height: hasImage ? 250 : 160,
-                            width: double.infinity,
-                            decoration: const BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: <Color>[
-                                  Color(0xFFFFB06A),
-                                  Color(0xFFFFDFA5),
-                                ],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Container(
+                          height: hasImage ? 250 : 160,
+                          width: double.infinity,
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: <Color>[
+                                Color(0xFFFFB06A),
+                                Color(0xFFFFDFA5),
+                              ],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
                             ),
-                            child: GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTap: hasImage
-                                  ? () async {
-                                      final bestImage =
-                                          await _resolveBestImageForViewer(
-                                        ejercicio,
-                                      );
-                                      if (!mounted || bestImage == null) {
-                                        return;
-                                      }
-                                      showImageViewerDialog(
-                                        context: context,
-                                        base64Image: bestImage,
-                                        title: ejercicio.nombre,
-                                      );
+                          ),
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: hasImage
+                                ? () async {
+                                    final bestImage =
+                                        await _resolveBestImageForViewer(
+                                      ejercicio,
+                                    );
+                                    if (!mounted || bestImage == null) {
+                                      return;
                                     }
-                                  : null,
-                              child: Stack(
-                                fit: StackFit.expand,
-                                children: <Widget>[
-                                  if (hasImage)
-                                    Opacity(
-                                      opacity: 0.24,
-                                      child: Image.memory(
-                                        base64Decode(imageBase64),
-                                        fit: BoxFit.cover,
-                                      ),
-                                    ),
-                                  Container(
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        colors: <Color>[
-                                          Colors.black.withValues(alpha: 0.05),
-                                          Colors.black.withValues(alpha: 0.22),
-                                        ],
-                                        begin: Alignment.topCenter,
-                                        end: Alignment.bottomCenter,
-                                      ),
+                                    showImageViewerDialog(
+                                      context: context,
+                                      base64Image: bestImage,
+                                      title: ejercicio.nombre,
+                                    );
+                                  }
+                                : null,
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: <Widget>[
+                                if (hasImage)
+                                  Opacity(
+                                    opacity: 0.24,
+                                    child: Image.memory(
+                                      base64Decode(imageBase64),
+                                      fit: BoxFit.cover,
                                     ),
                                   ),
+                                Container(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: <Color>[
+                                        Colors.black.withValues(alpha: 0.05),
+                                        Colors.black.withValues(alpha: 0.22),
+                                      ],
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                    ),
+                                  ),
+                                ),
+                                Positioned(
+                                  top: 14,
+                                  right: 14,
+                                  child: IconButton(
+                                    onPressed: () => Navigator.pop(context),
+                                    style: IconButton.styleFrom(
+                                      backgroundColor:
+                                          Colors.white.withValues(alpha: 0.22),
+                                    ),
+                                    icon: const Icon(
+                                      Icons.close,
+                                      color: Colors.white,
+                                    ),
+                                    tooltip: 'Cerrar',
+                                  ),
+                                ),
+                                if (hasImage)
                                   Positioned(
-                                    top: 14,
-                                    right: 14,
-                                    child: IconButton(
-                                      onPressed: () => Navigator.pop(context),
-                                      style: IconButton.styleFrom(
-                                        backgroundColor: Colors.white
+                                    top: 16,
+                                    left: 16,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 6,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white
                                             .withValues(alpha: 0.22),
+                                        borderRadius:
+                                            BorderRadius.circular(999),
+                                        border: Border.all(
+                                          color: Colors.white
+                                              .withValues(alpha: 0.28),
+                                        ),
                                       ),
-                                      icon: const Icon(
-                                        Icons.close,
-                                        color: Colors.white,
+                                      child: const Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: <Widget>[
+                                          Icon(
+                                            Icons.zoom_in,
+                                            size: 14,
+                                            color: Colors.white,
+                                          ),
+                                          SizedBox(width: 4),
+                                          Text(
+                                            'Toca para ampliar',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                      tooltip: 'Cerrar',
                                     ),
                                   ),
-                                  if (hasImage)
-                                    Positioned(
-                                      top: 16,
-                                      left: 16,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 10,
-                                          vertical: 6,
+                                Positioned(
+                                  left: 22,
+                                  right: 22,
+                                  bottom: 22,
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: <Widget>[
+                                      Text(
+                                        ejercicio.nombre,
+                                        style: const TextStyle(
+                                          color: Color(0xFF2E1D12),
+                                          fontSize: 21,
+                                          height: 1.1,
+                                          fontWeight: FontWeight.w800,
                                         ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.white
-                                              .withValues(alpha: 0.22),
-                                          borderRadius:
-                                              BorderRadius.circular(999),
-                                          border: Border.all(
-                                            color: Colors.white
-                                                .withValues(alpha: 0.28),
-                                          ),
-                                        ),
-                                        child: const Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: <Widget>[
-                                            Icon(
-                                              Icons.zoom_in,
-                                              size: 14,
-                                              color: Colors.white,
-                                            ),
-                                            SizedBox(width: 4),
-                                            Text(
-                                              'Toca para ampliar',
-                                              style: TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
-                                    ),
-                                  Positioned(
-                                    left: 22,
-                                    right: 22,
-                                    bottom: 22,
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: <Widget>[
-                                        Text(
-                                          ejercicio.nombre,
-                                          style: const TextStyle(
-                                            color: Color(0xFF2E1D12),
-                                            fontSize: 21,
-                                            height: 1.1,
-                                            fontWeight: FontWeight.w800,
+                                      const SizedBox(height: 8),
+                                      RichText(
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        text: TextSpan(
+                                          style: TextStyle(
+                                            color: const Color(0xFF4A321E)
+                                                .withValues(alpha: 0.95),
+                                            fontSize: 14,
+                                            height: 1.35,
                                           ),
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        const SizedBox(height: 8),
-                                        RichText(
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          text: TextSpan(
-                                            style: TextStyle(
-                                              color: const Color(0xFF4A321E)
-                                                  .withValues(alpha: 0.95),
-                                              fontSize: 14,
-                                              height: 1.35,
-                                            ),
-                                            children: [
-                                              TextSpan(text: coverSubtitle),
-                                              if (showReadMoreLink)
-                                                WidgetSpan(
-                                                  alignment:
-                                                      PlaceholderAlignment
-                                                          .baseline,
-                                                  baseline:
-                                                      TextBaseline.alphabetic,
-                                                  child: GestureDetector(
-                                                    onTap: () {
-                                                      setStateDialog(() {
-                                                        expandHowTo = true;
-                                                      });
-                                                    },
-                                                    child: const Text(
-                                                      ' Leer más',
-                                                      style: TextStyle(
-                                                        color:
-                                                            Color(0xFF2F2014),
-                                                        fontSize: 12,
-                                                        fontWeight:
-                                                            FontWeight.w700,
-                                                        decoration:
-                                                            TextDecoration
-                                                                .underline,
-                                                      ),
+                                          children: [
+                                            TextSpan(text: coverSubtitle),
+                                            if (showReadMoreLink)
+                                              WidgetSpan(
+                                                alignment: PlaceholderAlignment
+                                                    .baseline,
+                                                baseline:
+                                                    TextBaseline.alphabetic,
+                                                child: GestureDetector(
+                                                  onTap: () {
+                                                    setStateDialog(() {
+                                                      expandHowTo = true;
+                                                    });
+                                                  },
+                                                  child: const Text(
+                                                    ' Leer más',
+                                                    style: TextStyle(
+                                                      color: Color(0xFF2F2014),
+                                                      fontSize: 12,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                      decoration: TextDecoration
+                                                          .underline,
                                                     ),
                                                   ),
                                                 ),
-                                            ],
-                                          ),
+                                              ),
+                                          ],
                                         ),
-                                      ],
-                                    ),
+                                      ),
+                                    ],
                                   ),
-                                ],
-                              ),
+                                ),
+                              ],
                             ),
                           ),
-                          Padding(
+                        ),
+                        Expanded(
+                          child: SingleChildScrollView(
                             padding: const EdgeInsets.fromLTRB(22, 12, 22, 24),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -3035,8 +3100,8 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                               ],
                             ),
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -3543,28 +3608,15 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                 if ((ejercicio.instrucciones ?? '').isNotEmpty ||
                     (ejercicio.instruccionesDetalladas ?? '').isNotEmpty ||
                     (ejercicio.urlVideo ?? '').isNotEmpty)
-                  OutlinedButton.icon(
+                  IconButton(
                     onPressed: () => _showEjercicioInfoDialog(ejercicio),
+                    tooltip: 'Cómo se hace...',
                     icon: const Icon(
                       Icons.auto_awesome_rounded,
-                      size: 16,
+                      size: 24,
                     ),
-                    label: const Text(
-                      'Cómo se hace...',
-                      style: TextStyle(fontSize: 12),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF4F7CFF),
-                      side: const BorderSide(color: Color(0xFF4F7CFF)),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 8,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
+                    color: const Color(0xFF4F7CFF),
+                    visualDensity: VisualDensity.standard,
                   ),
                 ElevatedButton.icon(
                   onPressed: () {
@@ -5109,19 +5161,6 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
       final apiService = Provider.of<ApiService>(context, listen: false);
       final codigoPaciente =
           authService.patientCode ?? authService.userCode ?? '';
-      final isNutriOrAdmin = authService.userType == 'Nutricionista' ||
-          authService.userType == 'Administrador';
-      final adherenciaUserCode = isNutriOrAdmin
-          ? codigoPaciente
-          : (authService.userCode ?? codigoPaciente);
-      final codigoUsuarioObjetivo = isNutriOrAdmin
-          ? null
-          : int.tryParse((authService.userCode ?? '').trim());
-      final codigoPacienteObjetivo = int.tryParse((codigoPaciente).trim());
-      final codigoUsuarioActor = int.tryParse(
-        (authService.userCode ?? '').trim(),
-      );
-
       // Crear fecha completa
       final fechaCompleta = DateTime(
         _fechaSeleccionada.year,
@@ -5188,28 +5227,14 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
         if (response.statusCode == 200 ||
             response.statusCode == 201 ||
             response.statusCode == 204) {
-          if (_entrenamientoEjercicios.isNotEmpty) {
-            final codigo = widget.entrenamiento!.codigo!;
-            for (final ejercicio in _entrenamientoEjercicios) {
-              ejercicio.codigoEntrenamiento = codigo;
-            }
-            await apiService.saveEntrenamientoEjercicios(
-              codigo,
-              _entrenamientoEjercicios,
-            );
+          final codigo = widget.entrenamiento!.codigo!;
+          for (final ejercicio in _entrenamientoEjercicios) {
+            ejercicio.codigoEntrenamiento = codigo;
           }
-          if (_planFitSeleccionado != null &&
-              _entrenamientoEjercicios.isNotEmpty) {
-            try {
-              await _registrarAdherenciaFitAutomatica(
-                localUserKey: adherenciaUserCode,
-                codigoUsuarioObjetivo: codigoUsuarioObjetivo,
-                codigoPacienteObjetivo: codigoPacienteObjetivo,
-                codigoUsuarioActor: codigoUsuarioActor,
-                fecha: fechaCompleta,
-              );
-            } catch (_) {}
-          }
+          await apiService.saveEntrenamientoEjercicios(
+            codigo,
+            _entrenamientoEjercicios,
+          );
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -5250,7 +5275,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
           } catch (_) {
             codigoCreado = null;
           }
-          if (codigoCreado != null && _entrenamientoEjercicios.isNotEmpty) {
+          if (codigoCreado != null) {
             for (final ejercicio in _entrenamientoEjercicios) {
               ejercicio.codigoEntrenamiento = codigoCreado;
             }
@@ -5258,18 +5283,6 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
               codigoCreado,
               _entrenamientoEjercicios,
             );
-          }
-          if (_planFitSeleccionado != null &&
-              _entrenamientoEjercicios.isNotEmpty) {
-            try {
-              await _registrarAdherenciaFitAutomatica(
-                localUserKey: adherenciaUserCode,
-                codigoUsuarioObjetivo: codigoUsuarioObjetivo,
-                codigoPacienteObjetivo: codigoPacienteObjetivo,
-                codigoUsuarioActor: codigoUsuarioActor,
-                fecha: fechaCompleta,
-              );
-            } catch (_) {}
           }
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -6386,11 +6399,8 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                       children: [
                         Expanded(
                           child: Text(
-                            'Herramientas Fit',
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleLarge
-                                ?.copyWith(fontWeight: FontWeight.bold),
+                            'Temporizador',
+                            style: Theme.of(context).textTheme.titleMedium,
                           ),
                         ),
                         IconButton(
@@ -6528,7 +6538,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
           const SizedBox(height: 24),
           // Rondas con estilo moderno
           Container(
-            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
             decoration: BoxDecoration(
               color: colorScheme.secondaryContainer.withOpacity(0.5),
               borderRadius: BorderRadius.circular(16),
@@ -6541,22 +6551,22 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                     Icon(
                       Icons.flag_rounded,
                       color: colorScheme.secondary,
-                      size: 28,
+                      size: 22,
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
                     Text(
                       'Rondas',
                       style: TextStyle(
-                        fontSize: 15,
+                        fontSize: 13,
                         fontWeight: FontWeight.w600,
                         color: colorScheme.onSecondaryContainer,
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
+                        horizontal: 10,
+                        vertical: 6,
                       ),
                       decoration: BoxDecoration(
                         color: colorScheme.secondary,
@@ -6566,7 +6576,7 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                         _vueltas.toString(),
                         key: ValueKey(_vueltas),
                         style: TextStyle(
-                          fontSize: 20,
+                          fontSize: 16,
                           fontWeight: FontWeight.bold,
                           color: colorScheme.onSecondary,
                           fontFeatures: const [FontFeature.tabularFigures()],
@@ -6575,21 +6585,22 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                     ),
                   ],
                 ),
-                ElevatedButton.icon(
+                ElevatedButton(
                   onPressed: _incrementLap,
-                  icon: const Icon(Icons.add_rounded, size: 20),
-                  label: const Text(''),
                   style: ElevatedButton.styleFrom(
+                    minimumSize: const Size(40, 36),
                     backgroundColor: colorScheme.secondary,
                     foregroundColor: colorScheme.onSecondary,
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
+                      horizontal: 8,
+                      vertical: 6,
                     ),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
+                  child: const Icon(Icons.add_rounded, size: 18),
                 ),
               ],
             ),
@@ -7104,33 +7115,37 @@ class _EntrenamientoEditScreenState extends State<EntrenamientoEditScreen>
                             12,
                             12,
                           ),
-                          title: Row(
+                          title: const Text(
+                            'Duración',
+                            style: TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Expanded(
-                                child: Text(
-                                  'Duración',
-                                  style: TextStyle(fontWeight: FontWeight.w600),
-                                ),
+                              Text(
+                                '${_duracionHoras.toString().padLeft(2, '0')}:${_duracionMinutos.toString().padLeft(2, '0')}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.right,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(
+                                      color:
+                                          Theme.of(context).colorScheme.primary,
+                                    ),
                               ),
                               const SizedBox(width: 8),
-                              Expanded(
-                                child: Align(
-                                  alignment: Alignment.centerRight,
-                                  child: Text(
-                                    '${_duracionHoras.toString().padLeft(2, '0')}:${_duracionMinutos.toString().padLeft(2, '0')}',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    textAlign: TextAlign.right,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodySmall
-                                        ?.copyWith(
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .primary,
-                                        ),
-                                  ),
-                                ),
+                              IconButton(
+                                onPressed: _startTimer,
+                                tooltip: 'Temporizador y metrónomo',
+                                visualDensity: VisualDensity.compact,
+                                icon: const Icon(Icons.timer),
+                              ),
+                              Icon(
+                                _duracionExpanded
+                                    ? Icons.expand_less
+                                    : Icons.expand_more,
                               ),
                             ],
                           ),

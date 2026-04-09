@@ -52,6 +52,18 @@ class SessionLog {
       'usuario_nombre': usuarioNombre,
     };
   }
+
+  bool get isGuest =>
+      codigousuario <= 0 ||
+      (usuarioNick == null || usuarioNick!.trim().isEmpty);
+
+  String get accesoDisplayName {
+    if (!isGuest) {
+      return usuarioNick!.trim();
+    }
+    final ip = (ipPublica ?? '').trim();
+    return ip.isEmpty ? 'IP no disponible' : ip;
+  }
 }
 
 class SessionResponse {

@@ -4,6 +4,8 @@ import 'package:nutri_app/models/paciente.dart';
 import 'package:nutri_app/models/plan_fit.dart';
 import 'package:nutri_app/models/plan_fit_dia.dart';
 import 'package:nutri_app/models/plan_fit_ejercicio.dart';
+import 'package:nutri_app/screens/entrenamiento_sensaciones_pendientes_screen.dart';
+import 'package:nutri_app/screens/entrenamiento_paciente_evolution_screen.dart';
 import 'package:nutri_app/screens/planes_fit/plan_fit_edit_screen.dart';
 import 'package:nutri_app/services/adherencia_service.dart';
 import 'package:nutri_app/services/api_service.dart';
@@ -579,6 +581,31 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
     }
   }
 
+  void _openPlanSensaciones(PlanFit plan) {
+    final codigoPaciente = widget.paciente?.codigo ?? plan.codigoPaciente;
+    if (codigoPaciente == null || codigoPaciente <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo identificar el paciente del plan fit.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => EntrenamientoSensacionesPendientesScreen(
+          codigoPaciente: codigoPaciente,
+          codigoPlanFit: plan.codigo,
+          incluirLeidas: true,
+          titulo: 'Sensaciones del plan fit',
+          emptyMessage: 'No hay sensaciones registradas para este plan fit.',
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final configService = context.watch<ConfigService>();
@@ -593,6 +620,20 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
             ? 'Planes Fit de ${widget.paciente!.nombre}'
             : 'Planes Fit'),
         actions: [
+          if (widget.paciente != null)
+            IconButton(
+              icon: const Icon(Icons.show_chart_rounded),
+              tooltip: 'Ver evolución del paciente',
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => EntrenamientoPacienteEvolutionScreen(
+                      paciente: widget.paciente!,
+                    ),
+                  ),
+                );
+              },
+            ),
           IconButton(
             icon: Icon(_showFilterPlanes
                 ? Icons.filter_alt
@@ -957,6 +998,15 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
                                         tooltip: 'Descargar',
                                         iconSize: 30,
                                       ),
+                                    if (widget.paciente != null)
+                                      IconButton(
+                                        icon: const Icon(Icons.forum_outlined),
+                                        color: Colors.teal,
+                                        onPressed: () =>
+                                            _openPlanSensaciones(plan),
+                                        tooltip: 'Ver sensaciones',
+                                        iconSize: 30,
+                                      ),
                                     IconButton(
                                       icon: const Icon(Icons.content_copy),
                                       color: Colors.purple,
@@ -973,14 +1023,6 @@ class _PlanesFitListScreenState extends State<PlanesFitListScreen> {
                                         tooltip: 'Completar',
                                         iconSize: 30,
                                       ),
-                                    IconButton(
-                                      icon: const Icon(Icons.open_in_browser),
-                                      color: Colors.blue,
-                                      onPressed: () =>
-                                          _launchUrlExternal(plan.url ?? ''),
-                                      tooltip: 'Ver en navegador',
-                                      iconSize: 30,
-                                    ),
                                   ],
                                 ),
                               ),

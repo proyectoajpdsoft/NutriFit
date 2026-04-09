@@ -6,6 +6,7 @@ header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers
 
 include_once '../config/database.php';
 include_once '../auth/token_validator.php';
+include_once '../auth/auto_validator.php';
 include_once '../auth/permissions.php';
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -16,9 +17,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 $database = new Database();
 $db = $database->getConnection();
 
-// Validar token
-$validator = new TokenValidator($db);
-$user = $validator->validateToken();
+// Validar token de usuario o invitado según corresponda.
+$validator = new AutoValidator($db);
+$user = $validator->validate();
 
 $method = $_SERVER['REQUEST_METHOD'];
 
@@ -29,8 +30,41 @@ function is_premium_catalog_read_request() {
         && $_GET['premium_visible'] == '1';
 }
 
-if (is_premium_catalog_read_request()) {
-    if (PermissionManager::getUserType($user) !== PermissionManager::TYPE_PREMIUM) {
+function is_catalog_detail_read_request() {
+    return $_SERVER['REQUEST_METHOD'] === 'GET'
+        && isset($_GET['catalog_ejercicio'])
+        && intval($_GET['catalog_ejercicio']) > 0;
+}
+
+function is_catalog_total_read_request() {
+    return $_SERVER['REQUEST_METHOD'] === 'GET'
+        && isset($_GET['total_catalog']);
+}
+
+function can_read_premium_catalog_preview($user) {
+    $user_type = PermissionManager::getUserType($user);
+
+    return in_array($user_type, array(
+        PermissionManager::TYPE_GUEST,
+        PermissionManager::TYPE_USER_NO_PATIENT,
+        PermissionManager::TYPE_USER_WITH_PATIENT,
+        PermissionManager::TYPE_PREMIUM,
+        PermissionManager::TYPE_NUTRITIONIST,
+        PermissionManager::TYPE_ADMIN,
+    ), true);
+}
+
+function user_can_manage_plan_fit_catalog($user) {
+    $user_type = PermissionManager::getUserType($user);
+
+    return in_array($user_type, array(
+        PermissionManager::TYPE_NUTRITIONIST,
+        PermissionManager::TYPE_ADMIN,
+    ), true);
+}
+
+if (is_premium_catalog_read_request() || is_catalog_detail_read_request() || is_catalog_total_read_request()) {
+    if (!can_read_premium_catalog_preview($user)) {
         PermissionManager::checkPermission($user, 'planes_fit');
     }
 } else {
@@ -273,12 +307,18 @@ function get_catalog_ejercicios($search = null, $codigo_categoria = null, $premi
 }
 
 function get_catalog_ejercicio_with_foto($codigo) {
-    global $db;
+    global $db, $user;
     ensure_catalog_table();
 
     $query = "SELECT codigo, 0 as codigo_plan_fit, NULL as codigo_dia, nombre, instrucciones, instrucciones_detalladas, url_video, foto, foto_miniatura, foto_nombre, visible_premium, tiempo, descanso, repeticiones, kilos, hashtag, 0 as orden
               FROM nu_plan_fit_ejercicios_catalogo
-              WHERE codigo = :codigo LIMIT 1";
+              WHERE codigo = :codigo";
+
+    if (!user_can_manage_plan_fit_catalog($user)) {
+        $query .= " AND visible_premium = 'S'";
+    }
+
+    $query .= " LIMIT 1";
     
     $stmt = $db->prepare($query);
     $stmt->bindValue(':codigo', $codigo, PDO::PARAM_INT);

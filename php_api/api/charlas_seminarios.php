@@ -27,7 +27,37 @@ $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
 $validator = new AutoValidator($db);
 $user = $validator->validate();
-PermissionManager::checkPermission($user, 'charlas_seminarios');
+
+function is_safe_charlas_preview_read_request() {
+    return $_SERVER['REQUEST_METHOD'] === 'GET'
+        && (
+            isset($_GET['categorias'])
+            || !empty($_GET['diapositivas'])
+            || !empty($_GET['codigo'])
+            || isset($_GET['portada'])
+            || isset($_GET['publico'])
+        );
+}
+
+function can_read_charlas_preview($user) {
+    $user_type = PermissionManager::getUserType($user);
+
+    return in_array($user_type, array(
+        PermissionManager::TYPE_USER_NO_PATIENT,
+        PermissionManager::TYPE_USER_WITH_PATIENT,
+        PermissionManager::TYPE_PREMIUM,
+        PermissionManager::TYPE_NUTRITIONIST,
+        PermissionManager::TYPE_ADMIN,
+    ), true);
+}
+
+if (is_safe_charlas_preview_read_request()) {
+    if (!can_read_charlas_preview($user)) {
+        PermissionManager::checkPermission($user, 'charlas_seminarios');
+    }
+} else {
+    PermissionManager::checkPermission($user, 'charlas_seminarios');
+}
 
 ensure_charlas_tables();
 
@@ -76,6 +106,12 @@ try {
             if (isset($_GET['categorias']) && !empty($_GET['codigo'])) {
                 require_manager();
                 update_charla_categoria(intval($_GET['codigo']));
+            } elseif (isset($_GET['reorder']) && !empty($_GET['charla'])) {
+                require_manager();
+                persist_diapositiva_order(intval($_GET['charla']));
+            } elseif (isset($_GET['audio_config']) && !empty($_GET['audio_config'])) {
+                require_manager();
+                save_audio_config(intval($_GET['audio_config']));
             } elseif (!empty($_GET['slide'])) {
                 require_manager();
                 update_diapositiva(intval($_GET['slide']));
@@ -257,6 +293,11 @@ function ensure_charlas_tables() {
     ensure_column_if_missing('nu_charla_seminario_diapositiva', 'audio_diapositiva_nombre', 'VARCHAR(255) DEFAULT NULL');
     ensure_column_if_missing('nu_charla_seminario_diapositiva', 'audio_diapositiva_mime', 'VARCHAR(120) DEFAULT NULL');
     ensure_column_if_missing('nu_charla_seminario_diapositiva', 'audio_duracion_ms', 'INT DEFAULT NULL');
+    ensure_column_if_missing('nu_charla_seminario_diapositiva', 'duracion_presentacion_seg', 'DOUBLE DEFAULT NULL');
+    ensure_column_if_missing('nu_charla_seminario', 'audio_global', 'LONGBLOB DEFAULT NULL');
+    ensure_column_if_missing('nu_charla_seminario', 'audio_global_nombre', 'VARCHAR(255) DEFAULT NULL');
+    ensure_column_if_missing('nu_charla_seminario', 'audio_global_mime', 'VARCHAR(120) DEFAULT NULL');
+    ensure_column_if_missing('nu_charla_seminario', 'timeline_presentacion_json', 'LONGTEXT DEFAULT NULL');
 }
 
 // ─────────────────────────── CAMPOS BASE SELECT ───────────────────────────
@@ -302,6 +343,9 @@ function parse_charla_row($item, $include_portada = false) {
     }
     if (isset($item['total_likes'])) {
         $item['total_likes'] = intval($item['total_likes']);
+    }
+    if (isset($item['audio_global']) && $item['audio_global'] !== null) {
+        $item['audio_global'] = base64_encode($item['audio_global']);
     }
     return $item;
 }
@@ -541,10 +585,16 @@ function get_charla($codigo) {
         $joins = 'LEFT JOIN nu_charla_seminario_usuario cu ON c.codigo = cu.codigo_charla AND cu.codigo_usuario = :codigo_usuario';
     }
 
-    $query = "SELECT " . base_charla_fields(true, true) . "
+    $query = "SELECT " . base_charla_fields(true, true) . ", c.audio_global, c.audio_global_nombre, c.audio_global_mime, c.timeline_presentacion_json
         FROM nu_charla_seminario c
         $joins
-        WHERE c.codigo = :codigo
+        WHERE c.codigo = :codigo";
+
+    if (!is_manager_user()) {
+        $query .= " AND c.activo = 'S' AND c.visible_para_todos = 'S'";
+    }
+
+    $query .= "
         LIMIT 1";
 
     $stmt = $db->prepare($query);
@@ -568,10 +618,24 @@ function get_charla($codigo) {
 function get_charla_diapositivas($codigo_charla) {
     global $db;
 
+    if (!is_manager_user()) {
+        $check = $db->prepare(
+            "SELECT codigo FROM nu_charla_seminario WHERE codigo = :codigo_charla AND activo = 'S' AND visible_para_todos = 'S' LIMIT 1"
+        );
+        $check->bindParam(':codigo_charla', $codigo_charla, PDO::PARAM_INT);
+        $check->execute();
+        if (!$check->fetch(PDO::FETCH_ASSOC)) {
+            http_response_code(404);
+            ob_clean();
+            echo json_encode(array('message' => 'Charla no encontrada.'));
+            return;
+        }
+    }
+
     $stmt = $db->prepare(
         "SELECT codigo, codigo_charla, numero_diapositiva, imagen_diapositiva, imagen_diapositiva_nombre, imagen_miniatura,
             audio_diapositiva, audio_diapositiva_nombre, audio_diapositiva_mime, audio_duracion_ms,
-            ancho_px, alto_px
+            ancho_px, alto_px, duracion_presentacion_seg
          FROM nu_charla_seminario_diapositiva
          WHERE codigo_charla = :codigo_charla
          ORDER BY numero_diapositiva ASC"
@@ -594,6 +658,7 @@ function get_charla_diapositivas($codigo_charla) {
         $slide['ancho_px'] = $slide['ancho_px'] !== null ? intval($slide['ancho_px']) : null;
         $slide['alto_px']  = $slide['alto_px']  !== null ? intval($slide['alto_px'])  : null;
         $slide['audio_duracion_ms'] = $slide['audio_duracion_ms'] !== null ? intval($slide['audio_duracion_ms']) : null;
+        $slide['duracion_presentacion_seg'] = $slide['duracion_presentacion_seg'] !== null ? floatval($slide['duracion_presentacion_seg']) : null;
     }
 
     ob_clean();
@@ -935,6 +1000,99 @@ function delete_diapositiva($codigo_slide) {
     echo json_encode(array('message' => 'Diapositiva no encontrada.'));
 }
 
+function persist_diapositiva_order($codigo_charla) {
+    global $db;
+
+    $data = json_decode(file_get_contents('php://input'));
+    if (!$data || empty($data->slides) || !is_array($data->slides)) {
+        http_response_code(400);
+        echo json_encode(array('message' => 'Debes indicar la lista completa de diapositivas en orden.'));
+        return;
+    }
+
+    $requested_codes = array();
+    foreach ($data->slides as $slide_code) {
+        $codigo = intval($slide_code);
+        if ($codigo <= 0 || in_array($codigo, $requested_codes, true)) {
+            http_response_code(400);
+            echo json_encode(array('message' => 'El orden de diapositivas recibido no es válido.'));
+            return;
+        }
+        $requested_codes[] = $codigo;
+    }
+
+    $stmt = $db->prepare(
+        "SELECT codigo
+         FROM nu_charla_seminario_diapositiva
+         WHERE codigo_charla = :codigo_charla
+         ORDER BY numero_diapositiva ASC, codigo ASC"
+    );
+    $stmt->bindParam(':codigo_charla', $codigo_charla, PDO::PARAM_INT);
+    $stmt->execute();
+    $existing_codes = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+
+    $sorted_requested = $requested_codes;
+    $sorted_existing = $existing_codes;
+    sort($sorted_requested);
+    sort($sorted_existing);
+
+    if (count($requested_codes) !== count($existing_codes) || $sorted_requested !== $sorted_existing) {
+        http_response_code(400);
+        echo json_encode(array('message' => 'La lista de diapositivas no coincide con las diapositivas existentes.'));
+        return;
+    }
+
+    apply_slide_order($codigo_charla, $requested_codes);
+
+    ob_clean();
+    echo json_encode(array('message' => 'Orden de diapositivas actualizado.'));
+}
+
+function apply_slide_order($codigo_charla, $slide_codes) {
+    global $db;
+
+    $db->beginTransaction();
+    try {
+        $temp_stmt = $db->prepare(
+            "UPDATE nu_charla_seminario_diapositiva
+             SET numero_diapositiva = :numero
+             WHERE codigo_charla = :codigo_charla AND codigo = :codigo"
+        );
+        foreach ($slide_codes as $index => $slide_codigo) {
+            $temp_numero = 1000000 + $index + 1;
+            $temp_stmt->bindValue(':numero', $temp_numero, PDO::PARAM_INT);
+            $temp_stmt->bindValue(':codigo_charla', $codigo_charla, PDO::PARAM_INT);
+            $temp_stmt->bindValue(':codigo', intval($slide_codigo), PDO::PARAM_INT);
+            $temp_stmt->execute();
+        }
+
+        $final_stmt = $db->prepare(
+            "UPDATE nu_charla_seminario_diapositiva
+             SET numero_diapositiva = :numero
+             WHERE codigo_charla = :codigo_charla AND codigo = :codigo"
+        );
+        foreach ($slide_codes as $index => $slide_codigo) {
+            $numero = $index + 1;
+            $final_stmt->bindValue(':numero', $numero, PDO::PARAM_INT);
+            $final_stmt->bindValue(':codigo_charla', $codigo_charla, PDO::PARAM_INT);
+            $final_stmt->bindValue(':codigo', intval($slide_codigo), PDO::PARAM_INT);
+            $final_stmt->execute();
+        }
+
+        $upd_total = $db->prepare("UPDATE nu_charla_seminario SET total_diapositivas = :total WHERE codigo = :codigo_charla");
+        $upd_total->bindValue(':total', count($slide_codes), PDO::PARAM_INT);
+        $upd_total->bindValue(':codigo_charla', $codigo_charla, PDO::PARAM_INT);
+        $upd_total->execute();
+
+        $db->commit();
+    } catch (Throwable $e) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        throw $e;
+    }
+}
+
 function renumerate_slides($codigo_charla) {
     global $db;
 
@@ -942,21 +1100,130 @@ function renumerate_slides($codigo_charla) {
     $stmt = $db->prepare("SELECT codigo FROM nu_charla_seminario_diapositiva WHERE codigo_charla = :c ORDER BY numero_diapositiva ASC, codigo ASC");
     $stmt->bindParam(':c', $codigo_charla, PDO::PARAM_INT);
     $stmt->execute();
-    $slides = $stmt->fetchAll(PDO::FETCH_COLUMN);
+    $slides = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
 
-    $upd = $db->prepare("UPDATE nu_charla_seminario_diapositiva SET numero_diapositiva = :n WHERE codigo = :c");
-    foreach ($slides as $i => $slide_codigo) {
-        $n = $i + 1;
-        $upd->bindParam(':n', $n, PDO::PARAM_INT);
-        $upd->bindParam(':c', $slide_codigo, PDO::PARAM_INT);
-        $upd->execute();
+    apply_slide_order($codigo_charla, $slides);
+}
+
+// ─────────────────────────── AUDIO CONFIG ───────────────────────────────────
+
+/**
+ * PUT ?audio_config={codigo_charla}
+ * Body JSON:
+ *   {
+ *     "diapositivas": [
+ *       { "codigo": 1, "numero_diapositiva": 1, "duracion_presentacion_seg": 8.5 },
+ *       ...
+ *     ],
+ *     "audio_global": "<base64>",          // opcional
+ *     "audio_global_nombre": "audio.m4a",  // opcional
+ *     "audio_global_mime": "audio/mp4",    // opcional
+ *     "clear_audio_global": 1,              // opcional
+ *     "timeline_items": [                   // opcional
+ *       { "codigo_diapositiva": 12, "duracion_seg": 7.5 },
+ *       { "codigo_diapositiva": 12, "duracion_seg": 4.0 },
+ *       { "codigo_diapositiva": 9,  "duracion_seg": 8.2 }
+ *     ]
+ *   }
+ */
+function save_audio_config($codigo_charla) {
+    global $db;
+
+    $data = json_decode(file_get_contents('php://input'));
+    if (!$data) {
+        http_response_code(400);
+        echo json_encode(array('message' => 'Cuerpo de la petición inválido.'));
+        return;
     }
 
-    $total = count($slides);
-    $upd2 = $db->prepare("UPDATE nu_charla_seminario SET total_diapositivas = :total WHERE codigo = :c");
-    $upd2->bindParam(':total', $total, PDO::PARAM_INT);
-    $upd2->bindParam(':c', $codigo_charla, PDO::PARAM_INT);
-    $upd2->execute();
+    $codigo_usuario = current_user_code();
+
+    // ── 1. Persistir timeline final de presentación (permite diapositivas repetidas)
+    $timeline_json = null;
+    if (!empty($data->timeline_items) && is_array($data->timeline_items)) {
+        $timeline_items = array();
+        foreach ($data->timeline_items as $item) {
+            $codigo_diapositiva = intval($item->codigo_diapositiva ?? 0);
+            $duracion_seg = isset($item->duracion_seg) ? floatval($item->duracion_seg) : 0.0;
+            if ($codigo_diapositiva <= 0) continue;
+            if ($duracion_seg <= 0.0) $duracion_seg = 5.0;
+            $timeline_items[] = array(
+                'codigo_diapositiva' => $codigo_diapositiva,
+                'duracion_seg' => $duracion_seg
+            );
+        }
+        if (!empty($timeline_items)) {
+            $timeline_json = json_encode($timeline_items, JSON_UNESCAPED_UNICODE);
+        }
+    }
+
+    // ── 2. Compatibilidad: actualizar orden y duración por diapositiva única ─────────
+    if (!empty($data->diapositivas) && is_array($data->diapositivas)) {
+        $slide_codes = array();
+        foreach ($data->diapositivas as $slide) {
+            $codigo = intval($slide->codigo ?? 0);
+            if ($codigo <= 0) continue;
+            $slide_codes[] = $codigo;
+        }
+
+        // Actualizar duracion_presentacion_seg y numero_diapositiva
+        $update_slide = $db->prepare(
+            "UPDATE nu_charla_seminario_diapositiva
+             SET numero_diapositiva = :numero,
+                 duracion_presentacion_seg = :duracion,
+                 fecham = NOW(),
+                 codusuariom = :usuario
+             WHERE codigo = :codigo AND codigo_charla = :codigo_charla"
+        );
+
+        foreach ($data->diapositivas as $index => $slide) {
+            $codigo = intval($slide->codigo ?? 0);
+            if ($codigo <= 0) continue;
+            $numero = $index + 1;
+            $duracion = isset($slide->duracion_presentacion_seg) ? floatval($slide->duracion_presentacion_seg) : 5.0;
+            $update_slide->bindValue(':numero', $numero, PDO::PARAM_INT);
+            $update_slide->bindValue(':duracion', $duracion);
+            $update_slide->bindValue(':usuario', $codigo_usuario, PDO::PARAM_INT);
+            $update_slide->bindValue(':codigo', $codigo, PDO::PARAM_INT);
+            $update_slide->bindValue(':codigo_charla', $codigo_charla, PDO::PARAM_INT);
+            $update_slide->execute();
+        }
+    }
+
+    // ── 3. Actualizar audio global / timeline en la charla ─────────────────────────────
+    $charla_sets = array('fecham = NOW()', 'codusuariom = :usuario');
+    $charla_params = array(':usuario' => $codigo_usuario, ':codigo' => $codigo_charla);
+
+    $audio_global = null;
+    if (!empty($data->audio_global)) {
+        $audio_global = base64_decode($data->audio_global);
+        $charla_sets[] = 'audio_global = :audio_global';
+        $charla_sets[] = 'audio_global_nombre = :audio_global_nombre';
+        $charla_sets[] = 'audio_global_mime = :audio_global_mime';
+        $charla_params[':audio_global_nombre'] = $data->audio_global_nombre ?? 'audio_global.m4a';
+        $charla_params[':audio_global_mime']   = $data->audio_global_mime   ?? 'audio/mp4';
+    } elseif (!empty($data->clear_audio_global)) {
+        $charla_sets[] = 'audio_global = NULL';
+        $charla_sets[] = 'audio_global_nombre = NULL';
+        $charla_sets[] = 'audio_global_mime = NULL';
+    }
+
+    if ($timeline_json !== null) {
+        $charla_sets[] = 'timeline_presentacion_json = :timeline_presentacion_json';
+        $charla_params[':timeline_presentacion_json'] = $timeline_json;
+    }
+
+    $stmt = $db->prepare("UPDATE nu_charla_seminario SET " . implode(', ', $charla_sets) . " WHERE codigo = :codigo");
+    foreach ($charla_params as $k => $v) {
+        $stmt->bindValue($k, $v);
+    }
+    if ($audio_global !== null) {
+        $stmt->bindParam(':audio_global', $audio_global, PDO::PARAM_LOB);
+    }
+    $stmt->execute();
+
+    ob_clean();
+    echo json_encode(array('message' => 'Configuración de audio guardada.'));
 }
 
 // ─────────────────────────── TOGGLE LIKE / FAVORITO ───────────────────────────

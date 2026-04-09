@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../models/aditivo.dart';
@@ -10,8 +11,40 @@ import '../services/auth_service.dart';
 import '../services/consejo_receta_pdf_service.dart';
 import '../utils/aditivos_ai.dart';
 import '../widgets/peligrosidad_dialog.dart';
+import '../widgets/premium_feature_dialog_helper.dart';
+import '../widgets/premium_upsell_card.dart';
 
 enum _OrdenAditivosPremium { nombre, tipo, fecha, peligrosidad }
+
+bool _canAccessAditivosCatalog(AuthService authService) {
+  return authService.isPremium ||
+      authService.userType == 'Nutricionista' ||
+      authService.userType == 'Administrador';
+}
+
+Future<void> _showPremiumRequiredForAditivosCopyPdf(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
+  return PremiumFeatureDialogHelper.show(
+    context,
+    message: l10n.additivesPremiumCopyPdfMessage,
+  );
+}
+
+Future<void> _showPremiumRequiredForAditivosExplore(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
+  return PremiumFeatureDialogHelper.show(
+    context,
+    message: l10n.additivesPremiumExploreMessage,
+  );
+}
+
+Future<void> _showPremiumRequiredForAditivosTools(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
+  return PremiumFeatureDialogHelper.show(
+    context,
+    message: l10n.additivesPremiumToolsMessage,
+  );
+}
 
 class AditivosPacienteScreen extends StatefulWidget {
   const AditivosPacienteScreen({super.key});
@@ -21,6 +54,9 @@ class AditivosPacienteScreen extends StatefulWidget {
 }
 
 class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
+  static const String _paramNonPremiumPreviewCodes =
+      'codigos_aditivos_no_premium';
+
   List<Aditivo> _aditivos = [];
   List<Aditivo> _filtered = [];
   bool _isLoading = true;
@@ -34,6 +70,7 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
   _OrdenAditivosPremium _orden = _OrdenAditivosPremium.nombre;
   bool _ordenAscendente = true;
   String? _loadErrorMessage;
+  List<int>? _nonPremiumPreviewCodes;
 
   final TextEditingController _searchCtrl = TextEditingController();
 
@@ -271,6 +308,7 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
   }
 
   Future<void> _showTipoFilterDialog() async {
+    final l10n = AppLocalizations.of(context)!;
     await _loadTiposCatalogo();
     final tempSelected = _selectedTipos.toSet();
     var tempMatchAll = _tipoMatchAll;
@@ -281,11 +319,11 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) {
           final peligrosidadLabels = {
-            1: 'Seguro',
-            2: 'Atención',
-            3: 'Alto',
-            4: 'Restringido',
-            5: 'Prohibido',
+            1: l10n.additivesSeveritySafe,
+            2: l10n.additivesSeverityAttention,
+            3: l10n.additivesSeverityHigh,
+            4: l10n.additivesSeverityRestricted,
+            5: l10n.additivesSeverityForbidden,
           };
           final sortedTipos = List<String>.from(_tiposCatalogo)
             ..sort(
@@ -300,14 +338,14 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
               children: [
                 Expanded(
                   child: Text(
-                    'Filtrar aditivos',
+                    l10n.additivesFilterTitle,
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
                 IconButton(
                   onPressed: () => Navigator.pop(dialogContext),
                   icon: const Icon(Icons.close),
-                  tooltip: 'Cerrar',
+                  tooltip: l10n.commonClose,
                   style: IconButton.styleFrom(
                     shape: const CircleBorder(),
                     minimumSize: const Size(32, 32),
@@ -323,8 +361,8 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const SizedBox(height: 12),
-                  const Text(
-                    'Peligrosidad',
+                  Text(
+                    l10n.commonSeverity,
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
@@ -370,8 +408,8 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                   const SizedBox(height: 12),
                   Text(
                     _tiposCatalogo.isEmpty
-                        ? 'No hay tipos configurados en tipos_aditivos.'
-                        : 'Tipos',
+                        ? l10n.additivesNoConfiguredTypes
+                        : l10n.additivesTypesLabel,
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
@@ -420,9 +458,8 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                     value: tempMatchAll,
                     onChanged: (value) =>
                         setDialogState(() => tempMatchAll = value),
-                    title: const Text('Coincidir todas'),
-                    subtitle:
-                        const Text('Exige todos los tipos seleccionados.'),
+                    title: Text(l10n.commonMatchAll),
+                    subtitle: Text(l10n.commonRequireAllSelected),
                   ),
                 ],
               ),
@@ -438,7 +475,7 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                   });
                   Navigator.pop(dialogContext);
                 },
-                child: const Text('Limpiar'),
+                child: Text(l10n.commonClear),
               ),
               ElevatedButton(
                 onPressed: () {
@@ -453,7 +490,7 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text('Aplicar'),
+                    Text(l10n.commonApply),
                     const SizedBox(width: 8),
                     Container(
                       width: 20,
@@ -550,6 +587,7 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
     Object error, {
     required String fallback,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     final raw = error.toString();
     final lower = raw.toLowerCase();
 
@@ -557,30 +595,38 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
         lower.contains('<!doctype') ||
         lower.contains('404') ||
         lower.contains('not found')) {
-      return 'El catálogo de Aditivos no está disponible temporalmente. Inténtalo más tarde.';
+      return l10n.additivesCatalogUnavailable;
     }
     if (lower.contains('failed host lookup') ||
         lower.contains('socketexception') ||
         lower.contains('connection')) {
-      return 'No se pudo conectar con el servidor. Revisa tu conexión e inténtalo de nuevo.';
+      return l10n.additivesServerConnectionError;
     }
     return fallback;
   }
 
   Future<void> _loadAditivos() async {
+    final l10n = AppLocalizations.of(context)!;
     setState(() {
       _isLoading = true;
       _loadErrorMessage = null;
     });
     try {
-      final response =
-          await context.read<ApiService>().get('api/aditivos.php?activos=1');
+      final apiService = context.read<ApiService>();
+      final previewCodesFuture = apiService
+          .getParametroValor(_paramNonPremiumPreviewCodes)
+          .then(_parsePreviewCodes)
+          .catchError((_) => null);
+      final response = await apiService.get('api/aditivos.php?activos=1');
       if (response.statusCode == 200 && mounted) {
         final List<dynamic> data = jsonDecode(response.body) as List<dynamic>;
+        final previewCodes = await previewCodesFuture;
+        if (!mounted) return;
         setState(() {
           _aditivos = data
               .map((e) => Aditivo.fromJson(Map<String, dynamic>.from(e as Map)))
               .toList();
+          _nonPremiumPreviewCodes = previewCodes;
           _tiposCatalogo = mergeAditivoTypes(
             <String>[
               ..._tiposCatalogo,
@@ -600,9 +646,10 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
         setState(() {
           _aditivos = [];
           _filtered = [];
+          _nonPremiumPreviewCodes = null;
           _loadErrorMessage = _friendlyApiError(
             e,
-            fallback: 'No se pudieron cargar los Aditivos.',
+            fallback: l10n.additivesLoadFailed,
           );
         });
       }
@@ -612,6 +659,7 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
   }
 
   Future<void> _exportItemPdf(Aditivo s) async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       final apiService = context.read<ApiService>();
       await ConsejoRecetaPdfService.generatePdf(
@@ -626,22 +674,37 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error al generar PDF: $e')),
+        SnackBar(content: Text(l10n.commonGeneratePdfError('$e'))),
       );
     }
   }
 
   Future<void> _openDetail(Aditivo s) async {
+    final authService = context.read<AuthService>();
+    final canAccessFullCatalog = _canAccessAditivosCatalog(authService);
+
     await Navigator.push<void>(
       context,
       MaterialPageRoute(
         builder: (_) => AditivoDetailScreen(
           aditivo: s,
-          onExportPdf: _exportItemPdf,
+          onExportPdf: canAccessFullCatalog
+              ? _exportItemPdf
+              : (_) => _showPremiumRequiredForAditivosCopyPdf(context),
           allAditivos: _aditivos,
-          showPremiumRecommendations: context.read<AuthService>().isPremium,
-          onNavigateToAditivo: (target) => _openDetail(target),
+          showPremiumRecommendations: true,
+          allowCopyAndPdf: canAccessFullCatalog,
+          allowDiscoveryNavigation: canAccessFullCatalog,
+          onRequestPremiumAccess: (message) =>
+              PremiumFeatureDialogHelper.show(context, message: message),
+          onNavigateToAditivo: canAccessFullCatalog
+              ? (target) => _openDetail(target)
+              : (target) => _showPremiumRequiredForAditivosExplore(context),
           onHashtagTap: (hashtag) {
+            if (!canAccessFullCatalog) {
+              _showPremiumRequiredForAditivosExplore(context);
+              return;
+            }
             setState(() {
               _searchVisible = true;
             });
@@ -677,15 +740,69 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
     });
   }
 
+  List<int>? _parsePreviewCodes(String? rawValue) {
+    final raw =
+        (rawValue ?? '').trim().replaceAll(';', ',').replaceAll('|', ',');
+    if (raw.isEmpty) return null;
+
+    final codes = raw
+        .split(',')
+        .map((item) => int.tryParse(item.trim()))
+        .whereType<int>()
+        .where((value) => value > 0)
+        .toList(growable: false);
+
+    if (codes.isEmpty) return null;
+    return codes;
+  }
+
+  List<Aditivo> _buildPreviewAditivos() {
+    final configuredCodes = _nonPremiumPreviewCodes;
+    if (configuredCodes != null && configuredCodes.isNotEmpty) {
+      final byCode = <int, Aditivo>{
+        for (final item in _aditivos)
+          if (item.codigo != null) item.codigo!: item,
+      };
+      final configuredItems = configuredCodes
+          .map((code) => byCode[code])
+          .whereType<Aditivo>()
+          .toList(growable: false);
+      if (configuredItems.isNotEmpty) {
+        return configuredItems;
+      }
+    }
+
+    final preview = List<Aditivo>.from(_aditivos);
+    preview.sort((a, b) {
+      final dateA = a.fechaa ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final dateB = b.fechaa ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final byDate = dateB.compareTo(dateA);
+      if (byDate != 0) return byDate;
+      return a.titulo.toLowerCase().compareTo(b.titulo.toLowerCase());
+    });
+    return preview.take(3).toList(growable: false);
+  }
+
+  String _catalogHighlightText(int total, String label) {
+    final roundedDown = total - (total % 10);
+    return ' (con más de $roundedDown $label)';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final filteredCount = _filtered.length;
+    final l10n = AppLocalizations.of(context)!;
+    final authService = context.watch<AuthService>();
+    final canAccessFullCatalog = _canAccessAditivosCatalog(authService);
+    final visibleItems =
+        canAccessFullCatalog ? _filtered : _buildPreviewAditivos();
+    final filteredCount = visibleItems.length;
+
     return Scaffold(
       appBar: AppBar(
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Aditivos'),
+            Text(l10n.navAdditives),
             const SizedBox(width: 8),
             Container(
               width: 24,
@@ -708,24 +825,28 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
         ),
         actions: [
           IconButton(
-            tooltip: _searchVisible ? 'Ocultar buscar' : 'Buscar',
-            onPressed: () {
-              setState(() {
-                _searchVisible = !_searchVisible;
-                if (!_searchVisible) {
-                  _searchCtrl.clear();
-                  _searchQuery = '';
-                  _applyFilter();
-                }
-              });
-            },
+            tooltip: _searchVisible ? l10n.commonHideSearch : l10n.commonSearch,
+            onPressed: canAccessFullCatalog
+                ? () {
+                    setState(() {
+                      _searchVisible = !_searchVisible;
+                      if (!_searchVisible) {
+                        _searchCtrl.clear();
+                        _searchQuery = '';
+                        _applyFilter();
+                      }
+                    });
+                  }
+                : () => _showPremiumRequiredForAditivosTools(context),
             icon: Icon(_searchVisible ? Icons.search_off : Icons.search),
           ),
           IconButton(
             tooltip: _selectedTipos.isEmpty
-                ? 'Filtrar por tipo'
-                : 'Filtrar por tipo (${_selectedTipos.length})',
-            onPressed: _showTipoFilterDialog,
+                ? l10n.commonTypeField
+                : '${l10n.commonTypeField} (${_selectedTipos.length})',
+            onPressed: canAccessFullCatalog
+                ? _showTipoFilterDialog
+                : () => _showPremiumRequiredForAditivosTools(context),
             icon: Stack(
               clipBehavior: Clip.none,
               children: [
@@ -757,8 +878,14 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
             ),
           ),
           PopupMenuButton<String>(
-            tooltip: 'Más opciones',
-            onSelected: (value) => _handleMenuAction(value),
+            tooltip: l10n.commonMoreOptions,
+            onSelected: (value) {
+              if (!canAccessFullCatalog) {
+                _showPremiumRequiredForAditivosTools(context);
+                return;
+              }
+              _handleMenuAction(value);
+            },
             itemBuilder: (context) => [
               PopupMenuItem<String>(
                 value: 'buscar',
@@ -769,7 +896,11 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                       size: 18,
                     ),
                     const SizedBox(width: 8),
-                    Text(_searchVisible ? 'Ocultar buscar' : 'Buscar'),
+                    Text(
+                      _searchVisible
+                          ? l10n.commonHideSearch
+                          : l10n.commonSearch,
+                    ),
                   ],
                 ),
               ),
@@ -811,17 +942,17 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                         ),
                     ],
                   ),
-                  title: const Text('Filtrar'),
+                  title: Text(l10n.commonFilter),
                   contentPadding: EdgeInsets.zero,
                 ),
               ),
-              const PopupMenuItem<String>(
+              PopupMenuItem<String>(
                 value: 'actualizar',
                 child: Row(
                   children: [
-                    Icon(Icons.refresh, size: 18),
-                    SizedBox(width: 8),
-                    Text('Actualizar'),
+                    const Icon(Icons.refresh, size: 18),
+                    const SizedBox(width: 8),
+                    Text(l10n.commonRefresh),
                   ],
                 ),
               ),
@@ -831,7 +962,7 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                 checked: _orden == _OrdenAditivosPremium.nombre,
                 child: Row(
                   children: [
-                    const Expanded(child: Text('Ordenar Nombre')),
+                    Expanded(child: Text(l10n.commonSortByName)),
                     if (_orden == _OrdenAditivosPremium.nombre)
                       Icon(
                         _ordenAscendente
@@ -847,7 +978,7 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                 checked: _orden == _OrdenAditivosPremium.tipo,
                 child: Row(
                   children: [
-                    const Expanded(child: Text('Ordenar Tipo')),
+                    Expanded(child: Text(l10n.commonSortByType)),
                     if (_orden == _OrdenAditivosPremium.tipo)
                       Icon(
                         _ordenAscendente
@@ -863,7 +994,7 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                 checked: _orden == _OrdenAditivosPremium.fecha,
                 child: Row(
                   children: [
-                    const Expanded(child: Text('Ordenar Fecha')),
+                    Expanded(child: Text(l10n.commonSortByDate)),
                     if (_orden == _OrdenAditivosPremium.fecha)
                       Icon(
                         _ordenAscendente
@@ -879,7 +1010,7 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                 checked: _orden == _OrdenAditivosPremium.peligrosidad,
                 child: Row(
                   children: [
-                    const Expanded(child: Text('Ordenar Peligrosidad')),
+                    Expanded(child: Text(l10n.commonSortBySeverity)),
                     if (_orden == _OrdenAditivosPremium.peligrosidad)
                       Icon(
                         _ordenAscendente
@@ -921,7 +1052,7 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                         OutlinedButton.icon(
                           onPressed: _loadAditivos,
                           icon: const Icon(Icons.refresh),
-                          label: const Text('Reintentar'),
+                          label: Text(l10n.commonRetry),
                         ),
                       ],
                     ),
@@ -929,7 +1060,7 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                 )
               : Column(
                   children: [
-                    if (_searchVisible)
+                    if (canAccessFullCatalog && _searchVisible)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
                         child: TextField(
@@ -937,12 +1068,12 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                           autofocus: true,
                           onChanged: _applySearch,
                           decoration: InputDecoration(
-                            hintText: 'Buscar aditivos',
+                            hintText: l10n.additivesSearchHint,
                             prefixIcon: const Icon(Icons.search),
                             suffixIcon: _searchQuery.isEmpty
                                 ? null
                                 : IconButton(
-                                    tooltip: 'Limpiar',
+                                    tooltip: l10n.commonClear,
                                     icon: const Icon(Icons.close),
                                     onPressed: () {
                                       _searchCtrl.clear();
@@ -953,7 +1084,7 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                           ),
                         ),
                       ),
-                    if (_searchVisible)
+                    if (canAccessFullCatalog && _searchVisible)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
                         child: SingleChildScrollView(
@@ -961,21 +1092,21 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                           child: Row(
                             children: [
                               FilterChip(
-                                label: const Text('Título'),
+                                label: Text(l10n.commonTitleField),
                                 selected: _searchFields.contains('titulo'),
                                 onSelected: (v) =>
                                     _toggleSearchField('titulo', v),
                               ),
                               const SizedBox(width: 8),
                               FilterChip(
-                                label: const Text('Descripción'),
+                                label: Text(l10n.commonDescriptionField),
                                 selected: _searchFields.contains('descripcion'),
                                 onSelected: (v) =>
                                     _toggleSearchField('descripcion', v),
                               ),
                               const SizedBox(width: 8),
                               FilterChip(
-                                label: const Text('Tipo'),
+                                label: Text(l10n.commonTypeField),
                                 selected: _searchFields.contains('tipo'),
                                 onSelected: (v) =>
                                     _toggleSearchField('tipo', v),
@@ -985,7 +1116,7 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                         ),
                       ),
                     Expanded(
-                      child: _filtered.isEmpty
+                      child: visibleItems.isEmpty
                           ? Center(
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
@@ -998,8 +1129,9 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                                   const SizedBox(height: 16),
                                   Text(
                                     _searchQuery.isEmpty
-                                        ? 'No hay Aditivos disponibles'
-                                        : 'Sin resultados para "$_searchQuery"',
+                                        ? l10n.additivesEmpty
+                                        : l10n.commonNoResultsForQuery(
+                                            _searchQuery),
                                     style: TextStyle(
                                       color: Colors.grey.shade600,
                                       fontSize: 15,
@@ -1018,9 +1150,33 @@ class _AditivosPacienteScreenState extends State<AditivosPacienteScreen> {
                                   12,
                                   40 + MediaQuery.of(context).padding.bottom,
                                 ),
-                                itemCount: _filtered.length,
+                                itemCount: canAccessFullCatalog
+                                    ? visibleItems.length
+                                    : visibleItems.length + 1,
                                 itemBuilder: (context, index) {
-                                  final s = _filtered[index];
+                                  if (!canAccessFullCatalog &&
+                                      index == visibleItems.length) {
+                                    return Padding(
+                                      padding: const EdgeInsets.only(top: 12),
+                                      child: PremiumUpsellCard(
+                                        title: l10n.additivesPremiumTitle,
+                                        subtitle: l10n.additivesPremiumSubtitle,
+                                        subtitleHighlight:
+                                            l10n.additivesCatalogHighlight(
+                                          _aditivos.length -
+                                              (_aditivos.length % 10),
+                                        ),
+                                        subtitleHighlightColor:
+                                            Colors.pink.shade700,
+                                        onPressed: () => Navigator.pushNamed(
+                                          context,
+                                          '/premium_info',
+                                        ),
+                                      ),
+                                    );
+                                  }
+
+                                  final s = visibleItems[index];
                                   final desc = (s.descripcion ?? '').trim();
                                   return Card(
                                     margin:

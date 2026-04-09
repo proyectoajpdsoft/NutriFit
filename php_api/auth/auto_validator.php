@@ -11,6 +11,23 @@ class AutoValidator {
     private $db;
     private $token_validator;
     private $user_data = null;
+
+    private function getUsuarioColumnsMap() {
+        $columns = array();
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM usuario");
+            $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : array();
+            foreach ($rows as $row) {
+                $field = strtolower(trim((string)($row['Field'] ?? '')));
+                if ($field !== '') {
+                    $columns[$field] = true;
+                }
+            }
+        } catch (Throwable $e) {
+            $columns = array();
+        }
+        return $columns;
+    }
     
     public function __construct($database) {
         $this->db = $database;
@@ -68,12 +85,17 @@ class AutoValidator {
      * Valida token de usuario contra tabla usuario
      */
     private function validateUserToken($token) {
+        $columns = $this->getUsuarioColumnsMap();
         $query = "SELECT codigo, nick, tipo, administrador, codigo_paciente, token_expiracion, activo, accesoweb 
                   FROM usuario 
                   WHERE token = :token 
                   AND (token_expiracion IS NULL OR token_expiracion > NOW()) 
                   AND activo = 'S' 
-                  AND accesoweb = 'S'
+                  AND accesoweb = 'S'";
+        if (isset($columns['eliminado'])) {
+            $query .= "\n                  AND COALESCE(eliminado, 'N') <> 'S'";
+        }
+        $query .= "
                   LIMIT 1";
         
         try {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -8,9 +9,11 @@ import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:nutri_app/models/charla_diapositiva.dart';
 import 'package:nutri_app/models/charla_seminario.dart';
+import 'package:nutri_app/screens/charla_audio_editor_screen.dart';
 import 'package:nutri_app/screens/charla_seminario_detail_screen.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
+import 'package:nutri_app/widgets/image_viewer_dialog.dart';
 import 'package:nutri_app/widgets/paste_image_dialog.dart';
 import 'package:nutri_app/widgets/unsaved_changes_dialog.dart';
 import 'package:path_provider/path_provider.dart';
@@ -18,6 +21,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:record/record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class CharlaSeminarioEditScreen extends StatefulWidget {
   const CharlaSeminarioEditScreen({super.key, this.charla});
@@ -35,6 +39,8 @@ class _CharlaSeminarioEditScreenState extends State<CharlaSeminarioEditScreen> {
   static const String _prefsDescripcionExpanded =
       'charla_edit_descripcion_expanded';
   static const String _prefsTogglesExpanded = 'charla_edit_toggles_expanded';
+  static const String _prefsPortadaExpanded = 'charla_edit_portada_expanded';
+  static const String _prefsSlidesExpanded = 'charla_edit_slides_expanded';
 
   final _formKey = GlobalKey<FormState>();
   final _picker = ImagePicker();
@@ -53,7 +59,10 @@ class _CharlaSeminarioEditScreenState extends State<CharlaSeminarioEditScreen> {
   bool _descripcionExpanded = true;
   bool _togglesExpanded = true;
   bool _categoriasExpanded = true;
+  bool _portadaExpanded = true;
+  bool _slidesExpanded = true;
   bool _uploadingSlide = false;
+  bool _reorderingSlides = false;
   bool _recordingAudio = false;
   int? _recordingSlideCodigo;
   DateTime? _recordingStartedAt;
@@ -70,6 +79,99 @@ class _CharlaSeminarioEditScreenState extends State<CharlaSeminarioEditScreen> {
   final Map<int, MemoryImage> _slideCache = <int, MemoryImage>{};
 
   bool get _editing => widget.charla?.codigo != null;
+
+  int _slideCacheKey(CharlaDiapositiva slide) {
+    return slide.codigo ?? slide.numeroDiapositiva;
+  }
+
+  CharlaDiapositiva _cloneSlide(CharlaDiapositiva slide) {
+    return CharlaDiapositiva(
+      codigo: slide.codigo,
+      codigoCharla: slide.codigoCharla,
+      numeroDiapositiva: slide.numeroDiapositiva,
+      imagenDiapositiva: slide.imagenDiapositiva,
+      imagenDiapositivaNombre: slide.imagenDiapositivaNombre,
+      imagenMiniatura: slide.imagenMiniatura,
+      audioDiapositiva: slide.audioDiapositiva,
+      audioDiapositivaNombre: slide.audioDiapositivaNombre,
+      audioDiapositivaMime: slide.audioDiapositivaMime,
+      audioDuracionMs: slide.audioDuracionMs,
+      anchoPx: slide.anchoPx,
+      altoPx: slide.altoPx,
+    );
+  }
+
+  void _reorderSlides(int oldIndex, int newIndex) {
+    if (_reorderingSlides) {
+      return;
+    }
+
+    final previousSlides = _slides.map(_cloneSlide).toList(growable: false);
+
+    setState(() {
+      if (oldIndex < newIndex) {
+        newIndex -= 1;
+      }
+      final slide = _slides.removeAt(oldIndex);
+      _slides.insert(newIndex, slide);
+      for (var i = 0; i < _slides.length; i++) {
+        _slides[i].numeroDiapositiva = i + 1;
+      }
+    });
+
+    unawaited(_persistSlideOrder(previousSlides));
+  }
+
+  Future<void> _persistSlideOrder(
+      List<CharlaDiapositiva> previousSlides) async {
+    final charlaCodigo = widget.charla?.codigo;
+    if (charlaCodigo == null) {
+      return;
+    }
+
+    final slideCodes =
+        _slides.map((slide) => slide.codigo).whereType<int>().toList();
+    if (slideCodes.length != _slides.length) {
+      if (!mounted) return;
+      setState(() {
+        _slides = previousSlides.map(_cloneSlide).toList(growable: false);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content:
+                Text('No se pudo guardar el nuevo orden de las diapositivas.')),
+      );
+      return;
+    }
+
+    _reorderingSlides = true;
+
+    try {
+      final response = await context.read<ApiService>().put(
+            'api/charlas_seminarios.php?reorder=1&charla=$charlaCodigo',
+            body: jsonEncode(<String, dynamic>{'slides': slideCodes}),
+          );
+
+      if (!mounted) return;
+      if (response.statusCode != 200) {
+        throw Exception(_extractApiErrorMessage(response.body));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _slides = previousSlides.map(_cloneSlide).toList(growable: false);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo guardar el orden: $e'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _reorderingSlides = false);
+      }
+    }
+  }
 
   String _extractApiErrorMessage(String body) {
     final trimmed = body.trim();
@@ -126,6 +228,10 @@ class _CharlaSeminarioEditScreenState extends State<CharlaSeminarioEditScreen> {
             prefs.getBool(_prefsTogglesExpanded) ?? _togglesExpanded;
         _categoriasExpanded =
             prefs.getBool(_prefsCategoriasExpanded) ?? _categoriasExpanded;
+        _portadaExpanded =
+            prefs.getBool(_prefsPortadaExpanded) ?? _portadaExpanded;
+        _slidesExpanded =
+            prefs.getBool(_prefsSlidesExpanded) ?? _slidesExpanded;
       });
     } catch (_) {
       // Ignorar errores de persistencia.
@@ -154,6 +260,24 @@ class _CharlaSeminarioEditScreenState extends State<CharlaSeminarioEditScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_prefsTogglesExpanded, value);
+    } catch (_) {
+      // Ignorar errores de persistencia.
+    }
+  }
+
+  Future<void> _savePortadaExpanded(bool value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_prefsPortadaExpanded, value);
+    } catch (_) {
+      // Ignorar errores de persistencia.
+    }
+  }
+
+  Future<void> _saveSlidesExpanded(bool value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_prefsSlidesExpanded, value);
     } catch (_) {
       // Ignorar errores de persistencia.
     }
@@ -301,7 +425,7 @@ class _CharlaSeminarioEditScreenState extends State<CharlaSeminarioEditScreen> {
             children: [
               ListTile(
                 leading: const Icon(Icons.add_photo_alternate_outlined),
-                title: const Text('Añadir foto'),
+                title: const Text('Añadir imagen'),
                 onTap: () {
                   Navigator.pop(ctx);
                   _pickPortada();
@@ -330,7 +454,7 @@ class _CharlaSeminarioEditScreenState extends State<CharlaSeminarioEditScreen> {
           children: [
             ListTile(
               leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Cambiar foto'),
+              title: const Text('Cambiar imagen'),
               onTap: () {
                 Navigator.pop(ctx);
                 _pickPortada();
@@ -347,7 +471,7 @@ class _CharlaSeminarioEditScreenState extends State<CharlaSeminarioEditScreen> {
             ListTile(
               leading: const Icon(Icons.delete_outline, color: Colors.red),
               title: const Text(
-                'Eliminar foto',
+                'Eliminar imagen',
                 style: TextStyle(color: Colors.red),
               ),
               onTap: () {
@@ -363,6 +487,17 @@ class _CharlaSeminarioEditScreenState extends State<CharlaSeminarioEditScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  void _viewPortadaImage() {
+    if ((_imagenPortadaBase64 ?? '').trim().isEmpty) return;
+
+    showImageViewerDialog(
+      context: context,
+      base64Image: _imagenPortadaBase64!,
+      title:
+          _tituloCtrl.text.isNotEmpty ? _tituloCtrl.text : 'Imagen de portada',
     );
   }
 
@@ -386,6 +521,36 @@ class _CharlaSeminarioEditScreenState extends State<CharlaSeminarioEditScreen> {
           fontSize: 10,
           fontWeight: FontWeight.w700,
         ),
+      ),
+    );
+  }
+
+  Widget _buildRectStatusBadge(String label, bool active,
+      {VoidCallback? onTap}) {
+    final badge = Container(
+      width: 24,
+      height: 22,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: active ? Colors.green.shade600 : Colors.grey.shade400,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+    if (onTap == null) return badge;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: badge,
       ),
     );
   }
@@ -712,8 +877,12 @@ class _CharlaSeminarioEditScreenState extends State<CharlaSeminarioEditScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.mic),
-              title: const Text('Grabar con micrófono'),
-              subtitle: const Text('Graba directamente desde la app'),
+              title: Text(Platform.isWindows
+                  ? 'Abrir Grabadora de Voz de Windows'
+                  : 'Grabar con micrófono'),
+              subtitle: Text(Platform.isWindows
+                  ? 'Graba en la app de Windows, guarda el archivo e impórtalo'
+                  : 'Graba directamente desde la app'),
               onTap: () {
                 Navigator.pop(ctx);
                 _toggleRecordForSlide(slide);
@@ -740,6 +909,24 @@ class _CharlaSeminarioEditScreenState extends State<CharlaSeminarioEditScreen> {
 
   Future<void> _toggleRecordForSlide(CharlaDiapositiva slide) async {
     if (slide.codigo == null) return;
+
+    if (Platform.isWindows) {
+      final uri = Uri.parse('ms-voicerecorder:');
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Graba el audio en la Grabadora de Voz de Windows, guarda el fichero e impórtalo con "Subir archivo de audio".',
+            ),
+            duration: Duration(seconds: 6),
+          ),
+        );
+      }
+      return;
+    }
 
     if (_recordingAudio && _recordingSlideCodigo == slide.codigo) {
       await _stopAndUploadRecording(slide);
@@ -1011,6 +1198,19 @@ class _CharlaSeminarioEditScreenState extends State<CharlaSeminarioEditScreen> {
           actions: [
             if (_editing && _slides.isNotEmpty)
               IconButton(
+                tooltip: 'Editor de presentación',
+                icon: const Icon(Icons.slideshow_outlined),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => CharlaAudioEditorScreen(
+                      charla: widget.charla!,
+                    ),
+                  ),
+                ),
+              ),
+            if (_editing && _slides.isNotEmpty)
+              IconButton(
                 tooltip: 'Vista previa',
                 icon: const Icon(Icons.play_circle_outline),
                 onPressed: () => Navigator.push(
@@ -1250,64 +1450,37 @@ class _CharlaSeminarioEditScreenState extends State<CharlaSeminarioEditScreen> {
         tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
         title: Row(
           children: [
-            const Text(
-              'Visibilidad y estado',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+            const Expanded(
+              child: Text(
+                'Visibilidad y estado',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+              ),
             ),
-            const SizedBox(width: 6),
-            Container(
-              constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: _activo ? Colors.green.shade600 : Colors.grey.shade400,
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: const Text(
-                'A',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+            _buildRectStatusBadge(
+              'A',
+              _activo,
+              onTap: () => setState(() {
+                _activo = !_activo;
+                _hasChanges = true;
+              }),
             ),
             const SizedBox(width: 4),
-            Container(
-              constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: _visibleParaTodos
-                    ? Colors.green.shade600
-                    : Colors.grey.shade400,
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: const Text(
-                'P',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+            _buildRectStatusBadge(
+              'P',
+              _visibleParaTodos,
+              onTap: () => setState(() {
+                _visibleParaTodos = !_visibleParaTodos;
+                _hasChanges = true;
+              }),
             ),
             const SizedBox(width: 4),
-            Container(
-              constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: _mostrarPortada
-                    ? Colors.green.shade600
-                    : Colors.grey.shade400,
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: const Text(
-                'D',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+            _buildRectStatusBadge(
+              'D',
+              _mostrarPortada,
+              onTap: () => setState(() {
+                _mostrarPortada = !_mostrarPortada;
+                _hasChanges = true;
+              }),
             ),
           ],
         ),
@@ -1352,66 +1525,204 @@ class _CharlaSeminarioEditScreenState extends State<CharlaSeminarioEditScreen> {
   }
 
   Widget _buildPortadaSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Portada', style: Theme.of(context).textTheme.labelLarge),
-        const SizedBox(height: 8),
-        GestureDetector(
-          onTap: _imagenPortadaBase64 == null
-              ? () => _showPortadaMenu(context)
-              : null,
-          onLongPress: _imagenPortadaBase64 != null
-              ? () => _showPortadaMenu(context)
-              : null,
-          child: Container(
-            width: double.infinity,
-            height: 120,
-            decoration: BoxDecoration(
-              color: Colors.grey[200],
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.grey[300]!),
-            ),
-            child: _imagenPortadaBase64 != null &&
-                    _imagenPortadaBase64!.isNotEmpty
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.memory(
-                      base64Decode(_imagenPortadaBase64!),
-                      fit: BoxFit.cover,
-                    ),
-                  )
-                : Center(
+    final hasImage = (_imagenPortadaBase64 ?? '').trim().isNotEmpty;
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Column(
+        children: [
+          InkWell(
+            onTap: () {
+              setState(() {
+                _portadaExpanded = !_portadaExpanded;
+              });
+              _savePortadaExpanded(_portadaExpanded);
+            },
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+              child: Row(
+                children: [
+                  Expanded(
                     child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(Icons.image_outlined,
-                            size: 40, color: Colors.grey[600]),
-                        const SizedBox(height: 4),
+                        const Text(
+                          'Portada',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
                         Text(
-                          'Toca para añadir foto',
-                          style:
-                              TextStyle(fontSize: 12, color: Colors.grey[600]),
+                          hasImage
+                              ? (_imagenNombre ?? 'Imagen seleccionada')
+                              : 'Sin imagen',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
                         ),
                       ],
                     ),
                   ),
+                  IconButton(
+                    onPressed: _pickPortada,
+                    icon: const Icon(Icons.add_photo_alternate_outlined),
+                    tooltip: 'Añadir imagen',
+                  ),
+                  IconButton(
+                    onPressed: _pastePortada,
+                    icon: const Icon(Icons.content_paste_rounded),
+                    tooltip: 'Pegar imagen',
+                  ),
+                  if (hasImage)
+                    IconButton(
+                      onPressed: () {
+                        setState(() {
+                          _imagenPortadaBase64 = null;
+                          _imagenMiniaturaBase64 = null;
+                          _imagenNombre = null;
+                          _hasChanges = true;
+                        });
+                      },
+                      icon: const Icon(Icons.delete_outline),
+                      tooltip: 'Eliminar imagen',
+                    ),
+                  IconButton(
+                    onPressed: () {
+                      setState(() {
+                        _portadaExpanded = !_portadaExpanded;
+                      });
+                      _savePortadaExpanded(_portadaExpanded);
+                    },
+                    icon: Icon(
+                      _portadaExpanded ? Icons.expand_less : Icons.expand_more,
+                    ),
+                    tooltip: _portadaExpanded ? 'Plegar' : 'Desplegar',
+                  ),
+                ],
+              ),
+            ),
           ),
-        ),
-      ],
+          if (_portadaExpanded) const Divider(height: 1),
+          if (_portadaExpanded)
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Builder(
+                      builder: (BuildContext menuContext) {
+                        return GestureDetector(
+                          onTap: () {
+                            if (hasImage) {
+                              _viewPortadaImage();
+                            } else {
+                              _showPortadaMenu(menuContext);
+                            }
+                          },
+                          onLongPress: () {
+                            _showPortadaMenu(menuContext);
+                          },
+                          child: Container(
+                            width: 100,
+                            height: 100,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: Colors.grey[300]!,
+                                width: 2,
+                              ),
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(10),
+                              child: hasImage
+                                  ? Image.memory(
+                                      base64Decode(
+                                        _imagenMiniaturaBase64 ??
+                                            _imagenPortadaBase64!,
+                                      ),
+                                      fit: BoxFit.cover,
+                                    )
+                                  : Container(
+                                      color: Colors.grey[200],
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.article,
+                                            size: 64,
+                                            color: Colors.grey[400],
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Text(
+                                            'Sin imagen',
+                                            style: TextStyle(
+                                              color: Colors.grey[600],
+                                              fontSize: 14,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Center(
+                    child: Text(
+                      hasImage
+                          ? 'Toca para ver • Mantén pulsado para opciones'
+                          : 'Toca para añadir imagen',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                        fontStyle: FontStyle.italic,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
     );
   }
 
   Widget _buildSlidesSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+    return Card(
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: Colors.grey.shade400),
+      ),
+      child: ExpansionTile(
+        initiallyExpanded: _slidesExpanded,
+        onExpansionChanged: (expanded) {
+          setState(() {
+            _slidesExpanded = expanded;
+          });
+          _saveSlidesExpanded(expanded);
+        },
+        shape: const Border(),
+        collapsedShape: const Border(),
+        tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+        title: Row(
           children: [
-            Text(
-              'Diapositivas (${_slides.length})',
-              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+            const Text(
+              'Diapositivas',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
             ),
+            const SizedBox(width: 6),
+            _buildCountCircleBadge(_slides.length),
             const Spacer(),
             if (_uploadingSlide)
               const SizedBox(
@@ -1420,237 +1731,262 @@ class _CharlaSeminarioEditScreenState extends State<CharlaSeminarioEditScreen> {
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             else
-              TextButton.icon(
-                icon: const Icon(Icons.add_photo_alternate_outlined, size: 16),
-                label: const Text('Añadir'),
+              IconButton(
                 onPressed: _addSlideManual,
+                tooltip: 'Añadir diapositiva',
+                icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
               ),
           ],
         ),
-        const SizedBox(height: 6),
-        if (_slides.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8),
-            child: Text(
-              'Sin diapositivas. Añade imágenes manualmente y asocia su audio.',
-              style: TextStyle(fontSize: 12, color: Colors.black45),
-            ),
-          )
-        else
-          SizedBox(
-            height: 130,
-            child: ReorderableListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: _slides.length,
-              onReorder: (oldIndex, newIndex) {
-                // Solo reordena visualmente; no persiste sin backend adicional
-                setState(() {
-                  if (oldIndex < newIndex) newIndex -= 1;
-                  final slide = _slides.removeAt(oldIndex);
-                  _slides.insert(newIndex, slide);
-                });
-              },
-              itemBuilder: (context, index) {
-                final slide = _slides[index];
-                final imgKey = slide.numeroDiapositiva;
-                MemoryImage? provider = _slideCache[imgKey];
-                final raw =
-                    (slide.imagenMiniatura ?? slide.imagenDiapositiva ?? '')
-                        .trim();
-                if (provider == null && raw.isNotEmpty) {
-                  try {
-                    provider = MemoryImage(base64Decode(raw));
-                    _slideCache[imgKey] = provider;
-                  } catch (_) {}
-                }
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: _slides.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: Text(
+                      'Sin diapositivas. Añade imágenes manualmente y asocia su audio.',
+                      style: TextStyle(fontSize: 12, color: Colors.black45),
+                    ),
+                  )
+                : SizedBox(
+                    height: 130,
+                    child: ReorderableListView.builder(
+                      buildDefaultDragHandles: false,
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _slides.length,
+                      onReorder: _reorderSlides,
+                      itemBuilder: (context, index) {
+                        final slide = _slides[index];
+                        final imgKey = _slideCacheKey(slide);
+                        MemoryImage? provider = _slideCache[imgKey];
+                        final raw = (slide.imagenMiniatura ??
+                                slide.imagenDiapositiva ??
+                                '')
+                            .trim();
+                        if (provider == null && raw.isNotEmpty) {
+                          try {
+                            provider = MemoryImage(base64Decode(raw));
+                            _slideCache[imgKey] = provider;
+                          } catch (_) {}
+                        }
 
-                return Padding(
-                  key: ValueKey(slide.codigo ?? index),
-                  padding: const EdgeInsets.only(right: 8),
-                  child: Stack(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: SizedBox(
-                          width: 100,
-                          height: 130,
-                          child: provider != null
-                              ? Image(image: provider, fit: BoxFit.cover)
-                              : Container(
-                                  color: Colors.grey.shade200,
-                                  child: Center(
-                                    child: Text(
-                                      '${slide.numeroDiapositiva}',
-                                      style: const TextStyle(
-                                        color: Colors.black38,
-                                        fontSize: 24,
-                                        fontWeight: FontWeight.bold,
-                                      ),
+                        return Padding(
+                          key: ValueKey(slide.codigo ?? index),
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Stack(
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(6),
+                                child: SizedBox(
+                                  width: 100,
+                                  height: 130,
+                                  child: provider != null
+                                      ? Image(
+                                          image: provider, fit: BoxFit.cover)
+                                      : Container(
+                                          color: Colors.grey.shade200,
+                                          child: Center(
+                                            child: Text(
+                                              '${slide.numeroDiapositiva}',
+                                              style: const TextStyle(
+                                                color: Colors.black38,
+                                                fontSize: 24,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                ),
+                              ),
+                              Positioned(
+                                left: 6,
+                                bottom: 6,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 5,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black54,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    '${slide.numeroDiapositiva}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
                                     ),
                                   ),
                                 ),
-                        ),
-                      ),
-                      // Número
-                      Positioned(
-                        left: 6,
-                        bottom: 6,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 5,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.black54,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            '${slide.numeroDiapositiva}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ),
-                      ),
-                      // Audio status (tappable)
-                      Positioned(
-                        left: 6,
-                        top: 6,
-                        child: GestureDetector(
-                          onTap: () => _showAudioOptionsForSlide(slide),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 5,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: slide.audioDiapositiva != null &&
-                                      slide.audioDiapositiva!.isNotEmpty
-                                  ? Colors.green.shade700
-                                  : Colors.orange.shade700,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  slide.audioDiapositiva != null &&
-                                          slide.audioDiapositiva!.isNotEmpty
-                                      ? Icons.volume_up
-                                      : Icons.add,
-                                  size: 9,
-                                  color: Colors.white,
-                                ),
-                                const SizedBox(width: 2),
-                                Text(
-                                  slide.audioDiapositiva != null &&
-                                          slide.audioDiapositiva!.isNotEmpty
-                                      ? 'AUDIO'
-                                      : 'SIN AUDIO',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                      // Acciones audio
-                      Positioned(
-                        right: 4,
-                        bottom: 4,
-                        child: Row(
-                          children: [
-                            GestureDetector(
-                              onTap: () => _pickAudioForSlide(slide),
-                              child: Container(
-                                margin: const EdgeInsets.only(right: 4),
-                                padding: const EdgeInsets.all(3),
-                                decoration: const BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Colors.black54,
-                                ),
-                                child: const Icon(
-                                  Icons.library_music,
-                                  size: 14,
-                                  color: Colors.white,
-                                ),
                               ),
-                            ),
-                            GestureDetector(
-                              onTap: () => _toggleRecordForSlide(slide),
-                              child: Container(
-                                margin: const EdgeInsets.only(right: 4),
-                                padding: const EdgeInsets.all(3),
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: _recordingAudio &&
-                                          _recordingSlideCodigo == slide.codigo
-                                      ? Colors.red.shade700
-                                      : Colors.black54,
-                                ),
-                                child: Icon(
-                                  _recordingAudio &&
-                                          _recordingSlideCodigo == slide.codigo
-                                      ? Icons.stop
-                                      : Icons.mic,
-                                  size: 14,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                            if (slide.audioDiapositiva != null &&
-                                slide.audioDiapositiva!.isNotEmpty)
-                              GestureDetector(
-                                onTap: () => _removeAudioFromSlide(slide),
-                                child: Container(
-                                  margin: const EdgeInsets.only(right: 4),
-                                  padding: const EdgeInsets.all(3),
-                                  decoration: const BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: Colors.black54,
-                                  ),
-                                  child: const Icon(
-                                    Icons.volume_off,
-                                    size: 14,
-                                    color: Colors.white,
+                              Positioned(
+                                left: 6,
+                                top: 6,
+                                child: GestureDetector(
+                                  onTap: () => _showAudioOptionsForSlide(slide),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 5,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: slide.audioDiapositiva != null &&
+                                              slide.audioDiapositiva!.isNotEmpty
+                                          ? Colors.green.shade700
+                                          : Colors.orange.shade700,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          slide.audioDiapositiva != null &&
+                                                  slide.audioDiapositiva!
+                                                      .isNotEmpty
+                                              ? Icons.volume_up
+                                              : Icons.add,
+                                          size: 9,
+                                          color: Colors.white,
+                                        ),
+                                        const SizedBox(width: 2),
+                                        Text(
+                                          slide.audioDiapositiva != null &&
+                                                  slide.audioDiapositiva!
+                                                      .isNotEmpty
+                                              ? 'AUDIO'
+                                              : 'SIN AUDIO',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
                               ),
-                          ],
-                        ),
-                      ),
-                      // Eliminar
-                      Positioned(
-                        top: 4,
-                        right: 4,
-                        child: GestureDetector(
-                          onTap: () => _deleteSlide(slide),
-                          child: Container(
-                            padding: const EdgeInsets.all(3),
-                            decoration: const BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Colors.black54,
-                            ),
-                            child: const Icon(
-                              Icons.close,
-                              size: 14,
-                              color: Colors.white,
-                            ),
+                              Positioned(
+                                right: 4,
+                                bottom: 4,
+                                child: Row(
+                                  children: [
+                                    GestureDetector(
+                                      onTap: () => _pickAudioForSlide(slide),
+                                      child: Container(
+                                        margin: const EdgeInsets.only(right: 4),
+                                        padding: const EdgeInsets.all(3),
+                                        decoration: const BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: Colors.black54,
+                                        ),
+                                        child: const Icon(
+                                          Icons.library_music,
+                                          size: 14,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                    GestureDetector(
+                                      onTap: () => _toggleRecordForSlide(slide),
+                                      child: Container(
+                                        margin: const EdgeInsets.only(right: 4),
+                                        padding: const EdgeInsets.all(3),
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: _recordingAudio &&
+                                                  _recordingSlideCodigo ==
+                                                      slide.codigo
+                                              ? Colors.red.shade700
+                                              : Colors.black54,
+                                        ),
+                                        child: Icon(
+                                          _recordingAudio &&
+                                                  _recordingSlideCodigo ==
+                                                      slide.codigo
+                                              ? Icons.stop
+                                              : Icons.mic,
+                                          size: 14,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                    if (slide.audioDiapositiva != null &&
+                                        slide.audioDiapositiva!.isNotEmpty)
+                                      GestureDetector(
+                                        onTap: () =>
+                                            _removeAudioFromSlide(slide),
+                                        child: Container(
+                                          margin:
+                                              const EdgeInsets.only(right: 4),
+                                          padding: const EdgeInsets.all(3),
+                                          decoration: const BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: Colors.black54,
+                                          ),
+                                          child: const Icon(
+                                            Icons.volume_off,
+                                            size: 14,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              Positioned(
+                                top: 4,
+                                right: 4,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    ReorderableDragStartListener(
+                                      index: index,
+                                      child: Container(
+                                        margin: const EdgeInsets.only(right: 4),
+                                        padding: const EdgeInsets.all(3),
+                                        decoration: const BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: Colors.black54,
+                                        ),
+                                        child: const Icon(
+                                          Icons.drag_indicator,
+                                          size: 14,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                    GestureDetector(
+                                      onTap: () => _deleteSlide(slide),
+                                      child: Container(
+                                        padding: const EdgeInsets.all(3),
+                                        decoration: const BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: Colors.black54,
+                                        ),
+                                        child: const Icon(
+                                          Icons.close,
+                                          size: 14,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                      ),
-                    ],
+                        );
+                      },
+                    ),
                   ),
-                );
-              },
-            ),
           ),
-      ],
+        ],
+      ),
     );
   }
 }

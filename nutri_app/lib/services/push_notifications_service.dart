@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:nutri_app/exceptions/auth_exceptions.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/services/nutri_push_settings_service.dart';
@@ -154,35 +155,43 @@ class PushNotificationsService {
     _desktopPollTimer?.cancel();
 
     Future<void> pollOnce() async {
-      if (!authService.isLoggedIn ||
-          (authService.userCode ?? '').trim().isEmpty) {
-        _lastDesktopUnreadCount = null;
-        return;
-      }
+      try {
+        if (!authService.isLoggedIn ||
+            (authService.userCode ?? '').trim().isEmpty) {
+          _lastDesktopUnreadCount = null;
+          return;
+        }
 
-      if (authService.isGuestMode) {
-        _lastDesktopUnreadCount = null;
-        return;
-      }
+        if (authService.isGuestMode) {
+          _lastDesktopUnreadCount = null;
+          return;
+        }
 
-      final enabled = await _getChatUnreadPushEnabled(authService, scope);
-      if (!enabled) {
-        _lastDesktopUnreadCount = null;
-        return;
-      }
+        final enabled = await _getChatUnreadPushEnabled(authService, scope);
+        if (!enabled) {
+          _lastDesktopUnreadCount = null;
+          return;
+        }
 
-      final unread = await apiService.getChatUnreadCount();
-      if (_lastDesktopUnreadCount != null &&
-          unread > _lastDesktopUnreadCount!) {
-        final diff = unread - _lastDesktopUnreadCount!;
-        await _showDesktopNativeNotification(
-          title: 'Nuevos mensajes de chat',
-          body: diff == 1
-              ? 'Tienes 1 mensaje nuevo sin leer.'
-              : 'Tienes $diff mensajes nuevos sin leer.',
-        );
+        final unread = await apiService.getChatUnreadCount();
+        if (_lastDesktopUnreadCount != null &&
+            unread > _lastDesktopUnreadCount!) {
+          final diff = unread - _lastDesktopUnreadCount!;
+          await _showDesktopNativeNotification(
+            title: 'Nuevos mensajes de chat',
+            body: diff == 1
+                ? 'Tienes 1 mensaje nuevo sin leer.'
+                : 'Tienes $diff mensajes nuevos sin leer.',
+          );
+        }
+        _lastDesktopUnreadCount = unread;
+      } on TokenExpiredException {
+        clearUserSessionState();
+      } on UnauthorizedException {
+        clearUserSessionState();
+      } catch (_) {
+        // Polling silencioso: no lanzar errores no controlados en tareas unawaited.
       }
-      _lastDesktopUnreadCount = unread;
     }
 
     unawaited(pollOnce());

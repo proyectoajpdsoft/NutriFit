@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:math';
@@ -5,11 +6,22 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:nutri_app/exceptions/auth_exceptions.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/push_notifications_service.dart';
+import 'package:nutri_app/models/usuario.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthService with ChangeNotifier {
   final _storage = const FlutterSecureStorage();
   final _apiService = ApiService();
+  static const List<String> _sessionStorageKeys = <String>[
+    'authToken',
+    'userType',
+    'patientCode',
+    'userCode',
+    'userNick',
+    'premiumExpiryDate',
+    'premiumPeriodMonths',
+    'guestMode',
+  ];
   String? _token;
   String? _userType;
   String? _patientCode;
@@ -71,6 +83,10 @@ class AuthService with ChangeNotifier {
 
   static const String _trustedDeviceIdKey = 'trusted_device_id_v1';
   static const String _trustedDeviceTokenPrefix = 'trusted_2fa_token_';
+  static const Duration _sessionRefreshInterval = Duration(seconds: 30);
+
+  Timer? _sessionRefreshTimer;
+  bool _isRefreshingCurrentUser = false;
 
   AuthService() {
     _init();
@@ -90,7 +106,112 @@ class AuthService with ChangeNotifier {
     await _apiService.refreshRuntimeDebugAndBaseUrl(
       userType: _isGuestMode ? null : _userType,
     );
+    _restartSessionRefreshTimer();
     notifyListeners();
+
+    if (_shouldRefreshCurrentUserSnapshot) {
+      unawaited(refreshCurrentUserSnapshot(force: true));
+    }
+  }
+
+  bool get _shouldRefreshCurrentUserSnapshot {
+    if (_isGuestMode) return false;
+    if ((_token ?? '').trim().isEmpty) return false;
+    return int.tryParse((_userCode ?? '').trim()) != null;
+  }
+
+  void _restartSessionRefreshTimer() {
+    _sessionRefreshTimer?.cancel();
+    _sessionRefreshTimer = null;
+
+    if (!_shouldRefreshCurrentUserSnapshot) {
+      return;
+    }
+
+    _sessionRefreshTimer = Timer.periodic(_sessionRefreshInterval, (_) {
+      unawaited(refreshCurrentUserSnapshot());
+    });
+  }
+
+  Future<void> _persistSessionUserSnapshot() async {
+    await _storage.write(key: 'userType', value: _userType);
+    await _storage.write(key: 'userNick', value: _userNick);
+    await _storage.write(key: 'patientCode', value: _patientCode);
+    await _storage.write(key: 'userCode', value: _userCode);
+
+    if (_premiumExpiryDateIso != null && _premiumExpiryDateIso!.isNotEmpty) {
+      await _storage.write(
+        key: 'premiumExpiryDate',
+        value: _premiumExpiryDateIso,
+      );
+    } else {
+      await _storage.delete(key: 'premiumExpiryDate');
+    }
+
+    if (_premiumPeriodMonths != null) {
+      await _storage.write(
+        key: 'premiumPeriodMonths',
+        value: _premiumPeriodMonths!.toString(),
+      );
+    } else {
+      await _storage.delete(key: 'premiumPeriodMonths');
+    }
+  }
+
+  bool _applyUsuarioSnapshot(Usuario usuario) {
+    final nextUserType = usuario.tipo?.toString().trim();
+    final nextPatientCode = usuario.codigoPaciente?.toString();
+    final nextUserNick =
+        usuario.nick.trim().isEmpty ? _userNick : usuario.nick.trim();
+    final nextPremiumExpiryDateIso =
+        usuario.premiumExpiraFecha?.toIso8601String();
+    final nextPremiumPeriodMonths = usuario.premiumPeriodoMeses;
+
+    final changed = nextUserType != _userType ||
+        nextPatientCode != _patientCode ||
+        nextUserNick != _userNick ||
+        nextPremiumExpiryDateIso != _premiumExpiryDateIso ||
+        nextPremiumPeriodMonths != _premiumPeriodMonths;
+
+    _userType = nextUserType;
+    _patientCode = nextPatientCode;
+    _userNick = nextUserNick;
+    _premiumExpiryDateIso = nextPremiumExpiryDateIso;
+    _premiumPeriodMonths = nextPremiumPeriodMonths;
+
+    return changed;
+  }
+
+  Future<void> refreshCurrentUserSnapshot({bool force = false}) async {
+    if (!_shouldRefreshCurrentUserSnapshot) {
+      return;
+    }
+    if (_isRefreshingCurrentUser) {
+      return;
+    }
+
+    _isRefreshingCurrentUser = true;
+    try {
+      final currentUserCode = int.tryParse((_userCode ?? '').trim());
+      if (currentUserCode == null) {
+        return;
+      }
+
+      final usuario = await _apiService.getUsuario(currentUserCode);
+      final changed = _applyUsuarioSnapshot(usuario);
+
+      await _persistSessionUserSnapshot();
+      await _apiService.refreshRuntimeDebugAndBaseUrl(userType: _userType);
+      _restartSessionRefreshTimer();
+
+      if (changed || force) {
+        notifyListeners();
+      }
+    } catch (_) {
+      // Refresh silencioso: no interrumpir la sesión si falla el sync.
+    } finally {
+      _isRefreshingCurrentUser = false;
+    }
   }
 
   Future<String?> login(
@@ -160,6 +281,7 @@ class AuthService with ChangeNotifier {
       }
       await _storage.write(key: 'guestMode', value: 'false');
 
+      _restartSessionRefreshTimer();
       notifyListeners();
       return _userType; // Devuelve el tipo de usuario en caso de éxito
     } else if (response['code'] == 'TWO_FACTOR_REQUIRED' ||
@@ -216,6 +338,7 @@ class AuthService with ChangeNotifier {
         await _storage.write(key: 'guestMode', value: 'true');
         await _apiService.refreshRuntimeDebugAndBaseUrl(userType: null);
 
+        _restartSessionRefreshTimer();
         notifyListeners();
         return _userType!;
       } else {
@@ -236,9 +359,21 @@ class AuthService with ChangeNotifier {
     _premiumExpiryDateIso = null;
     _premiumPeriodMonths = null;
     _isGuestMode = false;
-    await _storage.deleteAll();
+    _sessionRefreshTimer?.cancel();
+    _sessionRefreshTimer = null;
+    await _clearPersistedSession();
     await _apiService.refreshRuntimeDebugAndBaseUrl(userType: null);
     notifyListeners();
+  }
+
+  Future<void> _clearPersistedSession() async {
+    for (final key in _sessionStorageKeys) {
+      try {
+        await _storage.delete(key: key);
+      } catch (_) {
+        // En Windows evitamos fallar por bloqueos temporales del archivo.
+      }
+    }
   }
 
   String _normalizeNick(String nick) {
@@ -308,5 +443,11 @@ class AuthService with ChangeNotifier {
       return;
     }
     await clearTrustedDeviceForNick(currentNick);
+  }
+
+  @override
+  void dispose() {
+    _sessionRefreshTimer?.cancel();
+    super.dispose();
   }
 }

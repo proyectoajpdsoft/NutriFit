@@ -12,6 +12,32 @@ import 'package:nutri_app/widgets/password_requirements_checklist.dart';
 import 'package:nutri_app/widgets/profile_image_picker.dart';
 import 'package:nutri_app/widgets/unsaved_changes_dialog.dart';
 
+class _PremiumActivationRequest {
+  const _PremiumActivationRequest({
+    required this.periodMonths,
+    required this.desde,
+    required this.hasta,
+    required this.sendEmail,
+    required this.sendChat,
+  });
+
+  final int periodMonths;
+  final DateTime desde;
+  final DateTime hasta;
+  final bool sendEmail;
+  final bool sendChat;
+}
+
+class _PremiumActivationNotificationResult {
+  const _PremiumActivationNotificationResult({
+    required this.successMessages,
+    required this.warningMessages,
+  });
+
+  final List<String> successMessages;
+  final List<String> warningMessages;
+}
+
 class UsuarioEditScreen extends StatefulWidget {
   final Usuario? usuario;
 
@@ -205,6 +231,14 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
     return DateTime(value.year, value.month, value.day);
   }
 
+  int _effectivePremiumPeriodoMeses() {
+    return _premiumPeriodoMeses ?? _premiumPeriodoMesesSolicitado ?? 1;
+  }
+
+  DateTime _computePremiumActivationHasta(DateTime desde, int months) {
+    return _computePremiumHasta(desde, months).add(const Duration(days: 1));
+  }
+
   DateTime _computePremiumHasta(DateTime desde, int months) {
     final base = _dateOnly(desde);
     return DateTime(base.year, base.month + months, base.day);
@@ -222,7 +256,8 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
 
     setState(() {
       _premiumDesdeFecha = _dateOnly(picked);
-      final months = _premiumPeriodoMeses ?? 1;
+      final months = _effectivePremiumPeriodoMeses();
+      _premiumPeriodoMeses = months;
       _premiumHastaFecha = _computePremiumHasta(_premiumDesdeFecha!, months);
     });
     _markDirty();
@@ -231,7 +266,9 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
   Future<void> _pickPremiumHastaDate() async {
     final initialDate = _premiumHastaFecha ??
         _computePremiumHasta(
-            _premiumDesdeFecha ?? DateTime.now(), _premiumPeriodoMeses ?? 1);
+          _premiumDesdeFecha ?? DateTime.now(),
+          _effectivePremiumPeriodoMeses(),
+        );
     final picked = await showDatePicker(
       context: context,
       initialDate: initialDate,
@@ -247,13 +284,271 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
   }
 
   void _applySuggestedPremiumDates() {
-    final months = _premiumPeriodoMeses ?? 1;
+    final months = _effectivePremiumPeriodoMeses();
     final desde = _premiumDesdeFecha ?? DateTime.now();
     setState(() {
+      _premiumPeriodoMeses = months;
       _premiumDesdeFecha = _dateOnly(desde);
       _premiumHastaFecha = _computePremiumHasta(_premiumDesdeFecha!, months);
     });
     _markDirty();
+  }
+
+  String _buildPremiumActivationMessage({
+    required DateTime desde,
+    required DateTime hasta,
+    required int periodMonths,
+  }) {
+    final periodoTexto = '$periodMonths mes${periodMonths == 1 ? '' : 'es'}';
+    return 'Tu cuenta Premium ha sido activada del ${_formatDate(desde)} al ${_formatDate(hasta)} ($periodoTexto).';
+  }
+
+  String _cleanErrorMessage(Object error) {
+    return error.toString().replaceFirst('Exception: ', '').trim();
+  }
+
+  Future<_PremiumActivationNotificationResult>
+      _sendPremiumActivationNotifications({
+    required int codigoUsuario,
+    required _PremiumActivationRequest request,
+  }) async {
+    final successMessages = <String>[];
+    final warningMessages = <String>[];
+
+    if (request.sendEmail) {
+      try {
+        await _apiService.notifyPremiumActivationEmail(
+          codigoUsuario: codigoUsuario,
+          periodMonths: request.periodMonths,
+          premiumDesdeFecha: request.desde,
+          premiumHastaFecha: request.hasta,
+        );
+        successMessages.add('Email enviado al usuario.');
+      } catch (error) {
+        final message = _cleanErrorMessage(error);
+        warningMessages.add(
+          message.isEmpty
+              ? 'No se pudo enviar el email de activación Premium.'
+              : 'No se pudo enviar el email: $message',
+        );
+      }
+    }
+
+    if (request.sendChat) {
+      try {
+        await _apiService.sendChatMessage(
+          receiverId: codigoUsuario,
+          message: _buildPremiumActivationMessage(
+            desde: request.desde,
+            hasta: request.hasta,
+            periodMonths: request.periodMonths,
+          ),
+        );
+        successMessages.add('Mensaje de chat enviado al usuario.');
+      } catch (error) {
+        final message = _cleanErrorMessage(error);
+        warningMessages.add(
+          message.isEmpty
+              ? 'No se pudo enviar el mensaje de chat.'
+              : 'No se pudo enviar el chat: $message',
+        );
+      }
+    }
+
+    return _PremiumActivationNotificationResult(
+      successMessages: successMessages,
+      warningMessages: warningMessages,
+    );
+  }
+
+  Future<_PremiumActivationRequest?> _showPremiumActivationDialog() async {
+    final hasPendingRequest = _premiumSolicitudPendiente == 'S';
+    final today = _dateOnly(DateTime.now());
+    final initialPeriod =
+        hasPendingRequest && _premiumPeriodoMesesSolicitado != null
+            ? _premiumPeriodoMesesSolicitado!
+            : _effectivePremiumPeriodoMeses();
+    final initialDesde =
+        hasPendingRequest ? today : (_premiumDesdeFecha ?? today);
+    final initialHasta = hasPendingRequest
+        ? _computePremiumActivationHasta(initialDesde, initialPeriod)
+        : (_premiumHastaFecha ??
+            _computePremiumActivationHasta(initialDesde, initialPeriod));
+
+    int selectedPeriod = initialPeriod;
+    DateTime selectedDesde = _dateOnly(initialDesde);
+    DateTime selectedHasta = _dateOnly(initialHasta);
+    bool sendEmail = false;
+    bool sendChat = false;
+
+    return showDialog<_PremiumActivationRequest>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> pickDesde() async {
+              final picked = await showDatePicker(
+                context: dialogContext,
+                initialDate: selectedDesde,
+                firstDate: DateTime(2020),
+                lastDate: DateTime(2100),
+              );
+              if (picked == null) return;
+              setDialogState(() {
+                selectedDesde = _dateOnly(picked);
+                selectedHasta = _computePremiumActivationHasta(
+                  selectedDesde,
+                  selectedPeriod,
+                );
+              });
+            }
+
+            Future<void> pickHasta() async {
+              final picked = await showDatePicker(
+                context: dialogContext,
+                initialDate: selectedHasta,
+                firstDate: DateTime(2020),
+                lastDate: DateTime(2100),
+              );
+              if (picked == null) return;
+              setDialogState(() {
+                selectedHasta = _dateOnly(picked);
+              });
+            }
+
+            return AlertDialog(
+              title: const Text('Activar cuenta Premium'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      hasPendingRequest
+                          ? 'Se han precargado los datos de la solicitud Premium pendiente. Puedes ajustarlos antes de activar la cuenta.'
+                          : 'Configura el período Premium y, si quieres, envía notificación por email o chat al usuario.',
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<int>(
+                      initialValue: selectedPeriod,
+                      decoration: const InputDecoration(
+                        labelText: 'Período Premium (meses)',
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 1, child: Text('1 mes')),
+                        DropdownMenuItem(value: 3, child: Text('3 meses')),
+                        DropdownMenuItem(value: 6, child: Text('6 meses')),
+                        DropdownMenuItem(value: 12, child: Text('12 meses')),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setDialogState(() {
+                          selectedPeriod = value;
+                          selectedHasta = _computePremiumActivationHasta(
+                            selectedDesde,
+                            selectedPeriod,
+                          );
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: pickDesde,
+                      icon: const Icon(Icons.event_available),
+                      label: Text('Desde: ${_formatDate(selectedDesde)}'),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: pickHasta,
+                      icon: const Icon(Icons.event_busy),
+                      label: Text('Hasta: ${_formatDate(selectedHasta)}'),
+                    ),
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Enviar email al usuario'),
+                      subtitle: Text(
+                        ((_email ?? '').trim().isEmpty)
+                            ? 'El usuario no tiene email informado.'
+                            : 'Se enviará la activación Premium al email del usuario.',
+                      ),
+                      value: sendEmail,
+                      onChanged: (value) {
+                        setDialogState(() {
+                          sendEmail = value;
+                        });
+                      },
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Enviar mensaje por chat'),
+                      subtitle: const Text(
+                        'Se enviará un mensaje automático en el chat del usuario.',
+                      ),
+                      value: sendChat,
+                      onChanged: (value) {
+                        setDialogState(() {
+                          sendChat = value;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    if (sendEmail && (_email ?? '').trim().isEmpty) {
+                      ScaffoldMessenger.of(this.context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'El usuario no tiene un email informado para enviar la notificación.',
+                          ),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                      return;
+                    }
+
+                    Navigator.of(dialogContext).pop(
+                      _PremiumActivationRequest(
+                        periodMonths: selectedPeriod,
+                        desde: selectedDesde,
+                        hasta: selectedHasta,
+                        sendEmail: sendEmail,
+                        sendChat: sendChat,
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.workspace_premium),
+                  label: const Text('Hacer premium'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _startPremiumActivationFlow() async {
+    final request = await _showPremiumActivationDialog();
+    if (request == null) return;
+
+    setState(() {
+      _tipo = 'Premium';
+      _premiumPeriodoMeses = request.periodMonths;
+      _premiumDesdeFecha = request.desde;
+      _premiumHastaFecha = request.hasta;
+      _premiumSolicitudPendiente = 'N';
+    });
+    _markDirty();
+
+    await _submitForm(premiumActivationRequest: request);
   }
 
   Future<void> _pickPremiumSolicitudDate() async {
@@ -342,6 +637,8 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
   }
 
   Widget _buildPremiumManagementCard({required bool includeAudit}) {
+    final selectedPremiumPeriodo = _effectivePremiumPeriodoMeses();
+
     return Card(
       child: Column(
         children: [
@@ -367,73 +664,87 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  DropdownButtonFormField<int>(
-                    initialValue: _premiumPeriodoMeses ?? 1,
-                    decoration: const InputDecoration(
-                      labelText: 'Período Premium (meses)',
-                      helperText:
-                          'Se propone un período desde/hasta, editable por nutricionista. Solo aplica para tipo Premium.',
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: 1, child: Text('1 mes')),
-                      DropdownMenuItem(value: 3, child: Text('3 meses')),
-                      DropdownMenuItem(value: 6, child: Text('6 meses')),
-                      DropdownMenuItem(value: 12, child: Text('12 meses')),
-                    ],
-                    validator: (value) {
-                      if (_tipo != 'Premium') return null;
-                      if (value == null) {
-                        return 'Selecciona una duración para Premium';
-                      }
-                      return null;
-                    },
-                    onChanged: (value) {
-                      setState(() {
-                        _premiumPeriodoMeses = value;
-                        if (value != null && _premiumDesdeFecha != null) {
-                          _premiumHastaFecha =
-                              _computePremiumHasta(_premiumDesdeFecha!, value);
-                        }
-                      });
-                      _markDirty();
-                    },
-                    onSaved: (value) => _premiumPeriodoMeses = value,
-                  ),
-                  const SizedBox(height: 8),
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
+                        flex: 3,
+                        child: DropdownButtonFormField<int>(
+                          key: ValueKey<int>(selectedPremiumPeriodo),
+                          initialValue: selectedPremiumPeriodo,
+                          decoration: const InputDecoration(
+                            labelText: 'Período Premium (meses)',
+                            helperText:
+                                'Se propone un período desde/hasta, editable por nutricionista. Solo aplica para tipo Premium.',
+                          ),
+                          items: const [
+                            DropdownMenuItem(value: 1, child: Text('1 mes')),
+                            DropdownMenuItem(value: 3, child: Text('3 meses')),
+                            DropdownMenuItem(value: 6, child: Text('6 meses')),
+                            DropdownMenuItem(
+                                value: 12, child: Text('12 meses')),
+                          ],
+                          validator: (value) {
+                            if (_tipo != 'Premium') return null;
+                            if (value == null) {
+                              return 'Selecciona una duración para Premium';
+                            }
+                            return null;
+                          },
+                          onChanged: (value) {
+                            setState(() {
+                              _premiumPeriodoMeses = value;
+                              if (value != null && _premiumDesdeFecha != null) {
+                                _premiumHastaFecha = _computePremiumHasta(
+                                  _premiumDesdeFecha!,
+                                  value,
+                                );
+                              }
+                            });
+                            _markDirty();
+                          },
+                          onSaved: (value) => _premiumPeriodoMeses = value,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 2,
                         child: OutlinedButton.icon(
                           onPressed: _pickPremiumDesdeDate,
                           icon: const Icon(Icons.event_available),
                           label: Text(
                             'Desde: ${_formatDate(_premiumDesdeFecha)}',
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
+                      const SizedBox(width: 8),
                       Expanded(
+                        flex: 2,
                         child: OutlinedButton.icon(
                           onPressed: _pickPremiumHastaDate,
                           icon: const Icon(Icons.event_busy),
                           label: Text(
                             'Hasta: ${_formatDate(_premiumHastaFecha)}',
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
+                      ),
+                      const SizedBox(width: 4),
+                      IconButton(
+                        tooltip: 'Recalcular fechas sugeridas',
+                        onPressed: _applySuggestedPremiumDates,
+                        icon: const Icon(Icons.auto_fix_high),
                       ),
                     ],
                   ),
                   const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton.icon(
-                      onPressed: _applySuggestedPremiumDates,
-                      icon: const Icon(Icons.auto_fix_high),
-                      label: const Text('Recalcular fechas sugeridas'),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _startPremiumActivationFlow,
+                      icon: const Icon(Icons.workspace_premium),
+                      label: const Text('Hacer premium'),
                     ),
                   ),
                   if (widget.usuario?.premiumExpiraFecha != null)
@@ -745,7 +1056,9 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
     }
   }
 
-  void _submitForm() async {
+  Future<void> _submitForm({
+    _PremiumActivationRequest? premiumActivationRequest,
+  }) async {
     if (_formKey.currentState!.validate()) {
       _formKey.currentState!.save();
 
@@ -821,39 +1134,59 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
           String mainMessage = widget.usuario == null
               ? 'Usuario añadido correctamente'
               : 'Usuario modificado correctamente';
+          final notificationLines = <String>[];
+          final warningLines = <String>[];
+
+          if (premiumActivationRequest != null) {
+            final responseCodigo = int.tryParse(
+              (response['codigo'] ?? '').toString(),
+            );
+            final codigoUsuario = responseCodigo ?? widget.usuario?.codigo ?? 0;
+
+            if (codigoUsuario > 0) {
+              final notificationResult =
+                  await _sendPremiumActivationNotifications(
+                codigoUsuario: codigoUsuario,
+                request: premiumActivationRequest,
+              );
+              notificationLines.addAll(notificationResult.successMessages);
+              warningLines.addAll(notificationResult.warningMessages);
+            } else {
+              warningLines.add(
+                'El usuario se guardó, pero no se pudo resolver su código para enviar notificaciones.',
+              );
+            }
+          }
 
           // Verificar si hay información de sincronización
           String? syncMessage = response['sync_message'] as String?;
 
+          final snackLines = <String>[mainMessage];
           if (syncMessage != null && syncMessage.isNotEmpty) {
-            // Mostrar mensaje con sincronización de consejos y recetas
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(mainMessage),
-                    const SizedBox(height: 8),
-                    Text(
-                      syncMessage,
-                      style: const TextStyle(fontStyle: FontStyle.italic),
-                    ),
-                  ],
-                ),
-                backgroundColor: Colors.green,
-                duration: const Duration(seconds: 4),
-              ),
-            );
-          } else {
-            // Mostrar mensaje simple
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(mainMessage),
-                backgroundColor: Colors.green,
-              ),
-            );
+            snackLines.add(syncMessage);
           }
+          snackLines.addAll(notificationLines);
+          snackLines.addAll(warningLines);
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: snackLines
+                    .map(
+                      (line) => Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Text(line),
+                      ),
+                    )
+                    .toList(),
+              ),
+              backgroundColor:
+                  warningLines.isEmpty ? Colors.green : Colors.orange.shade700,
+              duration: const Duration(seconds: 5),
+            ),
+          );
           Navigator.of(context).pop(true);
         }
       } catch (e) {
@@ -1274,7 +1607,8 @@ class _UsuarioEditScreenState extends State<UsuarioEditScreen> {
                                 onChanged: (value) => setState(() {
                                   _tipo = value;
                                   if (_tipo == 'Premium') {
-                                    _premiumPeriodoMeses ??= 1;
+                                    _premiumPeriodoMeses ??=
+                                        _effectivePremiumPeriodoMeses();
                                     _premiumDesdeFecha ??=
                                         _dateOnly(DateTime.now());
                                     _premiumHastaFecha ??= _computePremiumHasta(

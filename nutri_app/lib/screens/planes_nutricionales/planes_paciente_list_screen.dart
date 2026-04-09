@@ -18,7 +18,9 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 class PlanesPacienteListScreen extends StatefulWidget {
-  const PlanesPacienteListScreen({super.key});
+  const PlanesPacienteListScreen({super.key, this.initialTabIndex = 0});
+
+  final int initialTabIndex;
 
   @override
   State<PlanesPacienteListScreen> createState() =>
@@ -901,6 +903,7 @@ class _PlanesPacienteListScreenState extends State<PlanesPacienteListScreen> {
       ),
       drawer: const AppDrawer(),
       body: DefaultTabController(
+        initialIndex: widget.initialTabIndex,
         length: 2,
         child: Column(
           children: [
@@ -1171,51 +1174,40 @@ class _PlanesPacienteListScreenState extends State<PlanesPacienteListScreen> {
                                       return Column(
                                         children: [
                                           if (showHarvardChip)
-                                            Align(
-                                              alignment: Alignment.centerLeft,
+                                            SizedBox(
+                                              width: double.infinity,
                                               child: Tooltip(
                                                 message: summary.samples == 0
                                                     ? 'Harvard del plan: sin datos para evaluar'
                                                     : 'Harvard del plan: ${summary.fulfilled ? 'cumple' : 'no cumple'} — media ${summary.avgScore.toStringAsFixed(2)}/4 (${summary.avgPercent}%)',
-                                                child: InkWell(
-                                                  onTap: () =>
+                                                child: OutlinedButton.icon(
+                                                  style:
+                                                      OutlinedButton.styleFrom(
+                                                    foregroundColor:
+                                                        harvardColor,
+                                                    backgroundColor:
+                                                        harvardColor
+                                                            .withAlpha(30),
+                                                    side: BorderSide(
+                                                      color: harvardColor,
+                                                    ),
+                                                  ),
+                                                  icon: const Icon(
+                                                    Icons.restaurant_menu,
+                                                    size: 18,
+                                                  ),
+                                                  label:
+                                                      const Text('🥗 Harvard'),
+                                                  onPressed: () =>
                                                       _showHarvardPlanSummaryDialog(
                                                     summary,
                                                     plan,
                                                   ),
-                                                  borderRadius:
-                                                      BorderRadius.circular(14),
-                                                  child: Container(
-                                                    margin:
-                                                        const EdgeInsets.only(
-                                                            bottom: 8),
-                                                    padding: const EdgeInsets
-                                                        .symmetric(
-                                                      horizontal: 10,
-                                                      vertical: 5,
-                                                    ),
-                                                    decoration: BoxDecoration(
-                                                      color: harvardColor
-                                                          .withAlpha(30),
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                              14),
-                                                      border: Border.all(
-                                                        color: harvardColor,
-                                                      ),
-                                                    ),
-                                                    child: const Text(
-                                                      '🥗 Harvard',
-                                                      style: TextStyle(
-                                                        fontSize: 12,
-                                                        fontWeight:
-                                                            FontWeight.w700,
-                                                      ),
-                                                    ),
-                                                  ),
                                                 ),
                                               ),
                                             ),
+                                          if (showHarvardChip)
+                                            const SizedBox(height: 8),
                                           if (canShowPlanActions)
                                             SizedBox(
                                               width: double.infinity,

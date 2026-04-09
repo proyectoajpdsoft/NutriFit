@@ -27,9 +27,13 @@ $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
 $validator = new AutoValidator($db);
 $user = $validator->validate();
-PermissionManager::checkPermission($user, 'suplementos');
 
 $request_method = $_SERVER['REQUEST_METHOD'];
+
+function require_aditivos_permission() {
+    global $user;
+    PermissionManager::checkPermission($user, 'suplementos');
+}
 
 function require_manager() {
     if (!is_manager_user()) {
@@ -115,6 +119,7 @@ try {
     switch ($request_method) {
         case 'GET':
             if (!empty($_GET['total_aditivos'])) {
+                require_aditivos_permission();
                 require_manager();
                 get_total_aditivos();
             } elseif (!empty($_GET['codigo'])) {
@@ -122,21 +127,25 @@ try {
             } elseif (isset($_GET['activos'])) {
                 get_aditivos_activos();
             } else {
+                require_aditivos_permission();
                 get_aditivos();
             }
             break;
 
         case 'POST':
+            require_aditivos_permission();
             require_manager();
             create_aditivo();
             break;
 
         case 'PUT':
+            require_aditivos_permission();
             require_manager();
             update_aditivo();
             break;
 
         case 'DELETE':
+            require_aditivos_permission();
             require_manager();
             if (!empty($_GET['codigo'])) {
                 delete_aditivo(intval($_GET['codigo']));

@@ -9,13 +9,16 @@ import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:nutri_app/screens/contacto_nutricionista_screen.dart';
 import 'package:nutri_app/services/open_food_product_pdf_service.dart';
+import 'package:nutri_app/services/menu_visibility_premium_service.dart';
 import 'package:nutri_app/services/user_settings_service.dart';
 import 'package:nutri_app/widgets/image_viewer_dialog.dart'
     show showImageViewerDialog;
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
+import 'package:nutri_app/widgets/premium_feature_dialog_helper.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -57,6 +60,7 @@ class _EtiquetaNutricionalScannerScreenState
   bool _barcodeHintDismissed = false;
   bool _ocrHintDismissed = false;
   List<_OcrTrainingEntry> _trainingEntries = const [];
+  bool _scannerPremiumEnabled = false;
 
   @override
   void initState() {
@@ -66,6 +70,41 @@ class _EtiquetaNutricionalScannerScreenState
     _cargarEstadoHints();
     _cargarEntrenamiento();
     _sincronizarReglasRemotasSilencioso();
+    _loadMenuPremiumConfig();
+  }
+
+  Future<void> _loadMenuPremiumConfig() async {
+    try {
+      final config = await MenuVisibilityPremiumService.loadConfig(
+        apiService: context.read<ApiService>(),
+        forceRefresh: true,
+      );
+      final premiumEnabled = MenuVisibilityPremiumService.isPremium(
+        config,
+        MenuVisibilityPremiumService.escaner,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _scannerPremiumEnabled = premiumEnabled;
+      });
+    } catch (_) {}
+  }
+
+  bool _canUseScannerPremiumActions(AuthService authService) {
+    if (!_scannerPremiumEnabled) {
+      return true;
+    }
+    return authService.isPremium || _esUsuarioAdmin(authService);
+  }
+
+  Future<void> _showScannerPremiumRequired() {
+    final l10n = AppLocalizations.of(context)!;
+    return PremiumFeatureDialogHelper.show(
+      context,
+      message: l10n.scannerPremiumRequiredMessage,
+    );
   }
 
   String _serializeDetectionMode(_ScannerDetectionMode mode) {
@@ -271,22 +310,23 @@ class _EtiquetaNutricionalScannerScreenState
   }
 
   Future<void> _limpiarEntrenamiento() async {
+    final l10n = AppLocalizations.of(context)!;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Limpiar entrenamiento OCR'),
-        content: const Text(
-          'Se eliminarán todas las correcciones guardadas en este dispositivo. ¿Deseas continuar?',
+        title: Text(l10n.scannerClearTrainingTitle),
+        content: Text(
+          l10n.scannerClearTrainingBody,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
+            child: Text(l10n.commonCancel),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Limpiar'),
+            child: Text(l10n.commonClear),
           ),
         ],
       ),
@@ -302,14 +342,15 @@ class _EtiquetaNutricionalScannerScreenState
       _aprendizajeAplicado = false;
     });
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Entrenamiento OCR local eliminado'),
+      SnackBar(
+        content: Text(l10n.scannerLocalTrainingRemoved),
         backgroundColor: Colors.green,
       ),
     );
   }
 
   Future<void> _exportarEntrenamientoDialog() async {
+    final l10n = AppLocalizations.of(context)!;
     final payload = jsonEncode(
       _trainingEntries.map((entry) => entry.toJson()).toList(growable: false),
     );
@@ -318,7 +359,7 @@ class _EtiquetaNutricionalScannerScreenState
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Exportar reglas OCR'),
+        title: Text(l10n.scannerExportRulesTitle),
         content: SizedBox(
           width: 480,
           child: SingleChildScrollView(
@@ -331,7 +372,7 @@ class _EtiquetaNutricionalScannerScreenState
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
+            child: Text(l10n.commonClose),
           ),
         ],
       ),
@@ -339,18 +380,19 @@ class _EtiquetaNutricionalScannerScreenState
   }
 
   Future<void> _importarEntrenamientoDialog() async {
+    final l10n = AppLocalizations.of(context)!;
     final controller = TextEditingController();
     final imported = await showDialog<List<_OcrTrainingEntry>>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Importar reglas OCR'),
+        title: Text(l10n.scannerImportRulesTitle),
         content: SizedBox(
           width: 520,
           child: TextField(
             controller: controller,
             maxLines: 12,
-            decoration: const InputDecoration(
-              hintText: 'Pega aquí el JSON exportado',
+            decoration: InputDecoration(
+              hintText: l10n.scannerImportRulesHint,
               border: OutlineInputBorder(),
             ),
           ),
@@ -358,14 +400,14 @@ class _EtiquetaNutricionalScannerScreenState
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
+            child: Text(l10n.commonCancel),
           ),
           ElevatedButton(
             onPressed: () {
               try {
                 final decoded = jsonDecode(controller.text);
                 if (decoded is! List) {
-                  throw const FormatException('Formato inválido');
+                  throw FormatException(l10n.scannerInvalidFormat);
                 }
                 final entries = decoded
                     .whereType<Map>()
@@ -377,7 +419,7 @@ class _EtiquetaNutricionalScannerScreenState
                 Navigator.pop(context, null);
               }
             },
-            child: const Text('Importar'),
+            child: Text(l10n.commonImport),
           ),
         ],
       ),
@@ -387,7 +429,7 @@ class _EtiquetaNutricionalScannerScreenState
     if (imported == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('JSON inválido o importación cancelada')),
+        SnackBar(content: Text(l10n.scannerInvalidJsonOrCanceled)),
       );
       return;
     }
@@ -400,13 +442,14 @@ class _EtiquetaNutricionalScannerScreenState
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Importadas ${imported.length} reglas de entrenamiento'),
+        content: Text(l10n.scannerImportedRulesCount(imported.length)),
         backgroundColor: Colors.green,
       ),
     );
   }
 
   Future<void> _subirReglasServidor() async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       final body = jsonEncode({
         'replace': true,
@@ -418,8 +461,8 @@ class _EtiquetaNutricionalScannerScreenState
       if (!mounted) return;
       if (response.statusCode == 200) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Reglas OCR subidas al servidor'),
+          SnackBar(
+            content: Text(l10n.scannerRulesUploaded),
             backgroundColor: Colors.green,
           ),
         );
@@ -430,17 +473,20 @@ class _EtiquetaNutricionalScannerScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Error al subir reglas: $e')));
+      ).showSnackBar(
+        SnackBar(content: Text(l10n.scannerRulesUploadError(e.toString()))),
+      );
     }
   }
 
   Future<void> _bajarReglasServidor() async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       final entries = await _descargarReglasServidorPreferente();
       if (entries.isEmpty) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No hay reglas remotas disponibles.')),
+          SnackBar(content: Text(l10n.scannerNoRemoteRules)),
         );
         return;
       }
@@ -454,7 +500,7 @@ class _EtiquetaNutricionalScannerScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Descargadas ${entries.length} reglas desde servidor'),
+          content: Text(l10n.scannerDownloadedRulesCount(entries.length)),
           backgroundColor: Colors.green,
         ),
       );
@@ -462,7 +508,9 @@ class _EtiquetaNutricionalScannerScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Error al descargar reglas: $e')));
+      ).showSnackBar(
+        SnackBar(content: Text(l10n.scannerRulesDownloadError(e.toString()))),
+      );
     }
   }
 
@@ -621,6 +669,7 @@ class _EtiquetaNutricionalScannerScreenState
   }
 
   Future<void> _marcarResultadoCorrecto() async {
+    final l10n = AppLocalizations.of(context)!;
     if (_textoDetectado.trim().isEmpty || _nutrientes == null) {
       return;
     }
@@ -648,14 +697,15 @@ class _EtiquetaNutricionalScannerScreenState
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Entrenamiento guardado: lectura marcada como correcta'),
+      SnackBar(
+        content: Text(l10n.scannerTrainingMarkedCorrect),
         backgroundColor: Colors.green,
       ),
     );
   }
 
   Future<void> _corregirLecturaDialog() async {
+    final l10n = AppLocalizations.of(context)!;
     final current = _nutrientes;
     if (current == null || _textoDetectado.trim().isEmpty) {
       return;
@@ -686,23 +736,23 @@ class _EtiquetaNutricionalScannerScreenState
     final corrected = await showDialog<NutrientesPorPorcion>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Corregir valores OCR'),
+        title: Text(l10n.scannerCorrectOcrValuesTitle),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _buildTrainingField('Azúcar (g)', azucarCtrl),
-              _buildTrainingField('Sal (g)', salCtrl),
-              _buildTrainingField('Grasas (g)', grasasCtrl),
-              _buildTrainingField('Proteína (g)', proteinaCtrl),
-              _buildTrainingField('Porción (g)', porcionCtrl),
+              _buildTrainingField(l10n.scannerSugarField, azucarCtrl),
+              _buildTrainingField(l10n.scannerSaltField, salCtrl),
+              _buildTrainingField(l10n.scannerFatField, grasasCtrl),
+              _buildTrainingField(l10n.scannerProteinField, proteinaCtrl),
+              _buildTrainingField(l10n.scannerPortionField, porcionCtrl),
             ],
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
+            child: Text(l10n.commonCancel),
           ),
           ElevatedButton(
             onPressed: () {
@@ -717,7 +767,7 @@ class _EtiquetaNutricionalScannerScreenState
                 ),
               );
             },
-            child: const Text('Guardar corrección'),
+            child: Text(l10n.scannerSaveCorrection),
           ),
         ],
       ),
@@ -1049,16 +1099,17 @@ class _EtiquetaNutricionalScannerScreenState
         }
       }
 
+      final l10n = AppLocalizations.of(context)!;
       final detectedSource = switch (_detectionMode) {
-        _ScannerDetectionMode.barcode => 'Código de barras',
+        _ScannerDetectionMode.barcode => l10n.scannerSourceBarcode,
         _ScannerDetectionMode.ocr => offProduct != null
-            ? 'OCR de nombre + Open Food Facts'
-            : 'OCR de tabla nutricional',
+            ? l10n.scannerSourceOcrOpenFood
+            : l10n.scannerSourceOcrTable,
         _ScannerDetectionMode.auto => barcode != null && offProduct != null
-            ? 'Detección automática (código de barras + Open Food Facts)'
+            ? l10n.scannerSourceAutoBarcodeOpenFood
             : (offProduct != null
-                ? 'Detección automática (OCR + Open Food Facts)'
-                : 'Detección automática (OCR de tabla nutricional)'),
+                ? l10n.scannerSourceAutoOcrOpenFood
+                : l10n.scannerSourceAutoOcrTable),
       };
 
       if (!mounted) return;
@@ -1073,25 +1124,26 @@ class _EtiquetaNutricionalScannerScreenState
 
       if (!(parsed?.hasAnyValue ?? false) && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              'No se pudieron obtener los datos nutricionales. Haz la foto con buena luminosidad, texto nítido y enfocado, y encuadrando la tabla de información nutricional.',
+              l10n.scannerNoNutritionData,
             ),
             duration: Duration(seconds: 6),
           ),
         );
       } else if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Lectura completada: $detectedSource')),
+          SnackBar(content: Text(l10n.scannerReadCompleted(detectedSource))),
         );
       }
     } catch (e) {
       if (!mounted) return;
+      final l10n = AppLocalizations.of(context)!;
       setState(() {
         _analizando = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo analizar la etiqueta: $e')),
+        SnackBar(content: Text(l10n.scannerAnalyzeError(e.toString()))),
       );
     }
   }
@@ -1210,13 +1262,16 @@ class _EtiquetaNutricionalScannerScreenState
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final resultado = _nutrientes;
     final authService = context.watch<AuthService>();
     final isGuestMode = authService.isGuestMode;
     final isAdmin = _esUsuarioAdmin(authService);
+    final canUsePremiumScannerActions =
+        _canUseScannerPremiumActions(authService);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Escáner de etiquetas')),
+      appBar: AppBar(title: Text(l10n.scannerTitle)),
       body: SafeArea(
         top: false,
         child: SingleChildScrollView(
@@ -1251,15 +1306,15 @@ class _EtiquetaNutricionalScannerScreenState
                             size: 18,
                           ),
                           const SizedBox(width: 8),
-                          const Expanded(
+                          Expanded(
                             child: Text(
-                              'Escáner de etiquetas de alimentos',
+                              l10n.scannerHeaderTitle,
                               style: TextStyle(fontWeight: FontWeight.w700),
                             ),
                           ),
                           _buildCompactInfoButton(
                             onPressed: _showUmbralesInfoDialog,
-                            tooltip: 'Información completa del proceso',
+                            tooltip: l10n.scannerHeaderTooltip,
                           ),
                           const SizedBox(width: 4),
                           Icon(
@@ -1272,11 +1327,11 @@ class _EtiquetaNutricionalScannerScreenState
                       ),
                     ),
                     AnimatedCrossFade(
-                      firstChild: const Padding(
-                        padding: EdgeInsets.only(top: 8, right: 28),
+                      firstChild: Padding(
+                        padding: const EdgeInsets.only(top: 8, right: 28),
                         child: Text(
-                          'Haz una foto del código de barras de un producto (alimento) o bien selecciona una imagen de la galería. La app NutriFit detectará automáticamente, si se activa este modo, el código de barras, nombre de producto o tabla nutricional.',
-                          style: TextStyle(fontWeight: FontWeight.w600),
+                          l10n.scannerHeaderBody,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
                         ),
                       ),
                       secondChild: const SizedBox.shrink(),
@@ -1293,13 +1348,36 @@ class _EtiquetaNutricionalScannerScreenState
                 const SizedBox(height: 10),
                 _buildGuestGenericNotice(),
               ],
+              if (_scannerPremiumEnabled && !canUsePremiumScannerActions) ...[
+                const SizedBox(height: 10),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.amber.shade300),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.workspace_premium, color: Colors.amber),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          l10n.scannerPremiumBanner,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               if (isAdmin) ...[
                 const SizedBox(height: 8),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Modo entrenamiento OCR'),
-                  subtitle: const Text(
-                    'Permite corregir lecturas para mejorar detecciones.',
+                  title: Text(l10n.scannerTrainingModeTitle),
+                  subtitle: Text(
+                    l10n.scannerTrainingModeSubtitle,
                   ),
                   value: _modoEntrenamiento,
                   onChanged: _analizando
@@ -1336,18 +1414,17 @@ class _EtiquetaNutricionalScannerScreenState
                         ),
                       ),
                       const SizedBox(width: 8),
-                      const Expanded(
+                      Expanded(
                         child: Text(
-                          'En modo automático, la app intenta detectar primero el código de barras y, si no encuentra un producto válido, prueba con OCR sobre el nombre o la tabla nutricional.',
-                          style: TextStyle(fontSize: 12),
+                          l10n.scannerAutoHint,
+                          style: const TextStyle(fontSize: 12),
                         ),
                       ),
                       GestureDetector(
                         onTap: () =>
                             _dismissModeHint(_ScannerDetectionMode.auto),
                         child: Tooltip(
-                          message:
-                              'Cerrar (mant. pulsado el botón de modo para volver a mostrarlo)',
+                          message: l10n.scannerDismissHintTooltip,
                           child: Icon(Icons.close,
                               size: 14, color: Colors.blue.shade400),
                         ),
@@ -1379,18 +1456,17 @@ class _EtiquetaNutricionalScannerScreenState
                         ),
                       ),
                       const SizedBox(width: 8),
-                      const Expanded(
+                      Expanded(
                         child: Text(
-                          'En modo código de barras, la cámara muestra un recuadro guía y la app analiza sólo esa zona para mejorar la precisión.',
-                          style: TextStyle(fontSize: 12),
+                          l10n.scannerBarcodeHint,
+                          style: const TextStyle(fontSize: 12),
                         ),
                       ),
                       GestureDetector(
                         onTap: () =>
                             _dismissModeHint(_ScannerDetectionMode.barcode),
                         child: Tooltip(
-                          message:
-                              'Cerrar (mant. pulsado el botón de modo para volver a mostrarlo)',
+                          message: l10n.scannerDismissHintTooltip,
                           child: Icon(Icons.close,
                               size: 14, color: Colors.indigo.shade400),
                         ),
@@ -1422,18 +1498,17 @@ class _EtiquetaNutricionalScannerScreenState
                         ),
                       ),
                       const SizedBox(width: 8),
-                      const Expanded(
+                      Expanded(
                         child: Text(
-                          'En modo tabla nutricional, la app prioriza la lectura OCR del nombre y de la tabla nutricional, sin depender del código de barras.',
-                          style: TextStyle(fontSize: 12),
+                          l10n.scannerOcrHint,
+                          style: const TextStyle(fontSize: 12),
                         ),
                       ),
                       GestureDetector(
                         onTap: () =>
                             _dismissModeHint(_ScannerDetectionMode.ocr),
                         child: Tooltip(
-                          message:
-                              'Cerrar (mant. pulsado el botón de modo para volver a mostrarlo)',
+                          message: l10n.scannerDismissHintTooltip,
                           child: Icon(Icons.close,
                               size: 14, color: Colors.deepOrange.shade400),
                         ),
@@ -1447,7 +1522,7 @@ class _EtiquetaNutricionalScannerScreenState
                 const SizedBox(height: 20),
                 const Center(child: CircularProgressIndicator()),
                 const SizedBox(height: 8),
-                const Center(child: Text('Analizando etiqueta...')),
+                Center(child: Text(l10n.scannerAnalyzing)),
               ],
               if (!_analizando && _productoOpenFood != null) ...[
                 const SizedBox(height: 12),
@@ -1463,15 +1538,15 @@ class _EtiquetaNutricionalScannerScreenState
                       children: [
                         Row(
                           children: [
-                            const Expanded(
+                            Expanded(
                               child: Text(
-                                'Resultado por porción',
+                                l10n.scannerResultPerServing,
                                 style: TextStyle(fontWeight: FontWeight.bold),
                               ),
                             ),
                             _buildCompactInfoButton(
                               onPressed: _showUmbralesInfoDialog,
-                              tooltip: 'Info de umbrales',
+                              tooltip: l10n.scannerThresholdInfo,
                             ),
                           ],
                         ),
@@ -1489,15 +1564,15 @@ class _EtiquetaNutricionalScannerScreenState
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            'Mini-entrenamiento OCR',
+                          Text(
+                            l10n.scannerMiniTrainingTitle,
                             style: TextStyle(fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 6),
                           Text(
                             _aprendizajeAplicado
-                                ? 'Se aplicó aprendizaje previo para esta etiqueta o una similar.'
-                                : 'Valida o corrige esta lectura para entrenar el reconocimiento.',
+                                ? l10n.scannerMiniTrainingApplied
+                                : l10n.scannerMiniTrainingPrompt,
                             style: const TextStyle(fontSize: 12),
                           ),
                           const SizedBox(height: 10),
@@ -1507,7 +1582,7 @@ class _EtiquetaNutricionalScannerScreenState
                                 child: ElevatedButton.icon(
                                   onPressed: _marcarResultadoCorrecto,
                                   icon: const Icon(Icons.check_circle_outline),
-                                  label: const Text('Es correcto'),
+                                  label: Text(l10n.scannerTrainingCorrect),
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: Colors.green,
                                     foregroundColor: Colors.white,
@@ -1519,7 +1594,8 @@ class _EtiquetaNutricionalScannerScreenState
                                 child: OutlinedButton.icon(
                                   onPressed: _corregirLecturaDialog,
                                   icon: const Icon(Icons.edit_outlined),
-                                  label: const Text('Corregir'),
+                                  label:
+                                      Text(l10n.scannerTrainingCorrectAction),
                                 ),
                               ),
                             ],
@@ -1532,27 +1608,27 @@ class _EtiquetaNutricionalScannerScreenState
                               OutlinedButton.icon(
                                 onPressed: _exportarEntrenamientoDialog,
                                 icon: const Icon(Icons.ios_share_outlined),
-                                label: const Text('Exportar'),
+                                label: Text(l10n.commonExport),
                               ),
                               OutlinedButton.icon(
                                 onPressed: _importarEntrenamientoDialog,
                                 icon: const Icon(Icons.download_outlined),
-                                label: const Text('Importar'),
+                                label: Text(l10n.commonImport),
                               ),
                               OutlinedButton.icon(
                                 onPressed: _bajarReglasServidor,
                                 icon: const Icon(Icons.cloud_download_outlined),
-                                label: const Text('Bajar reglas servidor'),
+                                label: Text(l10n.scannerDownloadServerRules),
                               ),
                               OutlinedButton.icon(
                                 onPressed: _subirReglasServidor,
                                 icon: const Icon(Icons.cloud_upload_outlined),
-                                label: const Text('Subir reglas servidor'),
+                                label: Text(l10n.scannerUploadServerRules),
                               ),
                               OutlinedButton.icon(
                                 onPressed: _limpiarEntrenamiento,
                                 icon: const Icon(Icons.delete_sweep_outlined),
-                                label: const Text('Limpiar local'),
+                                label: Text(l10n.scannerClearLocalRules),
                               ),
                             ],
                           ),
@@ -1588,18 +1664,18 @@ class _EtiquetaNutricionalScannerScreenState
                               color: Colors.black54,
                               borderRadius: BorderRadius.circular(8),
                             ),
-                            child: const Row(
+                            child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(
+                                const Icon(
                                   Icons.zoom_in,
                                   size: 16,
                                   color: Colors.white,
                                 ),
-                                SizedBox(width: 4),
+                                const SizedBox(width: 4),
                                 Text(
-                                  'Ampliar',
-                                  style: TextStyle(
+                                  l10n.scannerZoomLabel,
+                                  style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600,
@@ -1619,7 +1695,7 @@ class _EtiquetaNutricionalScannerScreenState
               if (_textoDetectado.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 ExpansionTile(
-                  title: const Text('Texto detectado (OCR)'),
+                  title: Text(l10n.scannerDetectedTextTitle),
                   children: [
                     Container(
                       width: double.infinity,
@@ -1650,6 +1726,7 @@ class _EtiquetaNutricionalScannerScreenState
   }
 
   Future<void> _abrirVisorImagen() async {
+    final l10n = AppLocalizations.of(context)!;
     final imagen = _imagenSeleccionada;
     if (imagen == null) {
       return;
@@ -1661,22 +1738,23 @@ class _EtiquetaNutricionalScannerScreenState
       showImageViewerDialog(
         context: context,
         base64Image: base64Encode(bytes),
-        title: 'Etiqueta nutricional',
+        title: l10n.scannerImageTitle,
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('No se pudo abrir la imagen: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.scannerOpenImageError(e.toString()))),
+      );
     }
   }
 
   Widget _buildCompactInfoButton({
     required VoidCallback onPressed,
-    String tooltip = 'Información',
+    String? tooltip,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     return Tooltip(
-      message: tooltip,
+      message: tooltip ?? l10n.scannerInfoTitle,
       child: OutlinedButton(
         onPressed: onPressed,
         style: OutlinedButton.styleFrom(
@@ -1693,6 +1771,10 @@ class _EtiquetaNutricionalScannerScreenState
   }
 
   Widget _buildDetectionModeSelector() {
+    final l10n = AppLocalizations.of(context)!;
+    final canUsePremiumScannerActions =
+        _canUseScannerPremiumActions(context.read<AuthService>());
+
     // ── Botones de configuración de modo (pequeños, tipo toggle) ─────────
     Widget modeButton(
       _ScannerDetectionMode mode,
@@ -1811,7 +1893,7 @@ class _EtiquetaNutricionalScannerScreenState
         Row(
           children: [
             Text(
-              'Modo',
+              l10n.scannerModeLabel,
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w500,
@@ -1823,13 +1905,13 @@ class _EtiquetaNutricionalScannerScreenState
             ),
             const SizedBox(width: 10),
             modeButton(_ScannerDetectionMode.auto, Icons.auto_awesome,
-                'Modo automático'),
+                l10n.scannerModeAuto),
             const SizedBox(width: 6),
             modeButton(_ScannerDetectionMode.barcode, Icons.qr_code,
-                'Modo código de barras'),
+                l10n.scannerModeBarcode),
             const SizedBox(width: 6),
             modeButton(_ScannerDetectionMode.ocr, Icons.table_chart_outlined,
-                'Modo tabla nutricional'),
+                l10n.scannerModeOcrTable),
           ],
         ),
         const SizedBox(height: 10),
@@ -1839,27 +1921,33 @@ class _EtiquetaNutricionalScannerScreenState
             Expanded(
               child: actionButton(
                 icon: Icons.search,
-                label: 'Buscar',
+                label: l10n.commonSearch,
                 color: Colors.blueGrey.shade600,
-                onTap: _buscarProductoManualDialog,
+                onTap: canUsePremiumScannerActions
+                    ? _buscarProductoManualDialog
+                    : _showScannerPremiumRequired,
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
               child: actionButton(
                 icon: Icons.photo_camera_outlined,
-                label: 'Foto',
+                label: l10n.commonPhoto,
                 color: Colors.deepPurple,
-                onTap: () => _seleccionarYAnalizar(ImageSource.camera),
+                onTap: canUsePremiumScannerActions
+                    ? () => _seleccionarYAnalizar(ImageSource.camera)
+                    : _showScannerPremiumRequired,
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
               child: actionButton(
                 icon: Icons.photo_library_outlined,
-                label: 'Galería',
+                label: l10n.commonGallery,
                 color: Colors.teal,
-                onTap: () => _seleccionarYAnalizar(ImageSource.gallery),
+                onTap: canUsePremiumScannerActions
+                    ? () => _seleccionarYAnalizar(ImageSource.gallery)
+                    : _showScannerPremiumRequired,
               ),
             ),
           ],
@@ -1869,6 +1957,7 @@ class _EtiquetaNutricionalScannerScreenState
   }
 
   Future<void> _buscarProductoManualDialog() async {
+    final l10n = AppLocalizations.of(context)!;
     if (!mounted) return;
     final screenContext = context;
     String draftQuery = '';
@@ -1877,12 +1966,12 @@ class _EtiquetaNutricionalScannerScreenState
       useRootNavigator: true,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Buscar en Open Food Facts'),
+          title: Text(l10n.scannerManualSearchTitle),
           content: TextField(
             autofocus: true,
             textInputAction: TextInputAction.search,
-            decoration: const InputDecoration(
-              hintText: 'Nombre del producto',
+            decoration: InputDecoration(
+              hintText: l10n.scannerManualSearchHint,
               border: OutlineInputBorder(),
             ),
             onChanged: (value) {
@@ -1896,12 +1985,12 @@ class _EtiquetaNutricionalScannerScreenState
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancelar'),
+              child: Text(l10n.commonCancel),
             ),
             ElevatedButton(
               onPressed: () =>
                   Navigator.of(dialogContext).pop(draftQuery.trim()),
-              child: const Text('Buscar'),
+              child: Text(l10n.commonSearch),
             ),
           ],
         ),
@@ -1928,8 +2017,8 @@ class _EtiquetaNutricionalScannerScreenState
           _analizando = false;
         });
         ScaffoldMessenger.of(screenContext).showSnackBar(
-          const SnackBar(
-            content: Text('No se encontró un producto válido con ese nombre.'),
+          SnackBar(
+            content: Text(l10n.scannerNoValidProductByName),
           ),
         );
         return;
@@ -1940,7 +2029,7 @@ class _EtiquetaNutricionalScannerScreenState
         _productoOpenFood = product;
         _barcodeDetectado = product.barcode.isEmpty ? null : product.barcode;
         _nutrientes = nutrientes;
-        _fuenteLectura = 'Búsqueda manual por nombre (Open Food Facts)';
+        _fuenteLectura = l10n.scannerManualSearchSource;
         if (_textoDetectado.trim().isEmpty) {
           _textoDetectado = searchQuery;
         }
@@ -1948,7 +2037,7 @@ class _EtiquetaNutricionalScannerScreenState
       });
 
       ScaffoldMessenger.of(screenContext).showSnackBar(
-        const SnackBar(content: Text('Producto encontrado en Open Food Facts')),
+        SnackBar(content: Text(l10n.scannerProductFound)),
       );
     } catch (e) {
       if (!mounted) return;
@@ -1957,11 +2046,14 @@ class _EtiquetaNutricionalScannerScreenState
       });
       ScaffoldMessenger.of(
         screenContext,
-      ).showSnackBar(SnackBar(content: Text('Error al buscar producto: $e')));
+      ).showSnackBar(
+        SnackBar(content: Text(l10n.scannerProductSearchError(e.toString()))),
+      );
     }
   }
 
   Widget _buildOpenFoodProductCard(_OpenFoodFactsProduct product) {
+    final l10n = AppLocalizations.of(context)!;
     Color nutriScoreColor(String grade) {
       switch (grade.toLowerCase()) {
         case 'a':
@@ -2095,15 +2187,18 @@ class _EtiquetaNutricionalScannerScreenState
           children: [
             Row(
               children: [
-                const Expanded(
+                Expanded(
                   child: Text(
-                    'Nombre del producto',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                    l10n.scannerProductName,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
                 _buildCompactInfoButton(
                   onPressed: _showUmbralesInfoDialog,
-                  tooltip: 'Información completa',
+                  tooltip: l10n.scannerHeaderTooltip,
                 ),
               ],
             ),
@@ -2121,33 +2216,35 @@ class _EtiquetaNutricionalScannerScreenState
               ],
             ),
             const SizedBox(height: 8),
-            sectionTitle('Marca'),
+            sectionTitle(l10n.scannerBrand),
             const SizedBox(height: 4),
             Text(
-              product.marca.isEmpty ? 'No disponible' : product.marca,
+              product.marca.isEmpty ? l10n.commonUnavailable : product.marca,
               style: const TextStyle(fontSize: 12),
             ),
             const SizedBox(height: 8),
-            sectionTitle('Formato'),
+            sectionTitle(l10n.scannerFormat),
             const SizedBox(height: 4),
             Text(
-              product.quantity.isEmpty ? 'No disponible' : product.quantity,
+              product.quantity.isEmpty
+                  ? l10n.commonUnavailable
+                  : product.quantity,
               style: const TextStyle(fontSize: 12),
             ),
             const SizedBox(height: 8),
-            sectionTitle('Código de barras'),
+            sectionTitle(l10n.scannerBarcodeLabel),
             const SizedBox(height: 4),
             Text(
-              barcode.isEmpty ? 'No disponible' : barcode,
+              barcode.isEmpty ? l10n.commonUnavailable : barcode,
               style: const TextStyle(fontSize: 12),
             ),
             const SizedBox(height: 10),
-            sectionTitle('Acciones'),
+            sectionTitle(l10n.scannerActions),
             const SizedBox(height: 6),
             Row(
               children: [
                 Tooltip(
-                  message: 'Añadir a compra',
+                  message: l10n.scannerAddToShoppingList,
                   child: InkWell(
                     borderRadius: BorderRadius.circular(10),
                     onTap: () => _agregarProductoOpenFoodAListaCompra(product),
@@ -2172,7 +2269,7 @@ class _EtiquetaNutricionalScannerScreenState
                 ),
                 const SizedBox(width: 8),
                 Tooltip(
-                  message: 'PDF',
+                  message: l10n.commonGeneratePdf,
                   child: InkWell(
                     borderRadius: BorderRadius.circular(10),
                     onTap: () => _generarPdfProductoOpenFood(product),
@@ -2197,7 +2294,7 @@ class _EtiquetaNutricionalScannerScreenState
                 ),
                 const SizedBox(width: 8),
                 Tooltip(
-                  message: 'Copiar',
+                  message: l10n.commonCopy,
                   child: InkWell(
                     borderRadius: BorderRadius.circular(10),
                     onTap: () => _copiarDatosProductoOpenFood(product),
@@ -2223,7 +2320,7 @@ class _EtiquetaNutricionalScannerScreenState
               ],
             ),
             const SizedBox(height: 10),
-            sectionTitle('Nutri score   Nova'),
+            sectionTitle(l10n.scannerNutriScoreNova),
             const SizedBox(height: 6),
             Wrap(
               spacing: 8,
@@ -2235,7 +2332,7 @@ class _EtiquetaNutricionalScannerScreenState
                       final scoreColor = nutriScoreColor(product.nutriScore);
                       return ActionChip(
                         onPressed: _showNutriScoreInfoDialog,
-                        tooltip: '¿Qué significa Nutri-Score?',
+                        tooltip: l10n.scannerNutriScoreMeaning,
                         label: Text(
                           'Nutri-Score ${product.nutriScore.toUpperCase()}',
                           style: TextStyle(
@@ -2257,7 +2354,7 @@ class _EtiquetaNutricionalScannerScreenState
                       final groupColor = novaColor(product.novaGroup);
                       return ActionChip(
                         onPressed: _showNovaInfoDialog,
-                        tooltip: '¿Qué significa NOVA?',
+                        tooltip: l10n.scannerNovaMeaning,
                         label: Text(
                           'NOVA ${product.novaGroup}',
                           style: TextStyle(
@@ -2274,20 +2371,21 @@ class _EtiquetaNutricionalScannerScreenState
                     },
                   ),
                 if (product.nutriScore.isEmpty && product.novaGroup == null)
-                  const Text('No disponible', style: TextStyle(fontSize: 12)),
+                  Text(l10n.commonUnavailable,
+                      style: const TextStyle(fontSize: 12)),
               ],
             ),
             const SizedBox(height: 10),
-            sectionTitle('Ingredientes'),
+            sectionTitle(l10n.scannerIngredients),
             const SizedBox(height: 4),
             Text(
               product.ingredientes.isEmpty
-                  ? 'No disponible'
+                  ? l10n.commonUnavailable
                   : product.ingredientes,
               style: const TextStyle(fontSize: 12),
             ),
             const SizedBox(height: 10),
-            sectionTitle('Datos nutricionales'),
+            sectionTitle(l10n.scannerNutritionData),
             const SizedBox(height: 4),
             if (energiaKcal != null ||
                 fibra != null ||
@@ -2296,28 +2394,31 @@ class _EtiquetaNutricionalScannerScreenState
                 sodio != null) ...[
               if (energiaKcal != null)
                 Text(
-                  'Energía: $energiaKcal',
+                  l10n.scannerEnergyValue(energiaKcal),
                   style: const TextStyle(fontSize: 12),
                 ),
               if (carbohidratos != null)
                 Text(
-                  'Carbohidratos: $carbohidratos',
+                  l10n.scannerCarbohydratesValue(carbohidratos),
                   style: const TextStyle(fontSize: 12),
                 ),
               if (fibra != null)
-                Text('Fibra: $fibra', style: const TextStyle(fontSize: 12)),
+                Text(l10n.scannerFiberValue(fibra),
+                    style: const TextStyle(fontSize: 12)),
               if (grasasSat != null)
                 Text(
-                  'Grasas saturadas: $grasasSat',
+                  l10n.scannerSaturatedFatValue(grasasSat),
                   style: const TextStyle(fontSize: 12),
                 ),
               if (sodio != null)
-                Text('Sodio: $sodio', style: const TextStyle(fontSize: 12)),
+                Text(l10n.scannerSodiumValue(sodio),
+                    style: const TextStyle(fontSize: 12)),
             ] else
-              const Text('No disponible', style: TextStyle(fontSize: 12)),
+              Text(l10n.commonUnavailable,
+                  style: const TextStyle(fontSize: 12)),
             if (product.additives.isNotEmpty) ...[
               const SizedBox(height: 10),
-              sectionTitle('Aditivos'),
+              sectionTitle(l10n.navAdditives),
               const SizedBox(height: 6),
               Wrap(
                 spacing: 6,
@@ -2348,19 +2449,27 @@ class _EtiquetaNutricionalScannerScreenState
               ),
             ],
             const SizedBox(height: 10),
-            sectionTitle('Alérgenos y trazas'),
+            sectionTitle(l10n.scannerAllergensAndTraces),
             const SizedBox(height: 4),
             Text(
-              'Alérgenos: ${product.allergens.isEmpty ? 'No disponible' : product.allergens.take(6).join(', ')}',
+              l10n.scannerAllergensValue(
+                product.allergens.isEmpty
+                    ? l10n.commonUnavailable
+                    : product.allergens.take(6).join(', '),
+              ),
               style: const TextStyle(fontSize: 12),
             ),
             const SizedBox(height: 2),
             Text(
-              'Trazas: ${product.traces.isEmpty ? 'No disponible' : product.traces.take(6).join(', ')}',
+              l10n.scannerTracesValue(
+                product.traces.isEmpty
+                    ? l10n.commonUnavailable
+                    : product.traces.take(6).join(', '),
+              ),
               style: const TextStyle(fontSize: 12),
             ),
             const SizedBox(height: 10),
-            sectionTitle('Etiquetas destacadas'),
+            sectionTitle(l10n.scannerFeaturedLabels),
             const SizedBox(height: 6),
             if (product.labels.isNotEmpty)
               Wrap(
@@ -2377,7 +2486,8 @@ class _EtiquetaNutricionalScannerScreenState
                     .toList(growable: false),
               )
             else
-              const Text('No disponible', style: TextStyle(fontSize: 12)),
+              Text(l10n.commonUnavailable,
+                  style: const TextStyle(fontSize: 12)),
           ],
         ),
       ),
@@ -2415,6 +2525,7 @@ class _EtiquetaNutricionalScannerScreenState
   Future<void> _copiarDatosProductoOpenFood(
     _OpenFoodFactsProduct product,
   ) async {
+    final l10n = AppLocalizations.of(context)!;
     String joinList(List<String> values) =>
         values.isEmpty ? '-' : values.join(', ');
 
@@ -2457,30 +2568,27 @@ class _EtiquetaNutricionalScannerScreenState
     await Clipboard.setData(ClipboardData(text: buffer.toString()));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Datos copiados al portapapeles')),
+      SnackBar(content: Text(l10n.scannerCopiedData)),
     );
   }
 
   Future<void> _agregarProductoOpenFoodAListaCompra(
     _OpenFoodFactsProduct product,
   ) async {
+    final l10n = AppLocalizations.of(context)!;
     final authService = Provider.of<AuthService>(context, listen: false);
     if (authService.isGuestMode) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Regístrate para añadir productos a la lista de compra',
-          ),
-        ),
+        SnackBar(content: Text(l10n.scannerRegisterForShoppingList)),
       );
       return;
     }
 
     final ownerCode = authService.userCode;
     if (ownerCode == null || ownerCode.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Usuario no identificado')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.scannerUnknownUser)),
+      );
       return;
     }
 
@@ -2540,15 +2648,15 @@ class _EtiquetaNutricionalScannerScreenState
 
       if (existingItem != null && response.statusCode == 200) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('El alimento ya existe, se ha actualizado'),
+          SnackBar(
+            content: Text(l10n.scannerExistingFoodUpdated),
             backgroundColor: Colors.orange,
           ),
         );
       } else if (response.statusCode == 201) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Producto añadido a la lista de compra'),
+          SnackBar(
+            content: Text(l10n.scannerProductAddedToShoppingList),
             backgroundColor: Colors.green,
           ),
         );
@@ -2563,9 +2671,11 @@ class _EtiquetaNutricionalScannerScreenState
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error al añadir a la lista: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.scannerAddToShoppingListError(e.toString())),
+        ),
+      );
     }
   }
 
@@ -2685,6 +2795,7 @@ class _EtiquetaNutricionalScannerScreenState
   }
 
   Widget _buildContactarDietistaButton() {
+    final l10n = AppLocalizations.of(context)!;
     return Center(
       child: FilledButton.icon(
         onPressed: () {
@@ -2696,75 +2807,76 @@ class _EtiquetaNutricionalScannerScreenState
           );
         },
         icon: const Icon(Icons.support_agent, size: 18),
-        label: const Text('Contactar con dietista'),
+        label: Text(l10n.scannerContactDietitianButton),
       ),
     );
   }
 
   void _showUmbralesInfoDialog() {
+    final l10n = AppLocalizations.of(context)!;
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Información'),
+        title: Text(l10n.scannerInfoTitle),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'La tabla de "Resultado por porción" te ayuda a comprobar si un valor está cerca (OK) o lejos (Precaución/Alto) del rango recomendado orientativo.',
-                style: TextStyle(fontSize: 13),
+              Text(
+                l10n.scannerThresholdInfoIntro,
+                style: const TextStyle(fontSize: 13),
               ),
               const SizedBox(height: 10),
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: DataTable(
-                  columns: const [
-                    DataColumn(label: Text('Componente')),
-                    DataColumn(label: Text('OK')),
-                    DataColumn(label: Text('Precaución')),
-                    DataColumn(label: Text('Alto / Bajo')),
+                  columns: [
+                    DataColumn(label: Text(l10n.scannerThresholdComponent)),
+                    DataColumn(label: Text(l10n.scannerThresholdOk)),
+                    DataColumn(label: Text(l10n.scannerThresholdCaution)),
+                    DataColumn(label: Text(l10n.scannerThresholdHighLow)),
                   ],
-                  rows: const [
+                  rows: [
                     DataRow(
                       cells: [
-                        DataCell(Text('Azúcar')),
-                        DataCell(Text('≤ 5 g')),
-                        DataCell(Text('> 5 y ≤ 12 g')),
-                        DataCell(Text('> 12 g')),
+                        DataCell(Text(l10n.scannerThresholdSugar)),
+                        const DataCell(Text('≤ 5 g')),
+                        const DataCell(Text('> 5 y ≤ 12 g')),
+                        const DataCell(Text('> 12 g')),
                       ],
                     ),
                     DataRow(
                       cells: [
-                        DataCell(Text('Sal')),
-                        DataCell(Text('≤ 0.3 g')),
-                        DataCell(Text('> 0.3 y ≤ 1.0 g')),
-                        DataCell(Text('> 1.0 g')),
+                        DataCell(Text(l10n.scannerThresholdSalt)),
+                        const DataCell(Text('≤ 0.3 g')),
+                        const DataCell(Text('> 0.3 y ≤ 1.0 g')),
+                        const DataCell(Text('> 1.0 g')),
                       ],
                     ),
                     DataRow(
                       cells: [
-                        DataCell(Text('Grasas')),
-                        DataCell(Text('≤ 10 g')),
-                        DataCell(Text('> 10 y ≤ 17.5 g')),
-                        DataCell(Text('> 17.5 g')),
+                        DataCell(Text(l10n.scannerThresholdFat)),
+                        const DataCell(Text('≤ 10 g')),
+                        const DataCell(Text('> 10 y ≤ 17.5 g')),
+                        const DataCell(Text('> 17.5 g')),
                       ],
                     ),
                     DataRow(
                       cells: [
-                        DataCell(Text('Proteína')),
-                        DataCell(Text('≥ 10 g')),
-                        DataCell(Text('≥ 5 y < 10 g')),
-                        DataCell(Text('< 5 g')),
+                        DataCell(Text(l10n.scannerThresholdProtein)),
+                        const DataCell(Text('≥ 10 g')),
+                        const DataCell(Text('≥ 5 y < 10 g')),
+                        const DataCell(Text('< 5 g')),
                       ],
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
-                'Las sugerencias y valores mostrados son siempre orientativos: no sustituyen la recomendación de un profesional dietético. Además, la cantidad de porciones que consumes afecta directamente a la cantidad total de cada nutriente que ingieres.',
-                style: TextStyle(fontSize: 13),
+              Text(
+                l10n.scannerThresholdDisclaimer,
+                style: const TextStyle(fontSize: 13),
               ),
               const SizedBox(height: 8),
               _buildContactarDietistaButton(),
@@ -2781,37 +2893,29 @@ class _EtiquetaNutricionalScannerScreenState
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: Colors.amber.shade300),
                 ),
-                child: const Column(
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Precisión de lectura (OCR)',
-                      style: TextStyle(
+                      l10n.scannerOcrAccuracyTitle,
+                      style: const TextStyle(
                         fontWeight: FontWeight.w700,
                         fontSize: 13,
                       ),
                     ),
-                    SizedBox(height: 6),
+                    const SizedBox(height: 6),
                     Text(
-                      'La exactitud del producto (alimento) detectado depende directamente de la calidad de la imagen. Si la foto es borrosa, con reflejos o sin enfocar el código de barras o la tabla nutricional, los valores pueden mostrarse incorrectos. Revisa siempre el nombre del producto para asegurarte de que coincide.',
-                      style: TextStyle(fontSize: 13),
+                      l10n.scannerOcrAccuracyBody,
+                      style: const TextStyle(fontSize: 13),
                     ),
-                    SizedBox(height: 6),
-                    Text('• Enfoca solo el código de barras.'),
-                    Text(
-                      '• Si no tiene código de barras, enfoca únicamente la tabla de información nutricional.',
-                    ),
-                    Text(
-                      '• Si fotografías el código de barras, que se vea completo y nítido.',
-                    ),
-                    Text('• Evita sombras, reflejos y baja iluminación.'),
-                    Text(
-                      '• Mantén el móvil estable y el texto lo más recto posible.',
-                    ),
-                    Text(
-                      '• Comprueba que números y unidades (g/ml) se lean nítidos.',
-                    ),
-                    Text('• Evita fotografiar etiquetas arrugadas o dañadas.'),
+                    const SizedBox(height: 6),
+                    Text(l10n.scannerOcrTip1),
+                    Text(l10n.scannerOcrTip2),
+                    Text(l10n.scannerOcrTip3),
+                    Text(l10n.scannerOcrTip4),
+                    Text(l10n.scannerOcrTip5),
+                    Text(l10n.scannerOcrTip6),
+                    Text(l10n.scannerOcrTip7),
                   ],
                 ),
               ),
@@ -2821,7 +2925,7 @@ class _EtiquetaNutricionalScannerScreenState
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
+            child: Text(l10n.commonClose),
           ),
         ],
       ),
@@ -2829,6 +2933,7 @@ class _EtiquetaNutricionalScannerScreenState
   }
 
   Widget _buildNutriScoreInfoBlock() {
+    final l10n = AppLocalizations.of(context)!;
     Widget row(String label, Color color, String meaning) {
       return Padding(
         padding: const EdgeInsets.only(bottom: 4),
@@ -2874,22 +2979,23 @@ class _EtiquetaNutricionalScannerScreenState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 6),
-          const Text(
-            'Nutri-Score es un sistema público de etiquetado frontal usado en Europa para resumir la calidad nutricional global del producto.',
-            style: TextStyle(fontSize: 12),
+          Text(
+            l10n.scannerNutriScoreDescription,
+            style: const TextStyle(fontSize: 12),
           ),
           const SizedBox(height: 6),
-          row('A', Colors.green, 'Más favorable nutricionalmente'),
-          row('B', Colors.lightGreen, 'Favorable'),
-          row('C', Colors.amber, 'Intermedio'),
-          row('D', Colors.orange, 'Menos favorable'),
-          row('E', Colors.red, 'Menos saludable en conjunto'),
+          row('A', Colors.green, l10n.scannerNutriScoreA),
+          row('B', Colors.lightGreen, l10n.scannerNutriScoreB),
+          row('C', Colors.amber, l10n.scannerNutriScoreC),
+          row('D', Colors.orange, l10n.scannerNutriScoreD),
+          row('E', Colors.red, l10n.scannerNutriScoreE),
         ],
       ),
     );
   }
 
   Widget _buildNovaInfoBlock() {
+    final l10n = AppLocalizations.of(context)!;
     Widget row(int group, Color color, String meaning) {
       return Padding(
         padding: const EdgeInsets.only(bottom: 4),
@@ -2932,21 +3038,22 @@ class _EtiquetaNutricionalScannerScreenState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 6),
-          const Text(
-            'NOVA clasifica alimentos por grado de procesamiento (sistema académico de salud pública).',
-            style: TextStyle(fontSize: 12),
+          Text(
+            l10n.scannerNovaDescription,
+            style: const TextStyle(fontSize: 12),
           ),
           const SizedBox(height: 6),
-          row(1, Colors.green, 'Sin procesar o mínimamente procesado'),
-          row(2, Colors.lightGreen, 'Ingredientes culinarios procesados'),
-          row(3, Colors.amber, 'Alimentos procesados'),
-          row(4, Colors.red, 'Ultraprocesados'),
+          row(1, Colors.green, l10n.scannerNova1),
+          row(2, Colors.lightGreen, l10n.scannerNova2),
+          row(3, Colors.amber, l10n.scannerNova3),
+          row(4, Colors.red, l10n.scannerNova4),
         ],
       ),
     );
   }
 
   void _showNutriScoreInfoDialog() {
+    final l10n = AppLocalizations.of(context)!;
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
@@ -2955,7 +3062,7 @@ class _EtiquetaNutricionalScannerScreenState
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
+            child: Text(l10n.commonClose),
           ),
         ],
       ),
@@ -2963,6 +3070,7 @@ class _EtiquetaNutricionalScannerScreenState
   }
 
   void _showNovaInfoDialog() {
+    final l10n = AppLocalizations.of(context)!;
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
@@ -2971,7 +3079,7 @@ class _EtiquetaNutricionalScannerScreenState
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
+            child: Text(l10n.commonClose),
           ),
         ],
       ),
@@ -2979,6 +3087,7 @@ class _EtiquetaNutricionalScannerScreenState
   }
 
   Widget _buildGuestGenericNotice() {
+    final l10n = AppLocalizations.of(context)!;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
@@ -2997,8 +3106,7 @@ class _EtiquetaNutricionalScannerScreenState
               text: TextSpan(
                 style: const TextStyle(fontSize: 13, color: Colors.black),
                 children: [
-                  const TextSpan(
-                      text: 'Si quieres información más exacta\u00A0'),
+                  TextSpan(text: l10n.scannerGuestAccuracyPromptStart),
                   WidgetSpan(
                     alignment: PlaceholderAlignment.baseline,
                     baseline: TextBaseline.alphabetic,
@@ -3006,8 +3114,8 @@ class _EtiquetaNutricionalScannerScreenState
                       onTap: () {
                         Navigator.pushNamed(context, '/register');
                       },
-                      child: const Text(
-                        'regístrate (es gratis)',
+                      child: Text(
+                        l10n.scannerGuestAccuracyPromptLink,
                         style: TextStyle(
                           color: Colors.blue,
                           fontWeight: FontWeight.w600,
@@ -3016,7 +3124,7 @@ class _EtiquetaNutricionalScannerScreenState
                       ),
                     ),
                   ),
-                  const TextSpan(text: '\u00A0e indica tu edad y altura.'),
+                  TextSpan(text: l10n.scannerGuestAccuracyPromptEnd),
                 ],
               ),
             ),
@@ -3027,6 +3135,7 @@ class _EtiquetaNutricionalScannerScreenState
   }
 
   Widget _buildCaptureQualityNotice() {
+    final l10n = AppLocalizations.of(context)!;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -3035,18 +3144,19 @@ class _EtiquetaNutricionalScannerScreenState
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: Colors.amber.shade300),
       ),
-      child: const ExpansionTile(
+      child: ExpansionTile(
         tilePadding: EdgeInsets.zero,
         childrenPadding: EdgeInsets.only(bottom: 6),
         initiallyExpanded: false,
         title: Row(
           children: [
-            Icon(Icons.tips_and_updates_outlined, color: Colors.orange),
-            SizedBox(width: 8),
+            const Icon(Icons.tips_and_updates_outlined, color: Colors.orange),
+            const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'Consejos para hacer foto...',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                l10n.scannerCaptureTipsTitle,
+                style:
+                    const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
               ),
             ),
           ],
@@ -3055,18 +3165,14 @@ class _EtiquetaNutricionalScannerScreenState
           Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              'Para obtener valores correctos, la imagen debe enfocarse bien sobre el código de barras o sobre la tabla de información nutricional.',
+              l10n.scannerCaptureTipsIntro,
             ),
           ),
-          SizedBox(height: 6),
+          const SizedBox(height: 6),
           Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              '• Si escaneas el código de barras, céntralo en el recuadro.\n'
-              '• Si escaneas la tabla nutricional, asegúrate de que toda la tabla esté visible.\n'
-              '• Evita fotos movidas, borrosas o con reflejos.\n'
-              '• Usa buena luz y acércate lo suficiente para leer números.\n'
-              '• Si el resultado no cuadra, repite la foto desde otro ángulo.',
+              l10n.scannerCaptureTipsBody,
             ),
           ),
         ],
@@ -3075,6 +3181,7 @@ class _EtiquetaNutricionalScannerScreenState
   }
 
   Widget _buildOrientativeHealthNotice() {
+    final l10n = AppLocalizations.of(context)!;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(10),
@@ -3097,7 +3204,7 @@ class _EtiquetaNutricionalScannerScreenState
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  'Aviso importante',
+                  l10n.scannerImportantNotice,
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
                     color: Colors.orange.shade900,
@@ -3107,9 +3214,9 @@ class _EtiquetaNutricionalScannerScreenState
             ],
           ),
           const SizedBox(height: 6),
-          const Text(
-            'Estos cálculos e información son orientativos y dependen, además, de la calidad de la foto/imagen y de si el producto existe en la base de datos Open Food Facts. Para una valoración personalizada, consulta siempre tu dietista online.',
-            style: TextStyle(fontSize: 12),
+          Text(
+            l10n.scannerOrientativeNotice,
+            style: const TextStyle(fontSize: 12),
           ),
           const SizedBox(height: 8),
           _buildContactarDietistaButton(),
@@ -3174,6 +3281,7 @@ class _EtiquetaNutricionalScannerScreenState
   }
 
   Widget _buildNutrientesComparisonTable(NutrientesPorPorcion resultado) {
+    final l10n = AppLocalizations.of(context)!;
     final porcion = resultado.porcionGr;
     final showPortionColumn =
         porcion != null && porcion > 0 && (porcion - 100).abs() > 0.01;
@@ -3220,13 +3328,15 @@ class _EtiquetaNutricionalScannerScreenState
             dataRowMinHeight: 40,
             dataRowMaxHeight: 52,
             columns: [
-              const DataColumn(label: Text('Nutriente')),
+              DataColumn(label: Text(l10n.scannerNutrientColumn)),
               if (showPortionColumn)
                 DataColumn(
-                  label: Text('Porción (${_formatPorcionLabel(porcion)})'),
+                  label: Text(
+                    l10n.scannerServingColumn(_formatPorcionLabel(porcion)),
+                  ),
                 ),
               const DataColumn(label: Text('100 g')),
-              const DataColumn(label: Text('Estado (100 g)')),
+              DataColumn(label: Text(l10n.scannerStatus100gColumn)),
             ],
             rows: rows
                 .map(
@@ -3941,7 +4051,9 @@ class _BarcodeCameraCaptureScreenState
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'No se pudo iniciar la camara: $e';
+        _error = AppLocalizations.of(context)!.scannerCameraInitError(
+          e.toString(),
+        );
         _initializing = false;
       });
     }
@@ -3972,14 +4084,19 @@ class _BarcodeCameraCaptureScreenState
       setState(() {
         _capturing = false;
       });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('No se pudo tomar la foto: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context)!.scannerTakePhotoError(e.toString()),
+          ),
+        ),
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final screenWidth = MediaQuery.of(context).size.width;
     final topLabelRightInset =
         screenWidth < 360 ? 102.0 : (screenWidth < 420 ? 94.0 : 86.0);
@@ -4029,10 +4146,10 @@ class _BarcodeCameraCaptureScreenState
                     color: Colors.black54,
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Text(
-                    'Centra la etiqueta/codigo de barras dentro del recuadro',
+                  child: Text(
+                    l10n.scannerFrameHint,
                     textAlign: TextAlign.left,
-                    style: TextStyle(
+                    style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w600,
                     ),
@@ -4047,7 +4164,7 @@ class _BarcodeCameraCaptureScreenState
                   color: Colors.black54,
                   shape: const CircleBorder(),
                   child: IconButton(
-                    tooltip: 'Cancelar',
+                    tooltip: l10n.commonCancel,
                     onPressed:
                         _capturing ? null : () => Navigator.of(context).pop(),
                     icon:

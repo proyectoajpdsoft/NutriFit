@@ -704,6 +704,7 @@ class ApiService {
     required int periodMonths,
     required String priceText,
     required String concept,
+    String? languageCode,
   }) async {
     final headers = await _getHeaders();
     final response = await _safePost(
@@ -715,6 +716,8 @@ class ApiService {
         'period_months': periodMonths,
         'price_text': priceText,
         'concept': concept,
+        if ((languageCode ?? '').trim().isNotEmpty)
+          'language_code': languageCode!.trim().toLowerCase(),
       }),
     );
 
@@ -3374,6 +3377,25 @@ ${response.body}
     throw Exception('Error al cargar actividades del paciente');
   }
 
+  Future<List<Entrenamiento>> getEntrenamientosPaciente(
+    int codigoPaciente,
+  ) async {
+    final response = await http.get(
+      Uri.parse(
+        '${_baseUrl}api/entrenamientos.php?action=get_entrenamientos&paciente=$codigoPaciente',
+      ),
+      headers: await _getHeaders(),
+    );
+
+    if (response.statusCode == 200) {
+      final List<dynamic> data = json.decode(response.body);
+      return data.map((item) => Entrenamiento.fromJson(item)).toList();
+    }
+
+    _validateResponse(response.statusCode, response.body);
+    throw Exception('Error al cargar entrenamientos del paciente');
+  }
+
   Future<bool> updateComentarioNutricionista({
     required int codigoEjercicio,
     required String comentario,
@@ -3427,11 +3449,28 @@ ${response.body}
     throw Exception('Error al cargar comentarios pendientes');
   }
 
-  Future<List<Map<String, dynamic>>> getSensacionesPendientesNutri() async {
+  Future<List<Map<String, dynamic>>> getSensacionesNutri({
+    int? codigoPaciente,
+    int? codigoPlanFit,
+    bool incluirLeidas = false,
+  }) async {
+    final uri = Uri.parse(
+      '${_baseUrl}api/entrenamientos_ejercicios.php',
+    ).replace(
+      queryParameters: {
+        'action':
+            incluirLeidas || codigoPaciente != null || codigoPlanFit != null
+                ? 'sensaciones_nutri'
+                : 'unread_sensaciones_nutri',
+        if (codigoPaciente != null)
+          'codigo_paciente': codigoPaciente.toString(),
+        if (codigoPlanFit != null) 'codigo_plan_fit': codigoPlanFit.toString(),
+        if (incluirLeidas) 'incluir_leidas': 'true',
+      },
+    );
+
     final response = await http.get(
-      Uri.parse(
-        '${_baseUrl}api/entrenamientos_ejercicios.php?action=unread_sensaciones_nutri',
-      ),
+      uri,
       headers: await _getHeaders(),
     );
 
@@ -3442,6 +3481,10 @@ ${response.body}
 
     _validateResponse(response.statusCode, response.body);
     throw Exception('Error al cargar sensaciones pendientes');
+  }
+
+  Future<List<Map<String, dynamic>>> getSensacionesPendientesNutri() async {
+    return getSensacionesNutri();
   }
 
   Future<List<Map<String, dynamic>>> getActividadesConPlan() async {
@@ -4102,9 +4145,12 @@ ${response.body}
 
   // --- USUARIOS ---
 
-  Future<List<Usuario>> getUsuarios() async {
+  Future<List<Usuario>> getUsuarios({bool includeDeleted = false}) async {
+    final uri = Uri.parse('${_baseUrl}api/usuarios.php').replace(
+      queryParameters: includeDeleted ? {'include_deleted': '1'} : null,
+    );
     final response = await http.get(
-      Uri.parse('${_baseUrl}api/usuarios.php'),
+      uri,
       headers: await _getHeaders(),
     ); // Headers se mantienen por si se reactiva la seguridad
     if (response.statusCode == 200) {
@@ -4203,6 +4249,34 @@ ${response.body}
           .toList();
     }
     return const [];
+  }
+
+  Future<Map<String, dynamic>> notifyPremiumActivationEmail({
+    required int codigoUsuario,
+    required int periodMonths,
+    required DateTime premiumDesdeFecha,
+    required DateTime premiumHastaFecha,
+  }) async {
+    final response = await http.post(
+      Uri.parse('${_baseUrl}api/usuarios.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode({
+        'action': 'notify_premium_activation_email',
+        'codigo_usuario': codigoUsuario,
+        'periodo_meses': periodMonths,
+        'premium_desde_fecha':
+            premiumDesdeFecha.toIso8601String().split('T').first,
+        'premium_hasta_fecha':
+            premiumHastaFecha.toIso8601String().split('T').first,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      throw Exception('Respuesta del servidor: ${response.body}');
+    }
+
+    return jsonDecode(response.body) ?? {};
   }
 
   Future<bool> updateUsuario(Map<String, dynamic> usuarioData) async {
@@ -4440,6 +4514,12 @@ ${response.body}
 
   // --- SESIONES ---
 
+  Exception _buildSessionDataAccessException() {
+    return Exception(
+      'No se ha podido acceder a los datos de inicios de sesión en este momento.',
+    );
+  }
+
   Future<SessionResponse> getSessionData(String codigoUsuario) async {
     final uri = Uri.parse(
       '${_baseUrl}api/sesiones.php',
@@ -4452,7 +4532,7 @@ ${response.body}
         final jsonResponse = json.decode(response.body);
         return SessionResponse.fromJson(jsonResponse);
       } catch (e) {
-        throw Exception('Error al procesar los datos de sesiones: $e');
+        throw _buildSessionDataAccessException();
       }
     } else if (response.statusCode == 404) {
       // Si no hay sesiones, devolvemos un objeto vacío
@@ -4465,9 +4545,7 @@ ${response.body}
         todasSesiones: [],
       );
     } else {
-      throw Exception(
-        'Error al cargar sesiones (Código: ${response.statusCode}). Respuesta: ${response.body}',
-      );
+      throw _buildSessionDataAccessException();
     }
   }
 
@@ -4496,6 +4574,34 @@ ${response.body}
 
     throw Exception(
       'Error al cargar sesiones globales (Código: ${response.statusCode}). Respuesta: ${response.body}',
+    );
+  }
+
+  Future<List<SessionLog>> getLatestAccessLogs() async {
+    final uri = Uri.parse(
+      '${_baseUrl}api/sesiones.php',
+    ).replace(queryParameters: {'ultimos_accesos': '1'});
+
+    final response = await http.get(uri, headers: await _getHeaders());
+
+    if (response.statusCode == 200) {
+      try {
+        final jsonResponse = json.decode(response.body);
+        final rawList = (jsonResponse['ultimos_accesos'] as List?) ?? const [];
+        return rawList
+            .map((s) => SessionLog.fromJson(Map<String, dynamic>.from(s)))
+            .toList();
+      } catch (e) {
+        throw Exception('Error al procesar el listado de accesos: $e');
+      }
+    }
+
+    if (response.statusCode == 404) {
+      return const [];
+    }
+
+    throw Exception(
+      'Error al cargar accesos (Código: ${response.statusCode}). Respuesta: ${response.body}',
     );
   }
 
@@ -4561,16 +4667,20 @@ ${response.body}
 
   // --- PARÁMETROS GLOBALES ---
 
+  bool _isOptionalParametroStatus(int statusCode) {
+    return statusCode == 202 || statusCode == 204 || statusCode == 404;
+  }
+
   Future<Map<String, dynamic>?> getParametro(String nombre) async {
     try {
-      final response = await http.get(
+      final response = await _safeGet(
         Uri.parse('${_baseUrl}api/parametros.php?nombre=$nombre'),
         headers: await _getHeaders(),
       );
 
       if (response.statusCode == 200) {
         return json.decode(response.body);
-      } else if (response.statusCode == 404) {
+      } else if (_isOptionalParametroStatus(response.statusCode)) {
         return null;
       } else {
         throw Exception('Error al obtener parámetro (${response.statusCode})');
@@ -4583,13 +4693,15 @@ ${response.body}
 
   Future<List<dynamic>> getParametrosPorCategoria(String categoria) async {
     try {
-      final response = await http.get(
+      final response = await _safeGet(
         Uri.parse('${_baseUrl}api/parametros.php?categoria=$categoria'),
         headers: await _getHeaders(),
       );
 
       if (response.statusCode == 200) {
         return json.decode(response.body);
+      } else if (_isOptionalParametroStatus(response.statusCode)) {
+        return <dynamic>[];
       } else {
         throw Exception('Error al obtener parámetros (${response.statusCode})');
       }
@@ -4684,7 +4796,7 @@ ${response.body}
   // Método rápido para obtener solo el valor de un parámetro por nombre
   Future<String?> getParametroValor(String nombre) async {
     try {
-      final response = await http.get(
+      final response = await _safeGet(
         Uri.parse('${_baseUrl}api/parametros.php?nombre=$nombre&valor=1'),
         headers: await _getHeaders(),
       );
@@ -4692,7 +4804,7 @@ ${response.body}
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         return data['valor']?.toString();
-      } else if (response.statusCode == 404) {
+      } else if (_isOptionalParametroStatus(response.statusCode)) {
         return null;
       } else {
         throw Exception(
@@ -4705,16 +4817,55 @@ ${response.body}
     }
   }
 
+  Future<String?> getParametroValorLocalized(
+    String nombre, {
+    String? languageCode,
+  }) async {
+    final normalizedLanguageCodes =
+        _normalizeParametroLanguageCodes(languageCode);
+
+    if (normalizedLanguageCodes.isEmpty ||
+        normalizedLanguageCodes.first == 'es') {
+      return getParametroValor(nombre);
+    }
+
+    for (final normalizedLanguageCode in normalizedLanguageCodes) {
+      final localizedValue = await getParametroValor(
+        '${nombre}_$normalizedLanguageCode',
+      );
+      if (localizedValue != null && localizedValue.trim().isNotEmpty) {
+        return localizedValue;
+      }
+    }
+
+    return getParametroValor(nombre);
+  }
+
+  List<String> _normalizeParametroLanguageCodes(String? languageCode) {
+    final raw = (languageCode ?? '').trim().toLowerCase();
+    if (raw.isEmpty) return const <String>[];
+
+    final primary = raw.split(RegExp(r'[-_]')).first.trim();
+    if (primary.isEmpty) return const <String>[];
+
+    switch (primary) {
+      case 'de':
+        return const <String>['de', 'al'];
+      default:
+        return <String>[primary];
+    }
+  }
+
   Future<Map<String, dynamic>?> getParametroByNombre(String nombre) async {
     try {
-      final response = await http.get(
+      final response = await _safeGet(
         Uri.parse('${_baseUrl}api/parametros.php?nombre=$nombre'),
         headers: await _getHeaders(),
       );
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body) as Map<String, dynamic>;
-      } else if (response.statusCode == 404) {
+      } else if (_isOptionalParametroStatus(response.statusCode)) {
         return null;
       } else {
         throw Exception('Error al obtener parametro (${response.statusCode})');
@@ -4827,6 +4978,70 @@ ${response.body}
       Uri.parse('$_baseUrl$endpoint'),
       headers: await _getHeaders(),
     );
+  }
+
+  // --- AI ASSISTANT ---
+
+  Future<Map<String, dynamic>> getAiAssistantConfig() async {
+    final response = await _safeGet(
+      Uri.parse('${_baseUrl}api/ai_assistant.php'),
+      headers: await _getHeaders(),
+    );
+
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception(
+        'Error al obtener configuración IA (${response.statusCode}): $body',
+      );
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is Map<String, dynamic>) {
+      return decoded;
+    }
+
+    throw Exception('Configuración IA inválida.');
+  }
+
+  Future<Map<String, dynamic>> sendAiAssistantMessage({
+    required List<Map<String, String>> messages,
+    required String prompt,
+    String? origin,
+    String? systemPrompt,
+    double? temperature,
+    int? maxTokens,
+  }) async {
+    final payload = <String, dynamic>{
+      'messages': messages,
+      'prompt': prompt,
+      if (origin != null && origin.trim().isNotEmpty) 'origin': origin.trim(),
+      if (systemPrompt != null && systemPrompt.trim().isNotEmpty)
+        'system_prompt': systemPrompt.trim(),
+      if (temperature != null) 'temperature': temperature,
+      if (maxTokens != null) 'max_tokens': maxTokens,
+    };
+
+    final response = await _safePost(
+      Uri.parse('${_baseUrl}api/ai_assistant.php'),
+      headers: await _getHeaders(),
+      body: jsonEncode(payload),
+    );
+
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      final body =
+          response.body.trim().isEmpty ? 'sin contenido' : response.body;
+      throw Exception('Error en asistente IA (${response.statusCode}): $body');
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is Map<String, dynamic>) {
+      return decoded;
+    }
+
+    throw Exception('Respuesta IA inválida.');
   }
 
   // --- TODO LIST ---
@@ -5218,6 +5433,9 @@ ${response.body}
       Uri.parse('${_baseUrl}api/video_ejercicios.php'),
       headers: await _getHeaders(),
     );
+    if (_isOptionalParametroStatus(response.statusCode)) {
+      return <Map<String, dynamic>>[];
+    }
     if (response.statusCode != 200) {
       _validateResponse(response.statusCode, response.body);
       throw Exception('Error al obtener vídeos (${response.statusCode})');
@@ -5226,12 +5444,28 @@ ${response.body}
     return data.cast<Map<String, dynamic>>();
   }
 
+  Future<Map<String, dynamic>> getVideoEjercicio(int codigo) async {
+    final response = await _safeGet(
+      Uri.parse('${_baseUrl}api/video_ejercicios.php?codigo=$codigo'),
+      headers: await _getHeaders(),
+    );
+    if (response.statusCode != 200) {
+      _validateResponse(response.statusCode, response.body);
+      throw Exception('Error al obtener vídeo (${response.statusCode})');
+    }
+    final dynamic data = jsonDecode(response.body);
+    return Map<String, dynamic>.from(data as Map);
+  }
+
   Future<List<Map<String, dynamic>>> getVideosEjerciciosForUser(
       int usuarioCodigo) async {
     final response = await _safeGet(
       Uri.parse('${_baseUrl}api/video_ejercicios.php?usuario=$usuarioCodigo'),
       headers: await _getHeaders(),
     );
+    if (_isOptionalParametroStatus(response.statusCode)) {
+      return <Map<String, dynamic>>[];
+    }
     if (response.statusCode != 200) {
       _validateResponse(response.statusCode, response.body);
       throw Exception('Error al obtener vídeos (${response.statusCode})');

@@ -36,7 +36,9 @@ class _PlanFitPdfOptions {
 }
 
 class PlanesFitPacienteListScreen extends StatefulWidget {
-  const PlanesFitPacienteListScreen({super.key});
+  const PlanesFitPacienteListScreen({super.key, this.initialTabIndex = 0});
+
+  final int initialTabIndex;
 
   @override
   State<PlanesFitPacienteListScreen> createState() =>
@@ -1589,6 +1591,7 @@ class _PlanesFitPacienteListScreenState
       ),
       drawer: const AppDrawer(),
       body: DefaultTabController(
+        initialIndex: widget.initialTabIndex,
         length: 2,
         child: Column(
           children: [

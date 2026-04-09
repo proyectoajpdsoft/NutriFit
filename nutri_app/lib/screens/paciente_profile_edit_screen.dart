@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:nutri_app/models/session.dart';
 import 'package:nutri_app/models/usuario.dart';
 import 'package:path_provider/path_provider.dart';
@@ -11,6 +12,8 @@ import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/services/config_service.dart';
 import 'package:nutri_app/widgets/profile_image_picker.dart';
+import 'package:nutri_app/widgets/app_language_dropdown.dart';
+import 'package:nutri_app/widgets/delete_account_confirmation_helper.dart';
 import 'package:nutri_app/screens/register_screen.dart';
 import 'package:nutri_app/screens/contacto_nutricionista_screen.dart';
 import 'package:nutri_app/widgets/password_requirements_checklist.dart';
@@ -115,7 +118,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
     if (!_isValidEmailFormat(email)) {
       if (_emailFormatError == null && mounted) {
         setState(() {
-          _emailFormatError = 'Email no válido';
+          _emailFormatError =
+              AppLocalizations.of(context)!.profileEditInvalidEmail;
         });
       }
       return;
@@ -143,7 +147,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
       if (exists) {
         setState(() {
           _emailAvailabilityError =
-              'Esta cuenta de email no puede usarse, indique otra';
+              AppLocalizations.of(context)!.profileEditEmailInUse;
         });
       } else if (_emailAvailabilityError != null) {
         setState(() {
@@ -175,6 +179,26 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
     await _configService.loadPasswordPoliciesFromDatabase(_apiService);
     if (!mounted) return;
     setState(() {});
+  }
+
+  bool _hasActivePremiumBadge() {
+    final usuario = _fullUsuario;
+    if (usuario == null) return false;
+
+    final tipo = (usuario.tipo ?? '').trim().toLowerCase();
+    if (tipo != 'premium') {
+      return false;
+    }
+
+    final expiry = usuario.premiumHastaFecha ?? usuario.premiumExpiraFecha;
+    if (expiry == null) {
+      return true;
+    }
+
+    final today = DateTime.now();
+    final todayDate = DateTime(today.year, today.month, today.day);
+    final expiryDate = DateTime(expiry.year, expiry.month, expiry.day);
+    return !expiryDate.isBefore(todayDate);
   }
 
   Future<void> _loadEmailVerificationStatus() async {
@@ -275,12 +299,13 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   }
 
   Future<void> _saveEmailToProfile() async {
+    final l10n = AppLocalizations.of(context)!;
     final email = _emailController.text.trim();
     if (email.isEmpty) {
-      throw Exception('Debes indicar primero una cuenta de email.');
+      throw Exception(l10n.profileEditEmailRequiredForVerification);
     }
     if (!_isValidEmailFormat(email)) {
-      throw Exception('Email no válido.');
+      throw Exception('${l10n.profileEditInvalidEmail}.');
     }
 
     final currentEmail = (_fullUsuario?.email ?? '').trim();
@@ -291,7 +316,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
 
     final emailExists = await _emailExistsInAnotherUser(email);
     if (emailExists) {
-      throw Exception('No puede usar esta cuenta de email, indique otra.');
+      throw Exception('${l10n.profileEditEmailInUse}.');
     }
 
     await _updateProfileWithEmail(email);
@@ -308,11 +333,12 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   }
 
   Future<void> _sendEmailVerificationCode() async {
+    final l10n = AppLocalizations.of(context)!;
     final email = _emailController.text.trim();
     if (email.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Primero indica un email en tu perfil.'),
+        SnackBar(
+          content: Text(l10n.profileEditEmailRequiredForVerification),
           backgroundColor: Colors.orange,
         ),
       );
@@ -321,8 +347,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
 
     if (!_isValidEmailFormat(email)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Email no válido.'),
+        SnackBar(
+          content: Text('${l10n.profileEditInvalidEmail}.'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -366,7 +392,10 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text((resp['message'] ?? 'Código enviado.').toString()),
+          content: Text(
+            (resp['message'] ?? l10n.profileEditEmailCodeSentGeneric)
+                .toString(),
+          ),
           backgroundColor: Colors.green,
         ),
       );
@@ -387,11 +416,12 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   }
 
   Future<void> _verifyEmailCode(String code) async {
+    final l10n = AppLocalizations.of(context)!;
     final value = code.trim();
     if (value.length != 10) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('El código debe tener 10 dígitos.'),
+        SnackBar(
+          content: Text(l10n.profileEditEmailCodeLengthError),
           backgroundColor: Colors.orange,
         ),
       );
@@ -411,7 +441,10 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text((resp['message'] ?? 'Email verificado.').toString()),
+          content: Text(
+            (resp['message'] ?? l10n.profileEditEmailVerifiedGeneric)
+                .toString(),
+          ),
           backgroundColor: Colors.green,
         ),
       );
@@ -432,18 +465,19 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   }
 
   Future<void> _verifyEmailCodeDialog() async {
+    final l10n = AppLocalizations.of(context)!;
     final codeController = TextEditingController();
     final code = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Validar código de email'),
+        title: Text(l10n.profileEditEmailCodeDialogTitle),
         content: TextField(
           controller: codeController,
           keyboardType: TextInputType.number,
           maxLength: 10,
           inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          decoration: const InputDecoration(
-            labelText: 'Código de 10 dígitos',
+          decoration: InputDecoration(
+            labelText: l10n.profileEditEmailCodeTenDigitsLabel,
             border: OutlineInputBorder(),
             counterText: '',
           ),
@@ -451,12 +485,12 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Cancelar'),
+            child: Text(l10n.commonCancel),
           ),
           ElevatedButton(
             onPressed: () =>
                 Navigator.of(dialogContext).pop(codeController.text.trim()),
-            child: const Text('Validar código'),
+            child: Text(l10n.profileEditValidateEmailCodeAction),
           ),
         ],
       ),
@@ -471,6 +505,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   }
 
   Future<void> _showEmailVerificationWindow() async {
+    final l10n = AppLocalizations.of(context)!;
     final codeController = TextEditingController();
     final userType =
         (context.read<AuthService>().userType ?? '').trim().toLowerCase();
@@ -492,7 +527,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('Verificar email'),
+              title: Text(l10n.profileEditVerifyEmailTitle),
               content: SizedBox(
                 width: 560,
                 child: SingleChildScrollView(
@@ -517,8 +552,10 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                             ),
                             children: [
                               const TextSpan(
-                                text:
-                                    'Verificar tu email te permitirá recuperar el acceso por correo si olvidas la contraseña y también solicitar ',
+                                text: '',
+                              ),
+                              TextSpan(
+                                text: l10n.profileEditVerifyEmailIntroPrefix,
                               ),
                               WidgetSpan(
                                 alignment: PlaceholderAlignment.middle,
@@ -531,7 +568,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                     );
                                   },
                                   child: Text(
-                                    'suscribirte a Premium',
+                                    l10n.profileEditVerifyEmailPremiumLink,
                                     style: TextStyle(
                                       color: Colors.blue.shade700,
                                       decoration: TextDecoration.underline,
@@ -557,8 +594,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'Sigue estos pasos...',
+                            Text(
+                              l10n.profileEditFollowTheseSteps,
                               style: TextStyle(
                                 fontWeight: FontWeight.w700,
                                 fontSize: 14,
@@ -576,7 +613,11 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
-                                    'Pulsa en "Enviar código" para enviarte el código de verificación a ${hasEmail ? email : 'tu email'}.',
+                                    l10n.profileEditSendCodeInstruction(
+                                      hasEmail
+                                          ? email
+                                          : l10n.profileEditYourEmail,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -617,8 +658,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                             return;
                                           }
                                           setDialogState(() {
-                                            inlineMessage =
-                                                'Código enviado a tu cuenta de correo electrónico. Caducará en 15 minutos. Si no lo ves en Bandeja de entrada, revisa la carpeta Spam.';
+                                            inlineMessage = l10n
+                                                .profileEditEmailCodeSentInfo;
                                             inlineMessageColor =
                                                 Colors.orange.shade800;
                                             codeSent = true;
@@ -629,13 +670,15 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                             return;
                                           }
                                           setDialogState(() {
-                                            final detailed = e
-                                                .toString()
-                                                .replaceFirst(
-                                                    'Exception: ', '');
+                                            final detailed =
+                                                e.toString().replaceFirst(
+                                                      'Exception: ',
+                                                      '',
+                                                    );
                                             inlineMessage = isNutricionista
                                                 ? detailed
-                                                : 'No se ha podido enviar el email de verificación en este momento, inténtelo más tarde.';
+                                                : l10n
+                                                    .profileEditEmailSendFailed;
                                             inlineMessageColor = Colors.red;
                                           });
                                         } finally {
@@ -651,8 +694,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                 icon: const Icon(Icons.send_outlined),
                                 label: Text(
                                   codeSent
-                                      ? 'Volver a enviar'
-                                      : 'Enviar código',
+                                      ? l10n.profileEditResendCodeAction
+                                      : l10n.profileEditSendCodeAction,
                                 ),
                               ),
                             ),
@@ -667,9 +710,9 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                     color: Colors.teal.shade700,
                                   ),
                                   const SizedBox(width: 8),
-                                  const Expanded(
+                                  Expanded(
                                     child: Text(
-                                      'Revisa tu correo electrónico, habrás recibido un email con un código, cópialo y pégalo aquí, y pulsa en "Verificar".',
+                                      l10n.profileEditVerifyCodeInstruction,
                                     ),
                                   ),
                                 ],
@@ -682,8 +725,9 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                 inputFormatters: [
                                   FilteringTextInputFormatter.digitsOnly,
                                 ],
-                                decoration: const InputDecoration(
-                                  labelText: 'Código de verificación',
+                                decoration: InputDecoration(
+                                  labelText:
+                                      l10n.profileEditVerificationCodeLabel,
                                   border: OutlineInputBorder(),
                                   counterText: '',
                                 ),
@@ -701,8 +745,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                           if (code.length != 10) {
                                             if (!dialogContext.mounted) return;
                                             setDialogState(() {
-                                              inlineMessage =
-                                                  'El código debe tener 10 dígitos.';
+                                              inlineMessage = l10n
+                                                  .profileEditEmailCodeLengthError;
                                               inlineMessageColor =
                                                   Colors.orange;
                                             });
@@ -731,8 +775,9 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                             WidgetsBinding.instance
                                                 .addPostFrameCallback((_) {
                                               if (!mounted) return;
-                                              ScaffoldMessenger.of(this.context)
-                                                  .showSnackBar(
+                                              ScaffoldMessenger.of(
+                                                this.context,
+                                              ).showSnackBar(
                                                 SnackBar(
                                                   content: Text(
                                                     (resp['message'] ??
@@ -749,10 +794,11 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                               return;
                                             }
                                             setDialogState(() {
-                                              inlineMessage = e
-                                                  .toString()
-                                                  .replaceFirst(
-                                                      'Exception: ', '');
+                                              inlineMessage =
+                                                  e.toString().replaceFirst(
+                                                        'Exception: ',
+                                                        '',
+                                                      );
                                               inlineMessageColor = Colors.red;
                                             });
                                           } finally {
@@ -766,14 +812,14 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                           }
                                         },
                                   icon: const Icon(Icons.verified_outlined),
-                                  label: const Text('Verificar'),
+                                  label: Text(l10n.commonValidate),
                                 ),
                               ),
                             ],
                             if (!hasEmail) ...[
                               const SizedBox(height: 8),
                               Text(
-                                'Debes indicar primero un email en Editar Perfil para poder verificarlo.',
+                                l10n.profileEditEmailRequiredInProfile,
                                 style: TextStyle(
                                   color: Colors.orange.shade800,
                                   fontWeight: FontWeight.w600,
@@ -810,7 +856,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                 TextButton(
                   onPressed:
                       isBusy ? null : () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cerrar'),
+                  child: Text(l10n.commonClose),
                 ),
               ],
             );
@@ -851,6 +897,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   }
 
   Future<void> _showTwoFactorWindow() async {
+    final l10n = AppLocalizations.of(context)!;
     if (!_twoFactorEnabled) {
       await _activarTwoFactor();
       return;
@@ -864,7 +911,10 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
       barrierDismissible: false,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('Doble factor (2FA)'),
+          title: Text(
+            l10n.profileEditTwoFactorDialogTitle,
+            style: Theme.of(dialogContext).textTheme.titleMedium,
+          ),
           content: SizedBox(
             width: 560,
             child: Column(
@@ -887,7 +937,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                           const Icon(Icons.security, color: Colors.green),
                           const SizedBox(width: 8),
                           Text(
-                            'Estado: Activado',
+                            l10n.profileEditTwoFactorEnabledStatus,
                             style: TextStyle(
                               color: Colors.green.shade800,
                               fontWeight: FontWeight.w700,
@@ -896,8 +946,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                         ],
                       ),
                       const SizedBox(height: 8),
-                      const Text(
-                        'El doble factor ya está activado en tu cuenta. Desde aquí solo puedes consultar si este dispositivo es de confianza y vincularlo o desvincularlo.',
+                      Text(
+                        l10n.profileEditTwoFactorEnabledBody,
                         style: TextStyle(fontSize: 13),
                       ),
                     ],
@@ -920,24 +970,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                   ),
                   child: Text(
                     _isCurrentDeviceTrusted
-                        ? 'Este dispositivo está marcado como de confianza. No se solicitará 2FA en próximos inicios de sesión hasta quitar la confianza.'
-                        : 'Este dispositivo no está marcado como de confianza. Para marcarlo, debes volver a iniciar sesión y activar la casilla "Confiar en este dispositivo" durante la validación 2FA.',
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.blue.shade100),
-                  ),
-                  child: Text(
-                    _isCurrentDeviceTrusted
-                        ? 'Si desvinculas este dispositivo, en el próximo inicio de sesión volverá a pedirse el código 2FA.'
-                        : 'Si quieres convertir este dispositivo en dispositivo de confianza, deberás cerrar sesión e iniciar sesión de nuevo para validarlo con 2FA marcando la opción correspondiente.',
+                        ? l10n.profileEditTrustedDeviceEnabledBody
+                        : l10n.profileEditTrustedDeviceDisabledBody,
                     style: const TextStyle(fontSize: 13),
                   ),
                 ),
@@ -957,9 +991,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                       Navigator.of(dialogContext).pop();
                                     },
                           icon: const Icon(Icons.phonelink_erase_outlined),
-                          label: const Text(
-                            'Quitar confianza en este dispositivo',
-                          ),
+                          label:
+                              Text(l10n.profileEditRemoveTrustedDeviceAction),
                         )
                       : ElevatedButton.icon(
                           onPressed:
@@ -971,10 +1004,18 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                       Navigator.of(dialogContext).pop();
                                     },
                           icon: const Icon(Icons.phonelink_lock_outlined),
-                          label: const Text(
-                            'Establecer este dispositivo como de confianza',
-                          ),
+                          label: Text(l10n.profileEditSetTrustedDeviceAction),
                         ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: TextButton(
+                    onPressed: (_loadingTwoFactor || _loadingTrustedDevice)
+                        ? null
+                        : () => Navigator.pop(dialogContext),
+                    child: Text(l10n.profileEditCancelProcess),
+                  ),
                 ),
                 if (_loadingTrustedDevice) ...[
                   const SizedBox(height: 10),
@@ -983,14 +1024,6 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
               ],
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: (_loadingTwoFactor || _loadingTrustedDevice)
-                  ? null
-                  : () => Navigator.pop(dialogContext),
-              child: const Text('Cerrar'),
-            ),
-          ],
         );
       },
     );
@@ -1040,21 +1073,22 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   }
 
   Future<void> _establecerConfianzaDispositivoActual() async {
+    final l10n = AppLocalizations.of(context)!;
     final goToLogin = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Establecer dispositivo de confianza'),
-        content: const Text(
-          'Para marcar este dispositivo como de confianza debes validarlo en el inicio de sesión 2FA, activando la casilla "Confiar en este dispositivo".\n\n¿Quieres cerrar sesión ahora para hacerlo?',
+        title: Text(l10n.profileEditSetTrustedDeviceTitle),
+        content: Text(
+          l10n.profileEditSetTrustedDeviceBody,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancelar'),
+            child: Text(l10n.commonCancel),
           ),
           ElevatedButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Ir al login'),
+            child: Text(l10n.profileEditGoToLogin),
           ),
         ],
       ),
@@ -1091,6 +1125,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   }
 
   Future<void> _activarTwoFactor() async {
+    final l10n = AppLocalizations.of(context)!;
     if (!mounted) return;
     setState(() {
       _loadingTwoFactor = true;
@@ -1163,7 +1198,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
 
           return StatefulBuilder(
             builder: (context, setDialogState) => AlertDialog(
-              title: const Text('Activar doble factor'),
+              title: Text(l10n.profileEditActivateTwoFactorTitle),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -1177,8 +1212,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(color: Colors.lightBlue.shade200),
                       ),
-                      child: const Text(
-                        'El doble factor (2FA) añade una capa extra de seguridad: además de tu contraseña, se solicita un código temporal de tu app de autenticación.',
+                      child: Text(
+                        l10n.profileEditActivateTwoFactorIntro,
                         style: TextStyle(fontSize: 13),
                       ),
                     ),
@@ -1194,8 +1229,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            'Sigue estos pasos...',
+                          Text(
+                            l10n.profileEditFollowTheseSteps,
                             style: TextStyle(
                               fontWeight: FontWeight.w700,
                               fontSize: 14,
@@ -1210,9 +1245,9 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                 color: Colors.teal.shade700,
                               ),
                               const SizedBox(width: 8),
-                              const Expanded(
+                              Expanded(
                                 child: Text(
-                                  'Abre tu app de autenticación (Google Authenticator, Microsoft Authenticator, Authy, etc.) y añade una cuenta.',
+                                  l10n.profileEditTwoFactorStep1,
                                 ),
                               ),
                             ],
@@ -1241,8 +1276,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      const Text(
-                                        'Clave para configurar 2FA:',
+                                      Text(
+                                        l10n.profileEditTwoFactorSetupKeyLabel,
                                         style: TextStyle(
                                           fontWeight: FontWeight.w600,
                                         ),
@@ -1265,13 +1300,16 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                             if (!dialogContext.mounted) return;
                                             setDialogState(() {
                                               dialogNotice =
-                                                  'Clave copiada al portapapeles';
+                                                  l10n.profileEditKeyCopied;
                                               dialogError = null;
                                             });
                                           },
-                                          icon:
-                                              const Icon(Icons.copy, size: 16),
-                                          label: const Text('Copiar'),
+                                          icon: const Icon(
+                                            Icons.copy,
+                                            size: 16,
+                                          ),
+                                          label: Text(l10n.premiumCopyConcept
+                                              .replaceAll(' concepto', '')),
                                         ),
                                       ),
                                     ],
@@ -1296,8 +1334,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                               ),
                               label: Text(
                                 showMoreOptions
-                                    ? 'Ocultar opciones'
-                                    : 'Más opciones...',
+                                    ? l10n.profileEditHideOptions
+                                    : l10n.profileEditMoreOptions,
                               ),
                             ),
                           ),
@@ -1324,7 +1362,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                         if (!dialogContext.mounted) return;
                                         setDialogState(() {
                                           dialogNotice =
-                                              'QR guardado en Descargas: $path';
+                                              l10n.profileEditQrSavedDownloads(
+                                                  path);
                                           dialogError = null;
                                         });
                                       } else {
@@ -1333,30 +1372,33 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                           filePrefix: 'nutrifit_2fa_qr',
                                           useDownloads: false,
                                         );
-                                        await Share.shareXFiles(
-                                          [XFile(path)],
-                                          text: 'QR 2FA de NutriFit',
-                                        );
+                                        await Share.shareXFiles([
+                                          XFile(path),
+                                        ], text: 'QR 2FA de NutriFit');
                                         if (!dialogContext.mounted) return;
                                         setDialogState(() {
                                           dialogNotice =
-                                              'Se abrió el menú para compartir o guardar el QR.';
+                                              l10n.profileEditQrShared;
                                           dialogError = null;
                                         });
                                       }
                                     } catch (e) {
                                       if (!dialogContext.mounted) return;
                                       setDialogState(() {
-                                        dialogError = e
-                                            .toString()
-                                            .replaceFirst('Exception: ', '');
+                                        dialogError = e.toString().replaceFirst(
+                                              'Exception: ',
+                                              '',
+                                            );
                                       });
                                     }
                                   },
-                                  icon: const Icon(Icons.share_outlined,
-                                      size: 16),
-                                  label:
-                                      const Text('Compartir / Guardar en...'),
+                                  icon: const Icon(
+                                    Icons.share_outlined,
+                                    size: 16,
+                                  ),
+                                  label: const Text(
+                                    'Compartir / Guardar en...',
+                                  ),
                                 ),
                                 if (otpauthUrl.isNotEmpty)
                                   OutlinedButton.icon(
@@ -1366,13 +1408,14 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                       );
                                       if (!dialogContext.mounted) return;
                                       setDialogState(() {
-                                        dialogNotice = 'URL otpauth copiada';
+                                        dialogNotice =
+                                            l10n.profileEditOtpUrlCopied;
                                         dialogError = null;
                                         showOtpauthInfo = true;
                                       });
                                     },
                                     icon: const Icon(Icons.link, size: 16),
-                                    label: const Text('Copiar URL'),
+                                    label: Text(l10n.profileEditCopyUrl),
                                   ),
                               ],
                             ),
@@ -1388,8 +1431,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                     color: Colors.blueGrey.shade200,
                                   ),
                                 ),
-                                child: const Text(
-                                  'La opción "Copiar URL" copia un enlace otpauth con toda la configuración 2FA para importarla en apps compatibles. Si tu app no permite importación por enlace, usa "Copiar" en la clave.',
+                                child: Text(
+                                  l10n.profileEditOtpUrlInfo,
                                   style: TextStyle(fontSize: 13),
                                 ),
                               ),
@@ -1399,14 +1442,11 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Icon(
-                                Icons.looks_3,
-                                color: Colors.teal.shade700,
-                              ),
+                              Icon(Icons.looks_3, color: Colors.teal.shade700),
                               const SizedBox(width: 8),
-                              const Expanded(
+                              Expanded(
                                 child: Text(
-                                  'Introduce el código de 6 dígitos que te aparecerá en la app de autenticación para confirmar.',
+                                  l10n.profileEditTwoFactorConfirmCodeInstruction,
                                 ),
                               ),
                             ],
@@ -1420,7 +1460,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                               FilteringTextInputFormatter.digitsOnly,
                             ],
                             decoration: InputDecoration(
-                              labelText: 'Código 2FA',
+                              labelText: l10n.loginTwoFactorCodeLabel,
                               border: const OutlineInputBorder(),
                               counterText: '',
                               errorText: dialogError,
@@ -1473,20 +1513,20 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('Cancelar'),
+                  child: Text(l10n.commonCancel),
                 ),
                 ElevatedButton(
                   onPressed: () {
                     final value = codeController.text.trim();
                     if (value.length != 6) {
                       setDialogState(() {
-                        dialogError = 'El código debe tener 6 dígitos.';
+                        dialogError = l10n.loginCodeMustHave6Digits;
                       });
                       return;
                     }
                     Navigator.pop(dialogContext, value);
                   },
-                  child: const Text('Activar'),
+                  child: Text(l10n.profileEditActivateTwoFactorAction),
                 ),
               ],
             ),
@@ -1507,8 +1547,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Doble factor activado correctamente'),
+          SnackBar(
+            content: Text(l10n.profileEditTwoFactorActivated),
             backgroundColor: Colors.green,
           ),
         );
@@ -1520,7 +1560,9 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            errorMessage.isEmpty ? 'No se pudo activar 2FA.' : errorMessage,
+            errorMessage.isEmpty
+                ? l10n.profileEditTwoFactorActivateFailed
+                : errorMessage,
           ),
           backgroundColor: Colors.red,
         ),
@@ -1538,12 +1580,13 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
     required String qrData,
     required String filePrefix,
   }) async {
+    final l10n = AppLocalizations.of(context)!;
     final safeData = qrData.trim();
     if (safeData.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No hay datos para guardar el QR.'),
+        SnackBar(
+          content: Text(l10n.profileEditNoQrData),
           backgroundColor: Colors.orange,
         ),
       );
@@ -1587,7 +1630,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('QR guardado en: $filePath'),
+          content: Text(l10n.profileEditQrSavedPath(filePath)),
           backgroundColor: Colors.green,
           duration: const Duration(seconds: 4),
         ),
@@ -1596,7 +1639,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('No se pudo guardar el QR: $e'),
+          content: Text(l10n.profileEditQrSaveFailed('$e')),
           backgroundColor: Colors.red,
         ),
       );
@@ -1604,18 +1647,19 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   }
 
   Future<void> _desactivarTwoFactor() async {
+    final l10n = AppLocalizations.of(context)!;
     final codeController = TextEditingController();
     final code = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Desactivar doble factor (2FA)'),
+        title: Text(l10n.profileEditDeactivateTwoFactorTitle),
         content: TextField(
           controller: codeController,
           keyboardType: TextInputType.number,
           maxLength: 6,
           inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          decoration: const InputDecoration(
-            labelText: 'Código actual de 6 dígitos',
+          decoration: InputDecoration(
+            labelText: l10n.profileEditCurrentCodeSixDigitsLabel,
             border: OutlineInputBorder(),
             counterText: '',
           ),
@@ -1623,22 +1667,22 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
+            child: Text(l10n.commonCancel),
           ),
           ElevatedButton(
             onPressed: () {
               final value = codeController.text.trim();
               if (value.length != 6) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('El código debe tener 6 dígitos.'),
+                  SnackBar(
+                    content: Text(l10n.loginCodeMustHave6Digits),
                   ),
                 );
                 return;
               }
               Navigator.pop(context, value);
             },
-            child: const Text('Desactivar'),
+            child: Text(l10n.profileEditDeactivateTwoFactorAction),
           ),
         ],
       ),
@@ -1658,8 +1702,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
       await _apiService.disableTwoFactor(code: code);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Doble factor desactivado correctamente'),
+        SnackBar(
+          content: Text(l10n.profileEditTwoFactorDeactivated),
           backgroundColor: Colors.green,
         ),
       );
@@ -1670,7 +1714,9 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            errorMessage.isEmpty ? 'No se pudo desactivar 2FA.' : errorMessage,
+            errorMessage.isEmpty
+                ? l10n.profileEditTwoFactorDeactivateFailed
+                : errorMessage,
           ),
           backgroundColor: Colors.red,
         ),
@@ -1684,21 +1730,22 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   }
 
   Future<void> _quitarConfianzaDispositivo() async {
+    final l10n = AppLocalizations.of(context)!;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Quitar confianza del dispositivo'),
-        content: const Text(
-          'En este dispositivo se volverá a solicitar el código 2FA en el próximo inicio de sesión. ¿Deseas continuar?',
+        title: Text(l10n.profileEditRemoveTrustedDeviceTitle),
+        content: Text(
+          l10n.profileEditRemoveTrustedDeviceBody,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancelar'),
+            child: Text(l10n.commonCancel),
           ),
           ElevatedButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Quitar confianza'),
+            child: Text(l10n.profileEditRemoveTrustedDeviceActionShort),
           ),
         ],
       ),
@@ -1712,8 +1759,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
       await context.read<AuthService>().clearTrustedDeviceForCurrentUser();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Confianza del dispositivo eliminada.'),
+        SnackBar(
+          content: Text(l10n.profileEditTrustedDeviceRemoved),
           backgroundColor: Colors.green,
         ),
       );
@@ -1721,7 +1768,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('No se pudo quitar la confianza del dispositivo: $e'),
+          content: Text(l10n.profileEditTrustedDeviceRemoveFailed('$e')),
           backgroundColor: Colors.red,
         ),
       );
@@ -1729,10 +1776,11 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   }
 
   Future<void> _showMvpInfoDialog() async {
+    final l10n = AppLocalizations.of(context)!;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Cálculo MVP y fórmulas'),
+        title: Text(l10n.profileEditMvpDialogTitle),
         content: SizedBox(
           width: 560,
           child: SingleChildScrollView(
@@ -1740,30 +1788,28 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text(
-                  '¿Qué es el MVP?',
+                Text(
+                  l10n.profileEditMvpWhatIsTitle,
                   style: TextStyle(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 6),
-                const Text(
-                  'MVP es un conjunto mínimo de indicadores antropométricos para ayudarte a monitorizar de forma sencilla tu evolución de salud: IMC, cintura/altura y cintura/cadera.',
+                Text(
+                  l10n.profileEditMvpWhatIsBody,
                 ),
                 const SizedBox(height: 10),
-                const Text(
-                  'Fórmulas utilizadas y su origen:',
+                Text(
+                  l10n.profileEditMvpFormulasTitle,
                   style: TextStyle(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 10),
                 const Text('1) IMC = peso (kg) / altura (m)²'),
-                const Text('Origen: OMS (clasificación IMC en adultos).'),
+                Text(l10n.profileEditMvpOriginBmi),
                 const SizedBox(height: 10),
                 const Text('2) Cintura/Altura = cintura (cm) / altura (cm)'),
-                const Text('Origen: índice Waist-to-Height Ratio.'),
+                Text(l10n.profileEditMvpOriginWhtr),
                 const SizedBox(height: 10),
                 const Text('3) Cintura/Cadera = cintura (cm) / cadera (cm)'),
-                const Text(
-                  'Origen: Waist-Hip Ratio (OMS, obesidad abdominal).',
-                ),
+                Text(l10n.profileEditMvpOriginWhr),
                 const SizedBox(height: 12),
                 Container(
                   width: double.infinity,
@@ -1786,7 +1832,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(
-                              'Aviso importante',
+                              l10n.profileEditImportantNotice,
                               style: TextStyle(
                                 fontWeight: FontWeight.w700,
                                 color: Colors.orange.shade900,
@@ -1796,8 +1842,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                         ],
                       ),
                       const SizedBox(height: 6),
-                      const Text(
-                        'Estos cálculos y clasificaciones son orientativos. Para una valoración personalizada, consulta siempre con un profesional médico, dietista-nutricionista o entrenador personal.',
+                      Text(
+                        l10n.profileEditMvpImportantNoticeBody,
                         style: TextStyle(fontSize: 12),
                       ),
                       const SizedBox(height: 8),
@@ -2290,65 +2336,17 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
     }
   }
 
-  Future<bool> _confirmLopdDeletionStep2() async {
-    String confirmationText = '';
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Confirmación final'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Para confirmar, escribe ELIMINAR en mayúsculas:'),
-            const SizedBox(height: 10),
-            TextField(
-              autofocus: true,
-              onChanged: (value) {
-                confirmationText = value;
-              },
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                hintText: 'ELIMINAR',
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () {
-              final valid = confirmationText.trim() == 'ELIMINAR';
-              if (!valid) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Debes escribir ELIMINAR para confirmar.'),
-                    backgroundColor: Colors.orange,
-                  ),
-                );
-                return;
-              }
-              Navigator.of(dialogContext).pop(true);
-            },
-            child: const Text('Eliminar mis datos'),
-          ),
-        ],
-      ),
-    );
-    return result == true;
-  }
-
   Future<void> _showDeleteUserWindow() async {
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) {
+        final l10n = AppLocalizations.of(dialogContext)!;
         return AlertDialog(
-          title: const Text('Eliminación de usuario'),
+          title: Text(
+            l10n.privacyDeleteDialogTitle,
+            style: Theme.of(dialogContext).textTheme.titleMedium,
+          ),
           content: SizedBox(
             width: 560,
             child: Column(
@@ -2376,7 +2374,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Puedes solicitar la eliminación de tus datos personales conforme al derecho de supresión (art. 17 RGPD y LOPDGDD en España).',
+                              l10n.privacyDeleteDialogIntro,
                               style: TextStyle(
                                 color: Colors.red.shade900,
                                 fontSize: 13,
@@ -2384,7 +2382,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'Si continúas, se eliminarán tu usuario y todos los datos asociados: inicios de sesión, chats con el dietista, control de peso, lista de la compra, actividades, tareas, entrenamientos, ejercicios e imágenes.',
+                              l10n.privacyDeleteDialogBody,
                               style: TextStyle(
                                 color: Colors.red.shade900,
                                 fontSize: 13,
@@ -2393,7 +2391,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'Esta acción es irreversible y cerrará tu sesión.',
+                              l10n.privacyDeleteDialogWarning,
                               style: TextStyle(
                                 color: Colors.red.shade900,
                                 fontSize: 13,
@@ -2419,7 +2417,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                       await _deleteMyAccountLopd();
                     },
                     icon: const Icon(Icons.delete_forever),
-                    label: const Text('Eliminar todos mis datos'),
+                    label: Text(l10n.privacyDeleteMyData),
                   ),
                 ),
               ],
@@ -2428,7 +2426,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cerrar'),
+              child: Text(l10n.commonCancel),
             ),
           ],
         );
@@ -2437,7 +2435,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
   }
 
   Future<void> _deleteMyAccountLopd() async {
-    final confirmedStep2 = await _confirmLopdDeletionStep2();
+    final confirmedStep2 = await showTypedDeleteAccountConfirmation(context);
     if (!confirmedStep2 || !mounted) {
       return;
     }
@@ -2640,6 +2638,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
     if (_isLoading) {
       return Scaffold(
         appBar: AppBar(
@@ -2647,7 +2647,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
             icon: const Icon(Icons.arrow_back),
             onPressed: () => Navigator.of(context).pop(),
           ),
-          title: const Text('Editar Perfil'),
+          title: Text(l10n.navEditProfile),
         ),
         body: const Center(child: CircularProgressIndicator()),
       );
@@ -2665,10 +2665,11 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
 
   /// Construye la pantalla de edición para usuarios registrados
   Widget _buildEditScreen() {
+    final l10n = AppLocalizations.of(context)!;
     final bottomSafeInset = MediaQuery.of(context).padding.bottom;
     final hasEmail = _emailController.text.trim().isNotEmpty;
     final isVerifiedEmail = hasEmail && _emailVerified;
-    final isPremium = context.read<AuthService>().isPremium;
+    final hasActivePremium = _hasActivePremiumBadge();
 
     return WillPopScope(
       onWillPop: _confirmDiscardChanges,
@@ -2678,7 +2679,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
             icon: const Icon(Icons.arrow_back),
             onPressed: _handleBack,
           ),
-          title: const Text('Editar Perfil'),
+          title: Text(l10n.navEditProfile),
           actions: [
             IconButton(icon: const Icon(Icons.save), onPressed: _submitForm),
           ],
@@ -2687,10 +2688,10 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
           length: 2,
           child: Column(
             children: [
-              const TabBar(
+              TabBar(
                 tabs: [
-                  Tab(text: 'Perfil'),
-                  Tab(text: 'Inicios de sesión'),
+                  Tab(text: l10n.profileEditProfileTab),
+                  Tab(text: l10n.profileEditSessionsTab),
                 ],
               ),
               Expanded(
@@ -2709,7 +2710,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            if (isPremium) ...[
+                            if (hasActivePremium) ...[
                               Container(
                                 width: double.infinity,
                                 padding: const EdgeInsets.symmetric(
@@ -2736,14 +2737,14 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                             CrossAxisAlignment.start,
                                         children: [
                                           Text(
-                                            'Cuenta Premium',
+                                            l10n.profileEditPremiumBadgeTitle,
                                             style: TextStyle(
                                               fontWeight: FontWeight.w800,
                                               color: Colors.amber.shade900,
                                             ),
                                           ),
                                           Text(
-                                            'Tienes acceso a funciones exclusivas como Vídeos Ejercicios.',
+                                            l10n.profileEditPremiumBadgeBody,
                                             style: TextStyle(
                                               fontSize: 12,
                                               color: Colors.amber.shade900,
@@ -2769,48 +2770,81 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                     ),
                                   ),
                                 ),
-                                if (_twoFactorEnabled)
-                                  Material(
-                                    color: Colors.transparent,
-                                    child: InkWell(
-                                      borderRadius: BorderRadius.circular(12),
-                                      onTap: _showTwoFactorWindow,
-                                      child: Container(
-                                        margin: const EdgeInsets.only(top: 6),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 14,
-                                          vertical: 10,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.green.shade50,
-                                          borderRadius:
-                                              BorderRadius.circular(12),
-                                          border: Border.all(
-                                            color: Colors.green.shade300,
-                                          ),
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(
-                                              Icons.verified,
-                                              size: 22,
-                                              color: Colors.green.shade700,
-                                            ),
-                                            const SizedBox(width: 8),
-                                            Text(
-                                              '2FA',
-                                              style: TextStyle(
-                                                color: Colors.green.shade800,
-                                                fontWeight: FontWeight.w800,
-                                                fontSize: 18,
+                                const SizedBox(width: 16),
+                                SizedBox(
+                                  width: 220,
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      if (_twoFactorEnabled)
+                                        Material(
+                                          color: Colors.transparent,
+                                          child: InkWell(
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                            onTap: _showTwoFactorWindow,
+                                            child: Container(
+                                              margin:
+                                                  const EdgeInsets.only(top: 6),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 14,
+                                                vertical: 10,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: Colors.green.shade50,
+                                                borderRadius:
+                                                    BorderRadius.circular(12),
+                                                border: Border.all(
+                                                  color: Colors.green.shade300,
+                                                ),
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(
+                                                    Icons.verified,
+                                                    size: 22,
+                                                    color:
+                                                        Colors.green.shade700,
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  Text(
+                                                    '2FA',
+                                                    style: TextStyle(
+                                                      color:
+                                                          Colors.green.shade800,
+                                                      fontWeight:
+                                                          FontWeight.w800,
+                                                      fontSize: 18,
+                                                    ),
+                                                  ),
+                                                ],
                                               ),
                                             ),
-                                          ],
+                                          ),
                                         ),
+                                      if (_twoFactorEnabled)
+                                        const SizedBox(height: 10),
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            Icons.language,
+                                            size: 18,
+                                            color: Colors.grey.shade700,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          const Expanded(
+                                            child: AppLanguageDropdown(
+                                              compact: true,
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                    ),
+                                    ],
                                   ),
+                                ),
                               ],
                             ),
                             const SizedBox(height: 24),
@@ -2818,13 +2852,13 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                             // Nick
                             TextFormField(
                               controller: _nickController,
-                              decoration: const InputDecoration(
-                                labelText: 'Nick / Usuario',
+                              decoration: InputDecoration(
+                                labelText: l10n.profileEditNickLabel,
                                 border: OutlineInputBorder(),
                               ),
                               validator: (value) =>
                                   (value == null || value.isEmpty)
-                                      ? 'El nick es obligatorio'
+                                      ? l10n.profileEditNickRequired
                                       : null,
                               onSaved: (value) => _nick = value!,
                             ),
@@ -2843,13 +2877,13 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                       _validateEmailInRealTime();
                                     },
                                     decoration: InputDecoration(
-                                      labelText: 'Email',
+                                      labelText: l10n.profileEditEmailLabel,
                                       border: const OutlineInputBorder(),
                                       errorText: _emailFormatError ??
                                           (!_checkingEmailAvailability &&
                                                   _emailAvailabilityError !=
                                                       null
-                                              ? 'El email introducido no es válido, indique otro'
+                                              ? l10n.profileEditEmailInUse
                                               : null),
                                       suffixIcon: isVerifiedEmail
                                           ? Icon(
@@ -2862,10 +2896,10 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                       final v = (value ?? '').trim();
                                       if (v.isEmpty) return null;
                                       if (!_isValidEmailFormat(v)) {
-                                        return 'Email no válido';
+                                        return l10n.profileEditInvalidEmail;
                                       }
                                       if (_emailAvailabilityError != null) {
-                                        return 'El email introducido no es válido, indique otro';
+                                        return l10n.profileEditEmailInUse;
                                       }
                                       return null;
                                     },
@@ -2874,15 +2908,15 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                 if (isVerifiedEmail) ...[
                                   const SizedBox(width: 8),
                                   Tooltip(
-                                    message:
-                                        'Cambiar cuenta de correo electrónico',
+                                    message: l10n.profileEditChangeEmailTooltip,
                                     child: SizedBox(
                                       height: 56,
                                       width: 56,
                                       child: OutlinedButton(
                                         onPressed: _showChangeEmailDialog,
-                                        child:
-                                            const Icon(Icons.alternate_email),
+                                        child: const Icon(
+                                          Icons.alternate_email,
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -2906,15 +2940,16 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                                   .trim()
                                                   .isNotEmpty &&
                                               _isValidEmailFormat(
-                                                  _emailController.text
-                                                      .trim()) &&
+                                                _emailController.text.trim(),
+                                              ) &&
                                               _emailAvailabilityError == null)
                                           ? _showEmailVerificationWindow
                                           : null,
                                       icon: const Icon(
                                         Icons.mark_email_read_outlined,
                                       ),
-                                      label: const Text('Verificar email'),
+                                      label:
+                                          Text(l10n.profileEditVerifyEmailCta),
                                     ),
                                   ),
                                 if (!_emailVerified && !_twoFactorEnabled)
@@ -2924,7 +2959,9 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                     child: OutlinedButton.icon(
                                       onPressed: _showTwoFactorWindow,
                                       icon: const Icon(Icons.security_outlined),
-                                      label: const Text('Doble factor'),
+                                      label: Text(
+                                        l10n.profileEditTwoFactorShortLabel,
+                                      ),
                                     ),
                                   ),
                               ],
@@ -2940,9 +2977,9 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                               },
                               title: Row(
                                 children: [
-                                  const Expanded(
+                                  Expanded(
                                     child: Text(
-                                      'Datos para IMC',
+                                      l10n.profileEditBmiCardTitle,
                                       style: TextStyle(
                                         fontSize: 16,
                                         fontWeight: FontWeight.w600,
@@ -2950,7 +2987,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                     ),
                                   ),
                                   IconButton(
-                                    tooltip: 'Información MVP/IMC',
+                                    tooltip: l10n.profileEditBmiInfoTooltip,
                                     onPressed: _showMvpInfoDialog,
                                     icon: const Icon(Icons.info_outline),
                                   ),
@@ -2979,7 +3016,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                         const SizedBox(width: 10),
                                         Expanded(
                                           child: Text(
-                                            'Para obtener el IMC, MVP y recomendaciones, completa Edad y Altura.',
+                                            l10n.profileEditBmiCardBody,
                                             style: TextStyle(
                                               color: Colors.orange.shade900,
                                               fontSize: 13,
@@ -2994,8 +3031,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                   TextFormField(
                                     controller: _edadController,
                                     keyboardType: TextInputType.number,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Edad',
+                                    decoration: InputDecoration(
+                                      labelText: l10n.profileEditAgeLabel,
                                       border: OutlineInputBorder(),
                                     ),
                                     validator: (value) {
@@ -3008,7 +3045,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                       if (parsed == null ||
                                           parsed <= 0 ||
                                           parsed > 120) {
-                                        return 'Edad no válida';
+                                        return l10n.profileEditInvalidAge;
                                       }
                                       return null;
                                     },
@@ -3017,8 +3054,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                   TextFormField(
                                     controller: _alturaController,
                                     keyboardType: TextInputType.number,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Altura (cm)',
+                                    decoration: InputDecoration(
+                                      labelText: l10n.profileEditHeightLabel,
                                       border: OutlineInputBorder(),
                                     ),
                                     validator: (value) {
@@ -3031,7 +3068,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                       if (parsed == null ||
                                           parsed < 80 ||
                                           parsed > 250) {
-                                        return 'Altura no válida';
+                                        return l10n.profileEditInvalidHeight;
                                       }
                                       return null;
                                     },
@@ -3049,8 +3086,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                       !_passwordCardExpanded;
                                 });
                               },
-                              title: const Text(
-                                'Cambio de contraseña',
+                              title: Text(
+                                l10n.profileEditPasswordCardTitle,
                                 style: TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.w600,
@@ -3060,7 +3097,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    'Dejar en blanco para no cambiar',
+                                    l10n.profileEditPasswordHint,
                                     style: TextStyle(
                                       fontSize: 12,
                                       color: Colors.grey.shade600,
@@ -3069,8 +3106,8 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                   const SizedBox(height: 8),
                                   TextFormField(
                                     obscureText: true,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Contraseña',
+                                    decoration: InputDecoration(
+                                      labelText: l10n.profileEditPasswordLabel,
                                       border: OutlineInputBorder(),
                                     ),
                                     validator: (value) {
@@ -3102,18 +3139,21 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                   if (_newPassword.isNotEmpty)
                                     TextFormField(
                                       obscureText: true,
-                                      decoration: const InputDecoration(
-                                        labelText: 'Confirmar Contraseña',
+                                      decoration: InputDecoration(
+                                        labelText: l10n
+                                            .profileEditPasswordConfirmLabel,
                                         border: OutlineInputBorder(),
                                       ),
                                       validator: (value) {
                                         if (_newPassword.isNotEmpty &&
                                             (value == null || value.isEmpty)) {
-                                          return 'Debes confirmar la contraseña';
+                                          return l10n
+                                              .profileEditPasswordConfirmRequired;
                                         }
                                         if (value != null &&
                                             value != _newPassword) {
-                                          return 'Las contraseñas no coinciden';
+                                          return l10n
+                                              .profileEditPasswordMismatch;
                                         }
                                         return null;
                                       },
@@ -3132,7 +3172,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                               width: double.infinity,
                               child: ElevatedButton(
                                 onPressed: _submitForm,
-                                child: const Text('Guardar Cambios'),
+                                child: Text(l10n.profileEditSaveChanges),
                               ),
                             ),
                             const SizedBox(height: 16),
@@ -3145,7 +3185,7 @@ class _PacienteProfileEditScreenState extends State<PacienteProfileEditScreen> {
                                 ),
                                 onPressed: _showDeleteUserWindow,
                                 icon: const Icon(Icons.delete_forever),
-                                label: const Text('Eliminar todos mis datos'),
+                                label: Text(l10n.profileEditDeleteMyData),
                               ),
                             ),
                           ],
@@ -3232,11 +3272,12 @@ class _ChangeEmailDialogState extends State<_ChangeEmailDialog> {
   }
 
   void _validateInline() {
+    final l10n = AppLocalizations.of(context)!;
     final value = _emailController.text.trim();
 
     if (value.isEmpty) {
       setState(() {
-        _errorText = 'Debes indicar un email.';
+        _errorText = l10n.profileEditChangeEmailRequired;
         _checkingAvailability = false;
         _emailAvailable = false;
         _availabilityCheckedEmail = '';
@@ -3246,7 +3287,7 @@ class _ChangeEmailDialogState extends State<_ChangeEmailDialog> {
 
     if (!widget.isValidEmailFormat(value)) {
       setState(() {
-        _errorText = 'Email no válido.';
+        _errorText = l10n.profileEditInvalidEmail;
         _checkingAvailability = false;
         _emailAvailable = false;
         _availabilityCheckedEmail = '';
@@ -3256,7 +3297,7 @@ class _ChangeEmailDialogState extends State<_ChangeEmailDialog> {
 
     if (value.toLowerCase() == _currentEmailNormalized) {
       setState(() {
-        _errorText = 'Debes indicar un email distinto al actual.';
+        _errorText = l10n.profileEditChangeEmailMustDiffer;
         _checkingAvailability = false;
         _emailAvailable = false;
         _availabilityCheckedEmail = '';
@@ -3268,6 +3309,7 @@ class _ChangeEmailDialogState extends State<_ChangeEmailDialog> {
   }
 
   Future<void> _checkEmailAvailability(String email) async {
+    final l10n = AppLocalizations.of(context)!;
     final normalized = email.trim().toLowerCase();
     final token = ++_validationToken;
 
@@ -3286,9 +3328,7 @@ class _ChangeEmailDialogState extends State<_ChangeEmailDialog> {
         _checkingAvailability = false;
         _availabilityCheckedEmail = normalized;
         _emailAvailable = !exists;
-        _errorText = exists
-            ? 'Esta cuenta de email no puede usarse, indique otra'
-            : null;
+        _errorText = exists ? l10n.profileEditEmailInUse : null;
       });
     } catch (_) {
       if (!mounted || token != _validationToken) return;
@@ -3296,12 +3336,13 @@ class _ChangeEmailDialogState extends State<_ChangeEmailDialog> {
         _checkingAvailability = false;
         _availabilityCheckedEmail = '';
         _emailAvailable = false;
-        _errorText = 'No se pudo validar el email. Inténtalo de nuevo.';
+        _errorText = l10n.profileEditChangeEmailValidationFailed;
       });
     }
   }
 
   Future<void> _submit() async {
+    final l10n = AppLocalizations.of(context)!;
     _validateInline();
 
     final value = _emailController.text.trim();
@@ -3317,7 +3358,7 @@ class _ChangeEmailDialogState extends State<_ChangeEmailDialog> {
 
     if (!_canAccept()) {
       setState(() {
-        _errorText ??= 'Revisa el email indicado.';
+        _errorText ??= l10n.profileEditChangeEmailReview;
       });
       return;
     }
@@ -3328,8 +3369,10 @@ class _ChangeEmailDialogState extends State<_ChangeEmailDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
     return AlertDialog(
-      title: const Text('Cambiar email'),
+      title: Text(l10n.profileEditChangeEmailTitle),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3351,10 +3394,10 @@ class _ChangeEmailDialogState extends State<_ChangeEmailDialog> {
                     color: Colors.orange.shade800,
                   ),
                   const SizedBox(width: 10),
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'El email actual está verificado, si lo cambias, tendrás que volver a verificarlo.',
-                      style: TextStyle(fontSize: 13),
+                      l10n.profileEditChangeEmailVerifiedWarning,
+                      style: const TextStyle(fontSize: 13),
                     ),
                   ),
                 ],
@@ -3367,7 +3410,7 @@ class _ChangeEmailDialogState extends State<_ChangeEmailDialog> {
             keyboardType: TextInputType.emailAddress,
             autofocus: true,
             decoration: InputDecoration(
-              labelText: 'Nuevo email',
+              labelText: l10n.profileEditChangeEmailNewLabel,
               border: const OutlineInputBorder(),
               errorText: _errorText,
               suffixIcon: _checkingAvailability
@@ -3396,11 +3439,11 @@ class _ChangeEmailDialogState extends State<_ChangeEmailDialog> {
             FocusScope.of(context).unfocus();
             Navigator.of(context).pop();
           },
-          child: const Text('Cancelar'),
+          child: Text(l10n.commonCancel),
         ),
         ElevatedButton(
           onPressed: _canAccept() ? _submit : null,
-          child: const Text('Aceptar'),
+          child: Text(l10n.profileEditAccept),
         ),
       ],
     );
@@ -3451,9 +3494,10 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
   }
 
   Widget _buildSessionInfo(SessionLog sesion) {
+    final l10n = AppLocalizations.of(context)!;
     final fechaFormato = sesion.fecha;
-    final horaFormato = sesion.hora ?? 'N/A';
-    final tipoDispositivo = sesion.tipo ?? 'N/A';
+    final horaFormato = sesion.hora ?? l10n.profileEditNotAvailable;
+    final tipoDispositivo = sesion.tipo ?? l10n.profileEditNotAvailable;
     final ipPublica = sesion.ipPublica ?? '-';
 
     return Column(
@@ -3463,7 +3507,10 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
           children: [
             const Icon(Icons.calendar_today, size: 18),
             const SizedBox(width: 8),
-            Text('Fecha: $fechaFormato', style: const TextStyle(fontSize: 14)),
+            Text(
+              '${l10n.profileEditSessionDate}: $fechaFormato',
+              style: const TextStyle(fontSize: 14),
+            ),
           ],
         ),
         const SizedBox(height: 8),
@@ -3471,7 +3518,10 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
           children: [
             const Icon(Icons.access_time, size: 18),
             const SizedBox(width: 8),
-            Text('Hora: $horaFormato', style: const TextStyle(fontSize: 14)),
+            Text(
+              '${l10n.profileEditSessionTime}: $horaFormato',
+              style: const TextStyle(fontSize: 14),
+            ),
           ],
         ),
         const SizedBox(height: 8),
@@ -3480,15 +3530,15 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
             Icon(_getDeviceIcon(sesion.tipo), size: 18),
             const SizedBox(width: 8),
             Text(
-              'Dispositivo: $tipoDispositivo',
+              '${l10n.profileEditSessionDevice}: $tipoDispositivo',
               style: const TextStyle(fontSize: 14),
             ),
           ],
         ),
         const SizedBox(height: 12),
         const Divider(height: 16),
-        const Text(
-          'Dirección IP:',
+        Text(
+          l10n.profileEditSessionIp,
           style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
         ),
         const SizedBox(height: 8),
@@ -3500,7 +3550,7 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Pública: $ipPublica',
+                  '${l10n.profileEditSessionPublicIp}: $ipPublica',
                   style: const TextStyle(fontSize: 13),
                 ),
               ),
@@ -3513,11 +3563,12 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final authService = context.read<AuthService>();
     final usuarioCode = authService.userCode;
 
     if (usuarioCode == null || usuarioCode.isEmpty) {
-      return const Center(child: Text('Código de usuario no disponible'));
+      return Center(child: Text(l10n.profileEditUserCodeUnavailable));
     }
 
     return RefreshIndicator(
@@ -3541,11 +3592,14 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text('Error: ${snapshot.error}'),
+                    Text(
+                      l10n.profileEditSessionDataUnavailable,
+                      textAlign: TextAlign.center,
+                    ),
                     const SizedBox(height: 16),
                     ElevatedButton.icon(
                       icon: const Icon(Icons.refresh),
-                      label: const Text('Reintentar'),
+                      label: Text(l10n.profileEditRetry),
                       onPressed: () {
                         setState(() {
                           _loadSessionData();
@@ -3559,9 +3613,7 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
           }
 
           if (!snapshot.hasData) {
-            return const Center(
-              child: Text('No hay datos de sesión disponibles'),
-            );
+            return Center(child: Text(l10n.profileEditNoSessionData));
           }
 
           final sessionData = snapshot.data!;
@@ -3578,13 +3630,13 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Row(
+                      Row(
                         children: [
-                          Icon(Icons.security, color: Colors.green),
-                          SizedBox(width: 8),
+                          const Icon(Icons.security, color: Colors.green),
+                          const SizedBox(width: 8),
                           Text(
-                            'Últimos Inicios de Sesión Exitosos',
-                            style: TextStyle(
+                            l10n.profileEditSuccessfulSessionsTitle,
+                            style: const TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
                             ),
@@ -3598,7 +3650,9 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
                             i++) ...[
                           if (i > 0) const Divider(height: 24),
                           Text(
-                            i == 0 ? 'Sesión actual:' : 'Sesión anterior:',
+                            i == 0
+                                ? l10n.profileEditCurrentSession
+                                : l10n.profileEditPreviousSession,
                             style: const TextStyle(
                               fontWeight: FontWeight.w600,
                               fontSize: 13,
@@ -3609,9 +3663,11 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
                           _buildSessionInfo(ultimasSesionesExitosas[i]),
                         ],
                       ] else
-                        const Padding(
+                        Padding(
                           padding: EdgeInsets.all(8),
-                          child: Text('No hay sesiones exitosas registradas'),
+                          child: Text(
+                            l10n.profileEditNoSuccessfulSessions,
+                          ),
                         ),
                     ],
                   ),
@@ -3627,13 +3683,13 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Row(
+                        Row(
                           children: [
-                            Icon(Icons.warning, color: Colors.red),
-                            SizedBox(width: 8),
+                            const Icon(Icons.warning, color: Colors.red),
+                            const SizedBox(width: 8),
                             Text(
-                              'Últimos Intentos de Acceso Fallidos',
-                              style: TextStyle(
+                              l10n.profileEditFailedAttemptsTitle,
+                              style: const TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.red,
@@ -3647,7 +3703,7 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
                             i++) ...[
                           if (i > 0) const Divider(height: 24),
                           Text(
-                            'Intento ${i + 1}:',
+                            l10n.profileEditAttemptLabel(i + 1),
                             style: const TextStyle(
                               fontWeight: FontWeight.w600,
                               fontSize: 13,
@@ -3675,10 +3731,10 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
                           size: 24,
                         ),
                         const SizedBox(width: 12),
-                        const Expanded(
+                        Expanded(
                           child: Text(
-                            'No hay intentos fallidos registrados.',
-                            style: TextStyle(
+                            l10n.profileEditNoFailedAttempts,
+                            style: const TextStyle(
                               color: Colors.green,
                               fontWeight: FontWeight.w600,
                             ),
@@ -3697,8 +3753,8 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Estadísticas de Sesiones',
+                      Text(
+                        l10n.profileEditSessionStatsTitle,
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 13,
@@ -3714,7 +3770,9 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            'Total de sesiones: ${sessionData.totalSesiones}',
+                            l10n.profileEditTotalSessions(
+                              sessionData.totalSesiones,
+                            ),
                             style: const TextStyle(fontSize: 12),
                           ),
                         ],
@@ -3729,7 +3787,9 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            'Intentos exitosos: ${sessionData.totalExitosas}',
+                            l10n.profileEditSuccessfulAttempts(
+                              sessionData.totalExitosas,
+                            ),
                             style: const TextStyle(fontSize: 12),
                           ),
                         ],
@@ -3740,7 +3800,9 @@ class _UserSessionsTabState extends State<_UserSessionsTab> {
                           const Icon(Icons.error, size: 16, color: Colors.red),
                           const SizedBox(width: 8),
                           Text(
-                            'Intentos fallidos: ${sessionData.totalFallidas}',
+                            l10n.profileEditFailedAttempts(
+                              sessionData.totalFallidas,
+                            ),
                             style: const TextStyle(fontSize: 12),
                           ),
                         ],

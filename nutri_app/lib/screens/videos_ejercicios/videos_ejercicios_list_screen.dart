@@ -191,6 +191,79 @@ class _VideosEjerciciosListScreenState
     return ruta;
   }
 
+  Widget _buildMetaTag({
+    IconData? icon,
+    required String text,
+    required Color backgroundColor,
+    required Color foregroundColor,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 12, color: foregroundColor),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            text,
+            style: TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+              color: foregroundColor,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVideoListMeta(VideoEjercicio video) {
+    final descripcionLength = (video.descripcion ?? '').trim().length;
+    final descBackground =
+        descripcionLength > 0 ? Colors.green.shade50 : Colors.grey.shade200;
+    final descForeground =
+        descripcionLength > 0 ? Colors.green.shade800 : Colors.grey.shade700;
+
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      children: [
+        _buildMetaTag(
+          text: video.esYoutube ? 'YOUTUBE' : 'LOCAL',
+          backgroundColor: Colors.blue.shade50,
+          foregroundColor: Colors.blue.shade800,
+        ),
+        _buildMetaTag(
+          icon: Icons.favorite,
+          text: '${video.totalLikes}',
+          backgroundColor: Colors.red.shade50,
+          foregroundColor: Colors.red.shade700,
+        ),
+        _buildMetaTag(
+          icon: Icons.notes_rounded,
+          text: '$descripcionLength',
+          backgroundColor: descBackground,
+          foregroundColor: descForeground,
+        ),
+        _buildMetaTag(
+          icon: video.visible == 'S' ? Icons.visibility : Icons.visibility_off,
+          text: video.visible == 'S' ? 'VISIBLE' : 'OCULTO',
+          backgroundColor:
+              video.visible == 'S' ? Colors.teal.shade50 : Colors.grey.shade200,
+          foregroundColor: video.visible == 'S'
+              ? Colors.teal.shade800
+              : Colors.grey.shade700,
+        ),
+      ],
+    );
+  }
+
   Widget _buildHashtagText(String texto, {TextStyle? baseStyle}) {
     final spans = <InlineSpan>[];
     final regex = RegExp(r'#[\wáéíóúÁÉÍÓÚñÑüÜ]+', caseSensitive: false);
@@ -1691,12 +1764,7 @@ class _VideosEjerciciosListScreenState
                                 title: Text(v.titulo,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis),
-                                subtitle: Text(
-                                  '${v.tipoMedia.toUpperCase()} · '
-                                  '${v.visible == "S" ? "Visible" : "Oculto"} · '
-                                  'Likes: ${v.totalLikes}',
-                                  style: const TextStyle(fontSize: 12),
-                                ),
+                                subtitle: _buildVideoListMeta(v),
                                 trailing: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [

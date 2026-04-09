@@ -114,6 +114,8 @@ function handle_post_request() {
         move_usuario_data($data);
     } elseif ($action === 'premium_audit_log') {
         get_usuario_premium_audit_log($data);
+    } elseif ($action === 'notify_premium_activation_email') {
+        notify_premium_activation_email($data);
     } else {
         create_usuario($data);
     }
@@ -122,8 +124,16 @@ function handle_post_request() {
 function get_usuarios() {
     global $db;
     $columns = get_usuario_columns_map_usuarios($db);
+    $notDeletedCondition = build_not_deleted_condition_usuarios($db);
+    $includeDeleted = isset($_GET['include_deleted']) && $_GET['include_deleted'] === '1';
 
     $select = "codigo, nick, nombre, email, tipo, activo, accesoweb, administrador, codigo_paciente, edad, altura, img_perfil";
+    if (isset($columns['eliminado'])) {
+        $select .= ", eliminado";
+    }
+    if (isset($columns['fecha_eliminacion'])) {
+        $select .= ", fecha_eliminacion";
+    }
     if (isset($columns['premium_periodo_meses'])) {
         $select .= ", premium_periodo_meses";
     }
@@ -148,9 +158,16 @@ function get_usuarios() {
     if (isset($columns['premium_fecha_solicitud'])) {
         $select .= ", premium_fecha_solicitud";
     }
+    if (isset($columns['email_verificado'])) {
+        $select .= ", email_verificado";
+    }
 
     // Incluir img_perfil para que se muestre en el listado
-    $query = "SELECT $select FROM usuario ORDER BY nombre";
+    $query = "SELECT $select FROM usuario";
+    if (!$includeDeleted) {
+        $query .= " WHERE $notDeletedCondition";
+    }
+    $query .= " ORDER BY nombre";
     $stmt = $db->prepare($query);
     $stmt->execute();
     $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -167,7 +184,8 @@ function get_usuarios() {
 
 function get_total_usuarios() {
     global $db;
-    $query = "SELECT COUNT(*) as total FROM usuario";
+    $notDeletedCondition = build_not_deleted_condition_usuarios($db);
+    $query = "SELECT COUNT(*) as total FROM usuario WHERE $notDeletedCondition";
     $stmt = $db->prepare($query);
     $stmt->execute();
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -178,8 +196,16 @@ function get_total_usuarios() {
 function get_usuario($codigo) {
     global $db;
     $columns = get_usuario_columns_map_usuarios($db);
+    $notDeletedCondition = build_not_deleted_condition_usuarios($db);
+    $includeDeleted = isset($_GET['include_deleted']) && $_GET['include_deleted'] === '1';
 
     $select = "codigo, nick, nombre, email, tipo, activo, administrador, codigo_paciente, accesoweb, edad, altura, img_perfil";
+    if (isset($columns['eliminado'])) {
+        $select .= ", eliminado";
+    }
+    if (isset($columns['fecha_eliminacion'])) {
+        $select .= ", fecha_eliminacion";
+    }
     if (isset($columns['premium_periodo_meses'])) {
         $select .= ", premium_periodo_meses";
     }
@@ -204,8 +230,15 @@ function get_usuario($codigo) {
     if (isset($columns['premium_fecha_solicitud'])) {
         $select .= ", premium_fecha_solicitud";
     }
+    if (isset($columns['email_verificado'])) {
+        $select .= ", email_verificado";
+    }
 
-    $query = "SELECT $select FROM usuario WHERE codigo = :codigo LIMIT 0,1";
+    $query = "SELECT $select FROM usuario WHERE codigo = :codigo";
+    if (!$includeDeleted) {
+        $query .= " AND $notDeletedCondition";
+    }
+    $query .= " LIMIT 0,1";
     $stmt = $db->prepare($query);
     $stmt->bindParam(':codigo', $codigo);
     $stmt->execute();
@@ -339,6 +372,181 @@ function get_parametro_valor_usuarios($db, $nombre) {
     return (string)($row['valor'] ?? '');
 }
 
+function apply_template_variables_usuarios($template, $variables) {
+    $result = (string)$template;
+    foreach ($variables as $key => $value) {
+        $result = str_replace('{' . $key . '}', (string)$value, $result);
+    }
+    return $result;
+}
+
+function smtp_encryption_key_usuarios() {
+    $env = trim((string)getenv('SMTP_ENCRYPTION_KEY'));
+    if ($env !== '') {
+        return hash('sha256', $env, true);
+    }
+
+    // Compatibilidad con claves SMTP ya guardadas desde account_recovery.php.
+    $accountRecoveryPath = realpath(__DIR__ . DIRECTORY_SEPARATOR . 'account_recovery.php');
+    if ($accountRecoveryPath === false || $accountRecoveryPath === '') {
+        $accountRecoveryPath = __DIR__ . DIRECTORY_SEPARATOR . 'account_recovery.php';
+    }
+
+    $fallback = $accountRecoveryPath . '|nutrifit-smtp-v1';
+    return hash('sha256', $fallback, true);
+}
+
+function smtp_effective_encryption_key_usuarios($passphrase = null) {
+    $passphrase = trim((string)$passphrase);
+    $base_key = smtp_encryption_key_usuarios();
+    if ($passphrase === '') {
+        return $base_key;
+    }
+    return hash('sha256', $base_key . '|' . $passphrase, true);
+}
+
+function decrypt_secret_value_usuarios($encoded_text, $passphrase = null) {
+    $encoded_text = (string)$encoded_text;
+    if ($encoded_text === '') {
+        return '';
+    }
+
+    if (strpos($encoded_text, 'ENC1:') !== 0) {
+        return $encoded_text;
+    }
+
+    if (!function_exists('openssl_decrypt')) {
+        return '';
+    }
+
+    $payload = base64_decode(substr($encoded_text, 5), true);
+    if ($payload === false || strlen($payload) <= 16) {
+        return '';
+    }
+
+    $iv = substr($payload, 0, 16);
+    $cipher = substr($payload, 16);
+    $plain = openssl_decrypt($cipher, 'AES-256-CBC', smtp_effective_encryption_key_usuarios($passphrase), OPENSSL_RAW_DATA, $iv);
+    if ($plain === false) {
+        return '';
+    }
+
+    return $plain;
+}
+
+function load_smtp_settings_usuarios($db) {
+    $host = trim((string)get_parametro_valor_usuarios($db, 'servidor_smtp'));
+    $port_raw = trim((string)get_parametro_valor_usuarios($db, 'puerto_smtp'));
+    $user = trim((string)get_parametro_valor_usuarios($db, 'usuario_smtp'));
+    $pass_encrypted = (string)get_parametro_valor_usuarios($db, 'contrasena_smtp');
+    $port = intval($port_raw);
+    if ($port <= 0) {
+        $port = 587;
+    }
+
+    return array(
+        'host' => $host,
+        'port' => $port,
+        'user' => $user,
+        'pass' => decrypt_secret_value_usuarios($pass_encrypted),
+    );
+}
+
+function smtp_read_response_usuarios($fp) {
+    $response = '';
+    while (($line = fgets($fp, 515)) !== false) {
+        $response .= $line;
+        if (strlen($line) < 4) {
+            break;
+        }
+        if ($line[3] === ' ') {
+            break;
+        }
+    }
+    return $response;
+}
+
+function smtp_expect_code_usuarios($response, $allowed_codes) {
+    $code = intval(substr($response, 0, 3));
+    return in_array($code, $allowed_codes, true);
+}
+
+function smtp_write_command_usuarios($fp, $command, $allowed_codes) {
+    fwrite($fp, $command . "\r\n");
+    $response = smtp_read_response_usuarios($fp);
+    if (!smtp_expect_code_usuarios($response, $allowed_codes)) {
+        throw new Exception('SMTP comando fallido: ' . trim($response));
+    }
+    return $response;
+}
+
+function smtp_send_mail_usuarios($smtp, $to_email, $subject, $body_text) {
+    $host = (string)($smtp['host'] ?? '');
+    $port = intval($smtp['port'] ?? 0);
+    $user = (string)($smtp['user'] ?? '');
+    $pass = (string)($smtp['pass'] ?? '');
+
+    if ($host === '' || $port <= 0 || $user === '' || $pass === '') {
+        throw new Exception('Configuracion SMTP incompleta.');
+    }
+
+    $transport_host = $host;
+    if ($port === 465) {
+        $transport_host = 'ssl://' . $host;
+    }
+
+    $fp = @fsockopen($transport_host, $port, $errno, $errstr, 15);
+    if (!$fp) {
+        throw new Exception('No se pudo conectar al servidor SMTP.');
+    }
+
+    try {
+        stream_set_timeout($fp, 20);
+
+        $banner = smtp_read_response_usuarios($fp);
+        if (!smtp_expect_code_usuarios($banner, array(220))) {
+            throw new Exception('SMTP no disponible.');
+        }
+
+        smtp_write_command_usuarios($fp, 'EHLO nutrifit.local', array(250));
+
+        if ($port !== 465) {
+            $tls_resp = smtp_write_command_usuarios($fp, 'STARTTLS', array(220));
+            if (!smtp_expect_code_usuarios($tls_resp, array(220))) {
+                throw new Exception('No se pudo iniciar TLS SMTP.');
+            }
+            if (!stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+                throw new Exception('No se pudo activar cifrado TLS SMTP.');
+            }
+            smtp_write_command_usuarios($fp, 'EHLO nutrifit.local', array(250));
+        }
+
+        smtp_write_command_usuarios($fp, 'AUTH LOGIN', array(334));
+        smtp_write_command_usuarios($fp, base64_encode($user), array(334));
+        smtp_write_command_usuarios($fp, base64_encode($pass), array(235));
+
+        smtp_write_command_usuarios($fp, 'MAIL FROM:<' . $user . '>', array(250));
+        smtp_write_command_usuarios($fp, 'RCPT TO:<' . $to_email . '>', array(250, 251));
+        smtp_write_command_usuarios($fp, 'DATA', array(354));
+
+        $safe_subject = '=?UTF-8?B?' . base64_encode($subject) . '?=';
+        $headers = array(
+            'From: NutriFit <' . $user . '>',
+            'To: <' . $to_email . '>',
+            'Subject: ' . $safe_subject,
+            'MIME-Version: 1.0',
+            'Content-Type: text/plain; charset=UTF-8',
+            'Content-Transfer-Encoding: 8bit',
+        );
+
+        $message = implode("\r\n", $headers) . "\r\n\r\n" . $body_text . "\r\n.";
+        smtp_write_command_usuarios($fp, $message, array(250));
+        smtp_write_command_usuarios($fp, 'QUIT', array(221));
+    } finally {
+        fclose($fp);
+    }
+}
+
 function parse_param_bool_usuarios($value, $default = false) {
     if ($value === null) {
         return $default;
@@ -371,6 +579,25 @@ function get_usuario_columns_map_usuarios($db) {
     }
 
     return $cache;
+}
+
+function has_soft_delete_columns_usuarios($db) {
+    $columns = get_usuario_columns_map_usuarios($db);
+    return isset($columns['eliminado']) && isset($columns['fecha_eliminacion']);
+}
+
+function build_not_deleted_condition_usuarios($db, $alias = '') {
+    $columns = get_usuario_columns_map_usuarios($db);
+    if (!isset($columns['eliminado'])) {
+        return '1=1';
+    }
+
+    $prefix = trim((string)$alias);
+    if ($prefix !== '') {
+        $prefix = rtrim($prefix, '.') . '.';
+    }
+
+    return "COALESCE({$prefix}eliminado, 'N') <> 'S'";
 }
 
 function get_table_columns_map_usuarios($db, $tableName) {
@@ -621,6 +848,112 @@ function log_usuario_premium_auditoria_usuarios($db, $codigo_usuario_objetivo, $
     }
 }
 
+function notify_premium_activation_email($data) {
+    global $db;
+
+    $codigo_usuario = intval($data->codigo_usuario ?? 0);
+    if ($codigo_usuario <= 0) {
+        http_response_code(400);
+        echo json_encode(array('message' => 'Código de usuario inválido.'));
+        return;
+    }
+
+    $periodo_meses = normalize_premium_period_usuarios($data->periodo_meses ?? null);
+    if ($periodo_meses === null) {
+        http_response_code(400);
+        echo json_encode(array('message' => 'Período Premium inválido.'));
+        return;
+    }
+
+    $premium_desde = normalize_iso_date_usuarios($data->premium_desde_fecha ?? null);
+    $premium_hasta = normalize_iso_date_usuarios($data->premium_hasta_fecha ?? null);
+    if ($premium_desde === null || $premium_hasta === null) {
+        http_response_code(400);
+        echo json_encode(array('message' => 'Fechas Premium inválidas.'));
+        return;
+    }
+
+    $notDeletedCondition = build_not_deleted_condition_usuarios($db);
+    $stmt = $db->prepare("SELECT codigo, nick, nombre, email FROM usuario WHERE codigo = :codigo AND $notDeletedCondition LIMIT 1");
+    $stmt->bindParam(':codigo', $codigo_usuario, PDO::PARAM_INT);
+    $stmt->execute();
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$row) {
+        http_response_code(404);
+        echo json_encode(array('message' => 'Usuario no encontrado.'));
+        return;
+    }
+
+    $email = trim((string)($row['email'] ?? ''));
+    if ($email === '') {
+        http_response_code(400);
+        echo json_encode(array('message' => 'El usuario no tiene email informado.'));
+        return;
+    }
+
+    $nick = trim((string)($row['nick'] ?? ''));
+    $nombre = trim((string)($row['nombre'] ?? ''));
+    $display_name = $nombre !== '' ? $nombre : ($nick !== '' ? $nick : ('usuario #' . $codigo_usuario));
+    $periodo_label = $periodo_meses === 1 ? '1 mes' : ($periodo_meses . ' meses');
+    $desde_texto = date('d/m/Y', strtotime($premium_desde));
+    $hasta_texto = date('d/m/Y', strtotime($premium_hasta));
+
+    $variables = array(
+        'codigo_usuario' => strval($codigo_usuario),
+        'nick_usuario' => ($nick !== '' ? $nick : '-'),
+        'nombre_usuario' => $display_name,
+        'email_usuario' => $email,
+        'periodo_meses' => strval($periodo_meses),
+        'periodo_label' => $periodo_label,
+        'premium_desde' => $desde_texto,
+        'premium_hasta' => $hasta_texto,
+    );
+
+    $subject_template = trim((string)get_parametro_valor_usuarios($db, 'premium_activacion_email_asunto'));
+    if ($subject_template === '') {
+        $subject_template = 'NutriFit - Tu cuenta Premium ha sido activada';
+    }
+
+    $body_template = trim((string)get_parametro_valor_usuarios($db, 'premium_activacion_email_plantilla'));
+    if ($body_template === '') {
+        $body_template =
+            "Hola {nombre_usuario},\n\n" .
+            "Tu cuenta Premium de NutriFit ha sido activada correctamente.\n" .
+            "Periodo activado: {premium_desde} a {premium_hasta} ({periodo_label}).\n\n" .
+            "Gracias por confiar en NutriFit.";
+    }
+
+    try {
+        $smtp = load_smtp_settings_usuarios($db);
+        $subject = apply_template_variables_usuarios($subject_template, $variables);
+        $body = apply_template_variables_usuarios($body_template, $variables);
+        smtp_send_mail_usuarios($smtp, $email, $subject, $body);
+
+        $actor_codigo = intval(($GLOBALS['authenticated_user']['codigo'] ?? 0));
+        log_usuario_premium_auditoria_usuarios(
+            $db,
+            $codigo_usuario,
+            'notificacion_activacion_premium_email',
+            'Se envió email de activación Premium al usuario.',
+            $actor_codigo,
+            $periodo_meses,
+            null,
+            $premium_desde,
+            $premium_hasta
+        );
+
+        echo json_encode(array('message' => 'Email de activación Premium enviado al usuario.'));
+    } catch (Throwable $e) {
+        http_response_code(500);
+        $detail = trim((string)$e->getMessage());
+        if ($detail === '') {
+            $detail = 'Error desconocido al enviar correo.';
+        }
+        echo json_encode(array('message' => 'No se pudo enviar el email de activación Premium: ' . $detail));
+    }
+}
+
 function get_password_policy_usuarios($db) {
     $min_length_raw = get_parametro_valor_usuarios($db, 'complejidad_contraseña_longitud_minima');
     $min_length = intval($min_length_raw);
@@ -677,7 +1010,8 @@ function check_nick_exists($data) {
         return;
     }
     
-    $query = "SELECT COUNT(*) as count FROM usuario WHERE nick = :nick";
+    $notDeletedCondition = build_not_deleted_condition_usuarios($db);
+    $query = "SELECT COUNT(*) as count FROM usuario WHERE nick = :nick AND $notDeletedCondition";
     $stmt = $db->prepare($query);
     $nick = htmlspecialchars(strip_tags($data->nick));
     $stmt->bindParam(':nick', $nick);
@@ -701,7 +1035,8 @@ function check_email_exists($data) {
 
     $exclude_codigo = isset($data->exclude_codigo) ? intval($data->exclude_codigo) : 0;
 
-    $query = "SELECT COUNT(*) as count FROM usuario WHERE LOWER(email) = LOWER(:email)";
+    $notDeletedCondition = build_not_deleted_condition_usuarios($db);
+    $query = "SELECT COUNT(*) as count FROM usuario WHERE LOWER(email) = LOWER(:email) AND $notDeletedCondition";
     if ($exclude_codigo > 0) {
         $query .= " AND codigo <> :exclude_codigo";
     }
@@ -751,7 +1086,8 @@ function register_usuario($data) {
     }
     
     // Verificar si el nick ya existe
-    $check_query = "SELECT COUNT(*) as count FROM usuario WHERE nick = :nick";
+    $notDeletedCondition = build_not_deleted_condition_usuarios($db);
+    $check_query = "SELECT COUNT(*) as count FROM usuario WHERE nick = :nick AND $notDeletedCondition";
     $check_stmt = $db->prepare($check_query);
     $nick = htmlspecialchars(strip_tags($data->nick));
     $check_stmt->bindParam(':nick', $nick);
@@ -948,7 +1284,7 @@ function create_usuario($data = null) {
         }
         
         http_response_code(201);
-        $response = array("message" => "Usuario creado.");
+        $response = array("message" => "Usuario creado.", "codigo" => intval($nuevo_codigo));
         if (!empty($sync_result)) {
             $response["consejos_actualizados"] = $sync_result['consejos'] ?? 0;
             $response["recetas_actualizadas"] = $sync_result['recetas'] ?? 0;
@@ -1036,10 +1372,18 @@ function update_usuario() {
         $currentSelect .= ', premium_fecha_solicitud';
     }
 
-    $stmtCurrent = $db->prepare("SELECT $currentSelect FROM usuario WHERE codigo = :codigo LIMIT 1");
+    $notDeletedCondition = build_not_deleted_condition_usuarios($db);
+    $stmtCurrent = $db->prepare("SELECT $currentSelect FROM usuario WHERE codigo = :codigo AND $notDeletedCondition LIMIT 1");
     $stmtCurrent->bindParam(':codigo', $data->codigo, PDO::PARAM_INT);
     $stmtCurrent->execute();
     $currentUserRow = $stmtCurrent->fetch(PDO::FETCH_ASSOC) ?: array();
+    if (empty($currentUserRow)) {
+        http_response_code(404);
+        echo json_encode(array(
+            "message" => "Usuario no encontrado."
+        ));
+        return;
+    }
     
     // Verificar si el usuario está actualizando su propio perfil o el de otro
     $authenticated_user = $GLOBALS['authenticated_user'] ?? null;
@@ -1249,7 +1593,7 @@ function update_usuario() {
         }
         
         http_response_code(200);
-        $response = array("message" => "Usuario actualizado.");
+        $response = array("message" => "Usuario actualizado.", "codigo" => intval($data->codigo));
         if (!empty($sync_result)) {
             $response["consejos_actualizados"] = $sync_result['consejos'] ?? 0;
             $response["recetas_actualizadas"] = $sync_result['recetas'] ?? 0;
@@ -1359,8 +1703,9 @@ function table_exists_usuarios($db, $table_name) {
 
 function get_usuario_delete_context($codigo_usuario) {
     global $db;
+    $notDeletedCondition = build_not_deleted_condition_usuarios($db);
 
-    $stmt = $db->prepare("SELECT codigo, nick, nombre, activo, codigo_paciente FROM usuario WHERE codigo = :codigo LIMIT 1");
+    $stmt = $db->prepare("SELECT codigo, nick, nombre, activo, codigo_paciente FROM usuario WHERE codigo = :codigo AND $notDeletedCondition LIMIT 1");
     $stmt->bindParam(':codigo', $codigo_usuario, PDO::PARAM_INT);
     $stmt->execute();
     $usuario = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -1530,10 +1875,12 @@ function build_usuario_dependencies($codigo_usuario, $codigo_paciente) {
 
 function get_available_transfer_users($codigo_origen) {
     global $db;
+        $notDeletedCondition = build_not_deleted_condition_usuarios($db);
     $query = "SELECT codigo, nick, nombre
               FROM usuario
               WHERE codigo <> :codigo_origen
                 AND activo = 'S'
+                                AND $notDeletedCondition
                 AND (codigo_paciente IS NULL OR codigo_paciente = 0)
               ORDER BY nombre, nick";
     $stmt = $db->prepare($query);
@@ -1881,8 +2228,154 @@ function delete_self_with_details($data = null) {
         return;
     }
 
-    // Permite autoeliminación del propio usuario con borrado completo de datos asociados.
-    execute_usuario_delete_with_details($codigoAuth, true);
+    execute_usuario_soft_delete($codigoAuth);
+}
+
+function execute_usuario_soft_delete($codigo) {
+    global $db;
+
+    if ($codigo === 1) {
+        http_response_code(403);
+        echo json_encode(array("message" => "No se puede eliminar al usuario administrador principal."));
+        return;
+    }
+
+    if (!has_soft_delete_columns_usuarios($db)) {
+        http_response_code(409);
+        echo json_encode(array(
+            'message' => 'La base de datos no está actualizada para eliminación lógica. Faltan las columnas eliminado y/o fecha_eliminacion.',
+            'code' => 'MISSING_SOFT_DELETE_COLUMNS',
+        ));
+        return;
+    }
+
+    $notDeletedCondition = build_not_deleted_condition_usuarios($db);
+    $columns = get_usuario_columns_map_usuarios($db);
+
+    try {
+        $db->beginTransaction();
+
+        $selectOriginal = "SELECT codigo, nick, email FROM usuario WHERE codigo = :codigo AND $notDeletedCondition LIMIT 1 FOR UPDATE";
+        $stmtOriginal = $db->prepare($selectOriginal);
+        $stmtOriginal->bindParam(':codigo', $codigo, PDO::PARAM_INT);
+        $stmtOriginal->execute();
+        $originalUser = $stmtOriginal->fetch(PDO::FETCH_ASSOC);
+        if (!$originalUser) {
+            throw new Exception('No se encontró el usuario o ya estaba eliminado.');
+        }
+
+        $renamedNick = build_deleted_nick_usuarios($db, (string)($originalUser['nick'] ?? ''), $codigo);
+        $renamedEmail = build_deleted_email_usuarios($db, (string)($originalUser['email'] ?? ''), $codigo);
+
+        $setParts = array(
+            "eliminado = 'S'",
+            "fecha_eliminacion = NOW()",
+            "nick = :nick_eliminado",
+        );
+
+        if (isset($columns['email'])) {
+            $setParts[] = "email = :email_eliminado";
+        }
+
+        if (isset($columns['activo'])) {
+            $setParts[] = "activo = 'N'";
+        }
+        if (isset($columns['accesoweb'])) {
+            $setParts[] = "accesoweb = 'N'";
+        }
+        if (isset($columns['token'])) {
+            $setParts[] = "token = NULL";
+        }
+        if (isset($columns['token_expiracion'])) {
+            $setParts[] = "token_expiracion = NULL";
+        }
+        if (isset($columns['codigo_recuperacion_password'])) {
+            $setParts[] = "codigo_recuperacion_password = NULL";
+        }
+        if (isset($columns['codigo_recuperacion_password_expira'])) {
+            $setParts[] = "codigo_recuperacion_password_expira = NULL";
+        }
+        if (isset($columns['codigo_verificacion_email'])) {
+            $setParts[] = "codigo_verificacion_email = NULL";
+        }
+        if (isset($columns['codigo_verificacion_email_expira'])) {
+            $setParts[] = "codigo_verificacion_email_expira = NULL";
+        }
+
+        $query = "UPDATE usuario SET " . implode(', ', $setParts) . " WHERE codigo = :codigo AND $notDeletedCondition";
+        $stmt = $db->prepare($query);
+        $stmt->bindValue(':nick_eliminado', $renamedNick, PDO::PARAM_STR);
+        if (isset($columns['email'])) {
+            $stmt->bindValue(':email_eliminado', $renamedEmail, PDO::PARAM_STR);
+        }
+        $stmt->bindParam(':codigo', $codigo, PDO::PARAM_INT);
+        $stmt->execute();
+
+        if ($stmt->rowCount() <= 0) {
+            throw new Exception('No se encontró el usuario o ya estaba eliminado.');
+        }
+
+        $db->commit();
+
+        http_response_code(200);
+        echo json_encode(array(
+            'message' => 'Usuario eliminado correctamente.',
+            'soft_deleted' => true,
+        ));
+    } catch (Throwable $e) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        http_response_code(500);
+        echo json_encode(array('message' => 'Error al eliminar el usuario.', 'error' => $e->getMessage()));
+    }
+}
+
+function usuario_nick_exists_any_state($db, $nick) {
+    $stmt = $db->prepare("SELECT COUNT(*) as count FROM usuario WHERE nick = :nick");
+    $stmt->bindParam(':nick', $nick, PDO::PARAM_STR);
+    $stmt->execute();
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    return intval($row['count'] ?? 0) > 0;
+}
+
+function usuario_email_exists_any_state($db, $email) {
+    if (trim((string)$email) === '') {
+        return false;
+    }
+    $stmt = $db->prepare("SELECT COUNT(*) as count FROM usuario WHERE email = :email");
+    $stmt->bindParam(':email', $email, PDO::PARAM_STR);
+    $stmt->execute();
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    return intval($row['count'] ?? 0) > 0;
+}
+
+function build_deleted_nick_usuarios($db, $originalNick, $codigo) {
+    $baseNick = trim((string)$originalNick);
+    if ($baseNick === '') {
+        $baseNick = 'usuario_' . intval($codigo);
+    }
+
+    $candidate = $baseNick . '[[eliminado]]';
+    if (!usuario_nick_exists_any_state($db, $candidate)) {
+        return $candidate;
+    }
+
+    return $baseNick . '_' . intval($codigo) . '[[eliminado]]';
+}
+
+function build_deleted_email_usuarios($db, $originalEmail, $codigo) {
+    $baseEmail = trim((string)$originalEmail);
+    if ($baseEmail === '') {
+        return 'usuario_' . intval($codigo) . '[eliminado]';
+    }
+
+    $candidate = $baseEmail . '[eliminado]';
+    if (!usuario_email_exists_any_state($db, $candidate)) {
+        return $candidate;
+    }
+
+    return $baseEmail . '_' . intval($codigo) . '[eliminado]';
 }
 
 function delete_usuario() {

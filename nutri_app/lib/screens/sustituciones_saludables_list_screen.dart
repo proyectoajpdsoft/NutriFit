@@ -2291,12 +2291,6 @@ class _SustitucionCategoriasManagerDialogState
           ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: _loading ? null : () => Navigator.pop(context),
-          child: const Text('Cerrar'),
-        ),
-      ],
     );
   }
 }

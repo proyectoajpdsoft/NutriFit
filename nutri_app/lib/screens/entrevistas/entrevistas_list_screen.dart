@@ -337,11 +337,9 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
   }
 
   void _navigateToEditScreen([Entrevista? entrevista]) async {
-    // Si no hay paciente, necesitamos cargarlo
     Paciente? pacienteToUse = widget.paciente;
 
     if (pacienteToUse == null && entrevista != null) {
-      // Cargar el paciente de la entrevista
       try {
         final pacientes = await _apiService.getPacientes();
         pacienteToUse = pacientes.firstWhere(
@@ -361,24 +359,13 @@ class _EntrevistasListScreenState extends State<EntrevistasListScreen> {
       }
     }
 
-    // Solo navegar si hay paciente (para nueva entrevista) o si es edición con paciente cargado
-    if (pacienteToUse == null && entrevista == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Seleccione un paciente para crear una entrevista'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    if (pacienteToUse != null && mounted) {
+    if (mounted) {
       Navigator.of(context)
           .push(
             MaterialPageRoute(
               builder: (context) => EntrevistaEditScreen(
                 entrevista: entrevista,
-                paciente: pacienteToUse!,
+                paciente: pacienteToUse,
               ),
             ),
           )

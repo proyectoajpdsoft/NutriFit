@@ -7,6 +7,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:intl/intl.dart';
 import 'package:nutri_app/models/entrenamiento_ejercicio.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/entrenamiento_stats_pdf_service.dart';
@@ -19,10 +20,8 @@ import '../models/entrenamiento.dart';
 class EntrenamientoStatsChart extends StatefulWidget {
   final List<Entrenamiento> entrenamientos;
 
-  const EntrenamientoStatsChart({
-    Key? key,
-    required this.entrenamientos,
-  }) : super(key: key);
+  const EntrenamientoStatsChart({Key? key, required this.entrenamientos})
+      : super(key: key);
 
   @override
   State<EntrenamientoStatsChart> createState() =>
@@ -43,8 +42,17 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
   bool _showMinutos = true;
   bool _showPeso = true;
   bool _isExporting = false;
+  bool _summaryExpanded = true;
   final Map<int, double> _pesoEntrenamientoKg = <int, double>{};
   final Map<int, int> _ejerciciosEntrenamiento = <int, int>{};
+
+  static const Color _actividadesColor = Colors.blue;
+  static const Color _kilometrosColor = Colors.green;
+  static const Color _subidaColor = Colors.brown;
+  static const Color _minutosColor = Colors.orange;
+  static const Color _pesoColor = Colors.purple;
+
+  String get _localeName => Localizations.localeOf(context).toString();
 
   @override
   void initState() {
@@ -140,9 +148,9 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
   }
 
   Map<String, dynamic> _procesarDatos() {
-    final entrenamientosFiltrados =
-        List<Entrenamiento>.from(widget.entrenamientos)
-          ..sort((a, b) => a.fecha.compareTo(b.fecha));
+    final entrenamientosFiltrados = List<Entrenamiento>.from(
+      widget.entrenamientos,
+    )..sort((a, b) => a.fecha.compareTo(b.fecha));
 
     int intervaloAgrupacion = 7;
     if (entrenamientosFiltrados.length >= 2) {
@@ -204,10 +212,7 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
     final datos = datosAcumulados.values.toList();
     datos.sort((a, b) => a.fecha.compareTo(b.fecha));
 
-    return {
-      'datos': datos,
-      'intervalo': intervaloAgrupacion,
-    };
+    return {'datos': datos, 'intervalo': intervaloAgrupacion};
   }
 
   String _getFechaKey(DateTime date, int intervalo) {
@@ -236,7 +241,7 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
         'Sep',
         'Oct',
         'Nov',
-        'Dic'
+        'Dic',
       ];
       return meses[fecha.month - 1];
     }
@@ -249,6 +254,7 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
     final datosMap = _procesarDatos();
     final datos = (datosMap['datos'] as List<ChartData>);
     final intervaloAgrupacion = (datosMap['intervalo'] as int?) ?? 7;
+    final selectedPeriodLabel = _buildSelectedPeriodLabel();
 
     if (datos.isEmpty) {
       return Center(
@@ -257,10 +263,7 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text(
-                '📊',
-                style: TextStyle(fontSize: 64),
-              ),
+              const Text('📊', style: TextStyle(fontSize: 64)),
               const SizedBox(height: 16),
               Text(
                 'Sin datos para mostrar',
@@ -270,9 +273,9 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
               Text(
                 'No hay actividades en el periodo seleccionado',
                 textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.grey,
-                    ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: Colors.grey),
               ),
             ],
           ),
@@ -285,6 +288,23 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.blueGrey.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.blueGrey.shade100),
+            ),
+            child: Text(
+              selectedPeriodLabel,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.blueGrey.shade800,
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+          ),
+          const SizedBox(height: 12),
           // Grafica
           GestureDetector(
             onLongPress: () =>
@@ -305,7 +325,7 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
                         children: [
                           Expanded(
                             child: Text(
-                              'Estadisticas del periodo',
+                              'Estadísticas del período',
                               style: Theme.of(context)
                                   .textTheme
                                   .titleMedium
@@ -320,8 +340,8 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
                             )
                           else
                             IconButton(
-                              tooltip: 'Opciones de grafica',
-                              icon: const Icon(Icons.more_horiz, size: 20),
+                              tooltip: 'Opciones de gráfica',
+                              icon: const Icon(Icons.more_vert, size: 20),
                               onPressed: () => _showGraphOptionsMenu(
                                 datos,
                                 intervaloAgrupacion,
@@ -338,27 +358,27 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
                           children: [
                             if (_showActividades)
                               _buildLegendaItem(
-                                color: Colors.blue,
+                                color: _actividadesColor,
                                 label: 'Actividades',
                               ),
                             if (_showKilometros)
                               _buildLegendaItem(
-                                color: Colors.green,
+                                color: _kilometrosColor,
                                 label: 'Km',
                               ),
                             if (_showDesnivel)
                               _buildLegendaItem(
-                                color: Colors.brown,
+                                color: _subidaColor,
                                 label: 'Subida',
                               ),
                             if (_showMinutos)
                               _buildLegendaItem(
-                                color: Colors.orange,
+                                color: _minutosColor,
                                 label: 'Minutos',
                               ),
                             if (_showPeso)
                               _buildLegendaItem(
-                                color: Colors.purple,
+                                color: _pesoColor,
                                 label: 'Peso',
                               ),
                           ],
@@ -394,16 +414,10 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
         Container(
           width: 12,
           height: 12,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-          ),
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
         const SizedBox(width: 6),
-        Text(
-          label,
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
+        Text(label, style: Theme.of(context).textTheme.bodySmall),
       ],
     );
   }
@@ -412,6 +426,7 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
     List<ChartData> datos,
     int intervaloAgrupacion,
   ) {
+    final temporalAxisConfig = _buildTemporalAxisConfig(datos);
     final maxActividades = _showActividades
         ? datos.map((d) => d.actividades).reduce((a, b) => a > b ? a : b)
         : 0;
@@ -446,16 +461,10 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
         horizontalInterval: null,
         verticalInterval: null,
         getDrawingHorizontalLine: (value) {
-          return FlLine(
-            color: Colors.grey[300],
-            strokeWidth: 1,
-          );
+          return FlLine(color: Colors.grey[300], strokeWidth: 1);
         },
         getDrawingVerticalLine: (value) {
-          return FlLine(
-            color: Colors.grey[300],
-            strokeWidth: 1,
-          );
+          return FlLine(color: Colors.grey[300], strokeWidth: 1);
         },
       ),
       titlesData: FlTitlesData(
@@ -463,25 +472,30 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
         rightTitles: const AxisTitles(
           sideTitles: SideTitles(showTitles: false),
         ),
-        topTitles: const AxisTitles(
-          sideTitles: SideTitles(showTitles: false),
-        ),
+        topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
         bottomTitles: AxisTitles(
           sideTitles: SideTitles(
             showTitles: true,
-            reservedSize: 40,
-            interval:
-                datos.length > 10 ? (datos.length / 6).ceil().toDouble() : 1,
+            reservedSize: temporalAxisConfig.reservedSize,
+            interval: 1,
             getTitlesWidget: (value, meta) {
               final index = value.toInt();
               if (index < 0 || index >= datos.length) {
-                return const Text('');
+                return const SizedBox.shrink();
               }
-              return Padding(
-                padding: const EdgeInsets.only(top: 8),
+              if (!_shouldShowBottomLabel(index, datos, temporalAxisConfig)) {
+                return const SizedBox.shrink();
+              }
+              return SideTitleWidget(
+                meta: meta,
+                space: 8,
                 child: Text(
-                  _formatFecha(datos[index].fecha, intervaloAgrupacion),
-                  style: const TextStyle(fontSize: 9),
+                  _formatBottomAxisLabel(
+                    datos[index].fecha,
+                    intervaloAgrupacion,
+                    temporalAxisConfig,
+                  ),
+                  style: const TextStyle(fontSize: 9, height: 1.1),
                   textAlign: TextAlign.center,
                 ),
               );
@@ -505,26 +519,23 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
       borderData: FlBorderData(
         show: true,
         border: Border(
-          bottom: BorderSide(
-            color: Colors.grey[400]!,
-            width: 1,
-          ),
-          left: BorderSide(
-            color: Colors.grey[400]!,
-            width: 1,
-          ),
-          right: const BorderSide(
-            color: Colors.transparent,
-          ),
-          top: const BorderSide(
-            color: Colors.transparent,
-          ),
+          bottom: BorderSide(color: Colors.grey[400]!, width: 1),
+          left: BorderSide(color: Colors.grey[400]!, width: 1),
+          right: const BorderSide(color: Colors.transparent),
+          top: const BorderSide(color: Colors.transparent),
         ),
       ),
       minX: 0,
       maxX: (datos.length - 1).toDouble(),
       minY: 0,
       maxY: yMax,
+      lineTouchData: LineTouchData(
+        touchTooltipData: LineTouchTooltipData(
+          fitInsideHorizontally: true,
+          fitInsideVertically: true,
+          getTooltipItems: _buildTooltipItems,
+        ),
+      ),
       lineBarsData: [
         // Línea de actividades (azul)
         if (_showActividades)
@@ -532,10 +543,10 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
             spots: datos
                 .asMap()
                 .entries
-                .map((e) => FlSpot(
-                      e.key.toDouble(),
-                      e.value.actividades.toDouble(),
-                    ))
+                .map(
+                  (e) =>
+                      FlSpot(e.key.toDouble(), e.value.actividades.toDouble()),
+                )
                 .toList(),
             isCurved: true,
             gradient: LinearGradient(
@@ -569,9 +580,7 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
             barWidth: 3,
             isStrokeCapRound: true,
             dotData: const FlDotData(show: true),
-            belowBarData: BarAreaData(
-              show: false,
-            ),
+            belowBarData: BarAreaData(show: false),
           ),
         // Línea de desnivel acumulado (marrón)
         if (_showDesnivel)
@@ -586,9 +595,7 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
             barWidth: 3,
             isStrokeCapRound: true,
             dotData: const FlDotData(show: true),
-            belowBarData: BarAreaData(
-              show: false,
-            ),
+            belowBarData: BarAreaData(show: false),
           ),
         // Línea de minutos (naranja)
         if (_showMinutos)
@@ -603,9 +610,7 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
             barWidth: 3,
             isStrokeCapRound: true,
             dotData: const FlDotData(show: true),
-            belowBarData: BarAreaData(
-              show: false,
-            ),
+            belowBarData: BarAreaData(show: false),
           ),
         if (_showPeso)
           LineChartBarData(
@@ -630,8 +635,10 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
 
     const targetTicks = 6.0;
     final roughInterval = maxValue / targetTicks;
-    final magnitude =
-        math.pow(10, (math.log(roughInterval) / math.ln10).floor());
+    final magnitude = math.pow(
+      10,
+      (math.log(roughInterval) / math.ln10).floor(),
+    );
     final normalized = roughInterval / magnitude;
 
     double niceNormalized;
@@ -648,19 +655,237 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
     return niceNormalized * magnitude;
   }
 
+  List<LineTooltipItem?> _buildTooltipItems(List<LineBarSpot> touchedSpots) {
+    final descriptors = _buildVisibleSeriesDescriptors();
+
+    return touchedSpots.map((spot) {
+      if (spot.barIndex < 0 || spot.barIndex >= descriptors.length) {
+        return null;
+      }
+
+      final descriptor = descriptors[spot.barIndex];
+      return LineTooltipItem(
+        descriptor.formatValue(spot.y),
+        TextStyle(
+          color: descriptor.color,
+          fontWeight: FontWeight.w700,
+          fontSize: 12,
+        ),
+        children: [
+          TextSpan(
+            text: '  ${descriptor.label}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w500,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      );
+    }).toList();
+  }
+
+  List<_VisibleSeriesDescriptor> _buildVisibleSeriesDescriptors() {
+    final descriptors = <_VisibleSeriesDescriptor>[];
+
+    if (_showActividades) {
+      descriptors.add(
+        _VisibleSeriesDescriptor(
+          label: 'Actividades',
+          color: _actividadesColor,
+          formatValue: (value) => _formatDecimal(value, decimals: 0),
+        ),
+      );
+    }
+    if (_showKilometros) {
+      descriptors.add(
+        _VisibleSeriesDescriptor(
+          label: 'Km',
+          color: _kilometrosColor,
+          formatValue: (value) => _formatDecimal(value, decimals: 1),
+        ),
+      );
+    }
+    if (_showDesnivel) {
+      descriptors.add(
+        _VisibleSeriesDescriptor(
+          label: 'Subida',
+          color: _subidaColor,
+          formatValue: (value) => '${_formatDecimal(value, decimals: 0)} m',
+        ),
+      );
+    }
+    if (_showMinutos) {
+      descriptors.add(
+        _VisibleSeriesDescriptor(
+          label: 'Minutos',
+          color: _minutosColor,
+          formatValue: (value) => _formatMinutesAsDuration(value.round()),
+        ),
+      );
+    }
+    if (_showPeso) {
+      descriptors.add(
+        _VisibleSeriesDescriptor(
+          label: 'Peso',
+          color: _pesoColor,
+          formatValue: (value) => '${_formatDecimal(value, decimals: 1)} kg',
+        ),
+      );
+    }
+
+    return descriptors;
+  }
+
   double _calcularMaxEjeY(double maxValue, double interval) {
     if (interval <= 0) return maxValue;
     return (maxValue / interval).ceil() * interval;
   }
 
+  String _formatInteger(num value) {
+    return NumberFormat.decimalPattern(_localeName).format(value);
+  }
+
+  String _formatDecimal(num value, {int decimals = 1}) {
+    return NumberFormat.decimalPatternDigits(
+      locale: _localeName,
+      decimalDigits: decimals,
+    ).format(value);
+  }
+
   String _formatYAxisLabel(double value, double interval) {
     if (interval >= 1) {
-      return value.toStringAsFixed(0);
+      return _formatDecimal(value, decimals: 0);
     }
     if (interval >= 0.1) {
-      return value.toStringAsFixed(1);
+      return _formatDecimal(value, decimals: 1);
     }
-    return value.toStringAsFixed(2);
+    return _formatDecimal(value, decimals: 2);
+  }
+
+  _TemporalAxisConfig _buildTemporalAxisConfig(List<ChartData> datos) {
+    if (datos.length <= 1) {
+      return const _TemporalAxisConfig(
+        mode: _TemporalAxisMode.daily,
+        step: 1,
+        reservedSize: 40,
+        includeYear: false,
+      );
+    }
+
+    final start = datos.first.fecha;
+    final end = datos.last.fecha;
+    final totalDays = end.difference(start).inDays.abs() + 1;
+    final totalMonths =
+        ((end.year - start.year) * 12) + end.month - start.month;
+
+    if (totalDays <= 45) {
+      return _TemporalAxisConfig(
+        mode: _TemporalAxisMode.daily,
+        step: math.max(1, (datos.length / 7).ceil()),
+        reservedSize: 40,
+        includeYear: false,
+      );
+    }
+    if (totalDays <= 90) {
+      return _TemporalAxisConfig(
+        mode: _TemporalAxisMode.weekly,
+        step: math.max(1, (totalDays / 42).ceil()),
+        reservedSize: 44,
+        includeYear: false,
+      );
+    }
+
+    final monthlyStep =
+        totalMonths <= 14 ? 1 : math.max(1, ((totalMonths + 1) / 9).ceil());
+
+    return _TemporalAxisConfig(
+      mode: _TemporalAxisMode.monthly,
+      step: monthlyStep,
+      reservedSize: 56,
+      includeYear: totalMonths >= 6,
+    );
+  }
+
+  bool _shouldShowBottomLabel(
+    int index,
+    List<ChartData> datos,
+    _TemporalAxisConfig config,
+  ) {
+    if (datos.isEmpty) return false;
+    if (index == 0 || index == datos.length - 1) return true;
+
+    final current = datos[index].fecha;
+    final previous = datos[index - 1].fecha;
+
+    switch (config.mode) {
+      case _TemporalAxisMode.daily:
+        return index % config.step == 0;
+      case _TemporalAxisMode.weekly:
+        if (current.difference(previous).inDays >= 7 * config.step) {
+          return true;
+        }
+        return current.weekday == DateTime.monday &&
+            current.difference(datos.first.fecha).inDays >= 7 * config.step;
+      case _TemporalAxisMode.monthly:
+        if (current.month == previous.month && current.year == previous.year) {
+          return false;
+        }
+        return _monthDelta(datos.first.fecha, current) % config.step == 0;
+      case _TemporalAxisMode.quarterly:
+        return false;
+      case _TemporalAxisMode.yearly:
+        return false;
+    }
+  }
+
+  String _formatBottomAxisLabel(
+    DateTime fecha,
+    int intervaloAgrupacion,
+    _TemporalAxisConfig config,
+  ) {
+    switch (config.mode) {
+      case _TemporalAxisMode.daily:
+        return _formatFecha(fecha, intervaloAgrupacion);
+      case _TemporalAxisMode.weekly:
+        return '${fecha.day}/${fecha.month}\nSem';
+      case _TemporalAxisMode.monthly:
+        return _formatMonthLabel(fecha, includeYear: config.includeYear);
+      case _TemporalAxisMode.quarterly:
+        return _formatMonthLabel(fecha, includeYear: true);
+      case _TemporalAxisMode.yearly:
+        return _formatMonthLabel(fecha, includeYear: true);
+    }
+  }
+
+  String _formatMonthLabel(DateTime fecha, {required bool includeYear}) {
+    const months = [
+      'Ene',
+      'Feb',
+      'Mar',
+      'Abr',
+      'May',
+      'Jun',
+      'Jul',
+      'Ago',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dic',
+    ];
+    final month = months[fecha.month - 1];
+    if (includeYear) {
+      return '$month\n${fecha.year}';
+    }
+    return month;
+  }
+
+  int _monthDelta(DateTime start, DateTime end) {
+    return ((end.year - start.year) * 12) + end.month - start.month;
+  }
+
+  int _quarterIndex(DateTime date) {
+    return (date.year * 4) + ((date.month - 1) ~/ 3);
   }
 
   Widget _buildResumenCard(List<ChartData> datos, int intervaloAgrupacion) {
@@ -693,122 +918,214 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
     final double promEjercicios =
         datos.isNotEmpty ? totalEjercicios / datos.length : 0.0;
 
-    final horas = totalMinutos ~/ 60;
-    final minutos = totalMinutos % 60;
-
     return Card(
       elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Resumen del período',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Column(
+        children: [
+          InkWell(
+            borderRadius: const BorderRadius.vertical(
+              top: Radius.circular(12),
+              bottom: Radius.circular(12),
+            ),
+            onTap: () {
+              setState(() {
+                _summaryExpanded = !_summaryExpanded;
+              });
+            },
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Resumen del período',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          intervaloAgrupacion == 1
+                              ? 'Totales y promedio diario del período actual.'
+                              : 'Totales y promedio por período de la selección actual.',
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Colors.grey[700],
+                                    height: 1.35,
+                                  ),
+                        ),
+                      ],
+                    ),
                   ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _buildResumenItem(
-                  '💪',
-                  totalActividades.toString(),
-                  'Actividades',
-                ),
-                _buildResumenItem(
-                  '📍',
-                  totalKilometros.toStringAsFixed(1),
-                  'Km',
-                ),
-                _buildResumenItem(
-                  '⛰️',
-                  totalDesnivel.toStringAsFixed(0),
-                  'Subida (m)',
-                ),
-                _buildResumenItem(
-                  '⏱️',
-                  '${horas}h ${minutos}m',
-                  'Tiempo',
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _buildResumenItem(
-                  '🏋️',
-                  totalPesoKg.toStringAsFixed(1),
-                  'Peso (kg)',
-                ),
-                _buildResumenItem(
-                  '🔢',
-                  totalEjercicios.toString(),
-                  'Ejercicios',
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Divider(height: 1, color: Colors.grey[300]),
-            const SizedBox(height: 16),
-            Text(
-              intervaloAgrupacion == 1
-                  ? 'Promedio por dia'
-                  : 'Promedio por periodo',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w500,
+                  PopupMenuButton<String>(
+                    tooltip: 'Más opciones',
+                    onSelected: (value) {
+                      switch (value) {
+                        case 'graph_options':
+                          _showGraphOptionsMenu(datos, intervaloAgrupacion);
+                          break;
+                        case 'share':
+                          _shareChartImage(datos, intervaloAgrupacion);
+                          break;
+                        case 'pdf':
+                          _generateStatsPdf(datos, intervaloAgrupacion);
+                          break;
+                      }
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem<String>(
+                        value: 'graph_options',
+                        child: ListTile(
+                          leading: Icon(Icons.tune_rounded),
+                          title: Text('Opciones de gráfica'),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                      PopupMenuDivider(),
+                      PopupMenuItem<String>(
+                        value: 'share',
+                        child: ListTile(
+                          leading: Icon(Icons.ios_share_outlined),
+                          title: Text('Compartir'),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                      PopupMenuItem<String>(
+                        value: 'pdf',
+                        child: ListTile(
+                          leading: Icon(Icons.picture_as_pdf_outlined),
+                          title: Text('Generar PDF'),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                    ],
+                    child: const Padding(
+                      padding: EdgeInsets.all(8),
+                      child: Icon(Icons.more_vert),
+                    ),
                   ),
+                  Icon(
+                    _summaryExpanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                    color: Colors.grey[700],
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _buildResumenItem(
-                  '💪',
-                  promActividades.toStringAsFixed(1),
-                  'Actividades',
-                ),
-                _buildResumenItem(
-                  '📍',
-                  promKilometros.toStringAsFixed(1),
-                  'Km',
-                ),
-                _buildResumenItem(
-                  '⛰️',
-                  promDesnivel.toStringAsFixed(0),
-                  'Subida (m)',
-                ),
-                _buildResumenItem(
-                  '⏱️',
-                  '${(promMinutos ~/ 60).toStringAsFixed(0)}m',
-                  'Tiempo',
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _buildResumenItem(
-                  '🏋️',
-                  promPesoKg.toStringAsFixed(1),
-                  'Peso (kg)',
-                ),
-                _buildResumenItem(
-                  '🔢',
-                  promEjercicios.toStringAsFixed(1),
-                  'Ejercicios',
-                ),
-              ],
+          ),
+          if (_summaryExpanded) ...[
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _buildResumenItem(
+                        '💪',
+                        _formatInteger(totalActividades),
+                        'Actividades',
+                      ),
+                      _buildResumenItem(
+                        '📍',
+                        _formatDecimal(totalKilometros, decimals: 1),
+                        'Km',
+                      ),
+                      _buildResumenItem(
+                        '⛰️',
+                        _formatDecimal(totalDesnivel, decimals: 0),
+                        'Subida (m)',
+                      ),
+                      _buildResumenItem(
+                        '⏱️',
+                        _formatMinutesAsDuration(totalMinutos),
+                        'Tiempo',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _buildResumenItem(
+                        '🏋️',
+                        _formatDecimal(totalPesoKg, decimals: 1),
+                        'Peso (kg)',
+                      ),
+                      _buildResumenItem(
+                        '🔢',
+                        _formatInteger(totalEjercicios),
+                        'Ejercicios',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Divider(height: 1, color: Colors.grey[300]),
+                  const SizedBox(height: 16),
+                  Text(
+                    intervaloAgrupacion == 1
+                        ? 'Promedio por dia'
+                        : 'Promedio por periodo',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyMedium
+                        ?.copyWith(fontWeight: FontWeight.w500),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _buildResumenItem(
+                        '💪',
+                        _formatDecimal(promActividades, decimals: 1),
+                        'Actividades',
+                      ),
+                      _buildResumenItem(
+                        '📍',
+                        _formatDecimal(promKilometros, decimals: 1),
+                        'Km',
+                      ),
+                      _buildResumenItem(
+                        '⛰️',
+                        _formatDecimal(promDesnivel, decimals: 0),
+                        'Subida (m)',
+                      ),
+                      _buildResumenItem(
+                        '⏱️',
+                        _formatMinutesAsDuration(promMinutos.round()),
+                        'Tiempo',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _buildResumenItem(
+                        '🏋️',
+                        _formatDecimal(promPesoKg, decimals: 1),
+                        'Peso (kg)',
+                      ),
+                      _buildResumenItem(
+                        '🔢',
+                        _formatDecimal(promEjercicios, decimals: 1),
+                        'Ejercicios',
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ],
-        ),
+        ],
       ),
     );
   }
@@ -816,25 +1133,45 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
   Widget _buildResumenItem(String emoji, String valor, String label) {
     return Column(
       children: [
-        Text(
-          emoji,
-          style: const TextStyle(fontSize: 24),
-        ),
+        Text(emoji, style: const TextStyle(fontSize: 24)),
         const SizedBox(height: 6),
         Text(
           valor,
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 2),
         Text(
           label,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Colors.grey[600],
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
         ),
       ],
+    );
+  }
+
+  Widget _buildSeriesToggleTile({
+    required bool selected,
+    required Color color,
+    required String title,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      leading: Icon(selected ? Icons.check_box : Icons.check_box_outline_blank),
+      title: Row(
+        children: [
+          Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 10),
+          Expanded(child: Text(title)),
+        ],
+      ),
+      onTap: onTap,
     );
   }
 
@@ -847,95 +1184,78 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
     await showModalBottomSheet<void>(
       context: context,
       builder: (sheetContext) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 8),
-              ListTile(
-                leading: Icon(
-                  _showActividades
-                      ? Icons.check_box
-                      : Icons.check_box_outline_blank,
-                ),
-                title: const Text('Mostrar actividades'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  _toggleSerie('actividades');
-                },
+        return StatefulBuilder(
+          builder: (context, sheetSetState) {
+            void handleToggle(String serie) {
+              final changed = _toggleSerie(serie);
+              if (changed) {
+                sheetSetState(() {});
+              }
+            }
+
+            return SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 8),
+                  _buildSeriesToggleTile(
+                    selected: _showActividades,
+                    color: _actividadesColor,
+                    title: 'Mostrar actividades',
+                    onTap: () => handleToggle('actividades'),
+                  ),
+                  _buildSeriesToggleTile(
+                    selected: _showKilometros,
+                    color: _kilometrosColor,
+                    title: 'Mostrar kilómetros',
+                    onTap: () => handleToggle('kilometros'),
+                  ),
+                  _buildSeriesToggleTile(
+                    selected: _showMinutos,
+                    color: _minutosColor,
+                    title: 'Mostrar minutos',
+                    onTap: () => handleToggle('minutos'),
+                  ),
+                  _buildSeriesToggleTile(
+                    selected: _showDesnivel,
+                    color: _subidaColor,
+                    title: 'Mostrar subida',
+                    onTap: () => handleToggle('desnivel'),
+                  ),
+                  _buildSeriesToggleTile(
+                    selected: _showPeso,
+                    color: _pesoColor,
+                    title: 'Mostrar peso',
+                    onTap: () => handleToggle('peso'),
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.ios_share_outlined),
+                    title: const Text('Compartir'),
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      _shareChartImage(datos, intervaloAgrupacion);
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.picture_as_pdf_outlined),
+                    title: const Text('Generar PDF'),
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      _generateStatsPdf(datos, intervaloAgrupacion);
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                ],
               ),
-              ListTile(
-                leading: Icon(
-                  _showKilometros
-                      ? Icons.check_box
-                      : Icons.check_box_outline_blank,
-                ),
-                title: const Text('Mostrar kilometros'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  _toggleSerie('kilometros');
-                },
-              ),
-              ListTile(
-                leading: Icon(
-                  _showMinutos
-                      ? Icons.check_box
-                      : Icons.check_box_outline_blank,
-                ),
-                title: const Text('Mostrar minutos'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  _toggleSerie('minutos');
-                },
-              ),
-              ListTile(
-                leading: Icon(
-                  _showDesnivel
-                      ? Icons.check_box
-                      : Icons.check_box_outline_blank,
-                ),
-                title: const Text('Mostrar desnivel acumulado'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  _toggleSerie('desnivel');
-                },
-              ),
-              ListTile(
-                leading: Icon(
-                  _showPeso ? Icons.check_box : Icons.check_box_outline_blank,
-                ),
-                title: const Text('Mostrar peso'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  _toggleSerie('peso');
-                },
-              ),
-              const Divider(height: 1),
-              ListTile(
-                leading: const Icon(Icons.ios_share_outlined),
-                title: const Text('Compartir'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  _shareChartImage(datos, intervaloAgrupacion);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.picture_as_pdf_outlined),
-                title: const Text('Generar PDF'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  _generateStatsPdf(datos, intervaloAgrupacion);
-                },
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
+            );
+          },
         );
       },
     );
   }
 
-  void _toggleSerie(String serie) {
+  bool _toggleSerie(String serie) {
     final activeCount = (_showActividades ? 1 : 0) +
         (_showKilometros ? 1 : 0) +
         (_showDesnivel ? 1 : 0) +
@@ -973,7 +1293,7 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
           backgroundColor: Colors.orange,
         ),
       );
-      return;
+      return false;
     }
 
     setState(() {
@@ -984,6 +1304,7 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
       _showPeso = nextPeso;
     });
     _saveSeriesVisibilityPreferences();
+    return true;
   }
 
   Future<Uint8List?> _captureChartImageBytes() async {
@@ -1030,10 +1351,9 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
       final resumen = _buildResumenPdfData(datos, intervaloAgrupacion);
       final periodoLabel = _buildPeriodoLabel(datos, intervaloAgrupacion);
 
-      await Share.shareXFiles(
-        [XFile(file.path)],
-        text: _buildShareSummaryText(periodoLabel, resumen),
-      );
+      await Share.shareXFiles([
+        XFile(file.path),
+      ], text: _buildShareSummaryText(periodoLabel, resumen));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1070,22 +1390,46 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
       final periodoLabel = _buildPeriodoLabel(datos, intervaloAgrupacion);
 
       final apiService = context.read<ApiService>();
-      final nutricionistaParam =
-          await apiService.getParametro('nutricionista_nombre');
+      final nutricionistaParam = await apiService.getParametro(
+        'nutricionista_nombre',
+      );
       final nutricionistaNombre =
           nutricionistaParam?['valor']?.toString() ?? 'Nutricionista';
       final nutricionistaSubtitulo =
           nutricionistaParam?['valor2']?.toString() ?? '';
 
-      final logoParam =
-          await apiService.getParametro('logotipo_dietista_documentos');
-      final logoBytes =
-          _decodeBase64Image(logoParam?['valor']?.toString() ?? '');
+      final logoParam = await apiService.getParametro(
+        'logotipo_dietista_documentos',
+      );
+      final logoBytes = _decodeBase64Image(
+        logoParam?['valor']?.toString() ?? '',
+      );
       final logoSizeStr = logoParam?['valor2']?.toString() ?? '';
 
-      final accentColorParam =
-          await apiService.getParametro('color_fondo_banda_encabezado_pie_pdf');
+      final accentColorParam = await apiService.getParametro(
+        'color_fondo_banda_encabezado_pie_pdf',
+      );
       final accentColorStr = accentColorParam?['valor']?.toString() ?? '';
+
+      final nutricionistaEmail = (await apiService.getParametro(
+            'nutricionista_email',
+          ))?['valor']
+              ?.toString() ??
+          '';
+      final nutricionistaTelegram = (await apiService.getParametro(
+            'nutricionista_usuario_telegram',
+          ))?['valor']
+              ?.toString() ??
+          '';
+      final nutricionistaWebParam = await apiService.getParametro(
+        'nutricionista_web',
+      );
+      final nutricionistaInstagramParam = await apiService.getParametro(
+        'nutricionista_url_instagram',
+      );
+      final nutricionistaFacebookParam = await apiService.getParametro(
+        'nutricionista_url_facebook',
+      );
 
       if (!mounted) return;
       await EntrenamientoStatsPdfService.generateStatsPdf(
@@ -1103,6 +1447,19 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
         showDesnivel: _showDesnivel,
         showMinutos: _showMinutos,
         showPeso: _showPeso,
+        nutricionistaEmail: nutricionistaEmail,
+        nutricionistaTelegram: nutricionistaTelegram,
+        nutricionistaWebUrl: nutricionistaWebParam?['valor']?.toString() ?? '',
+        nutricionistaWebLabel:
+            nutricionistaWebParam?['valor2']?.toString() ?? '',
+        nutricionistaInstagramUrl:
+            nutricionistaInstagramParam?['valor']?.toString() ?? '',
+        nutricionistaInstagramLabel:
+            nutricionistaInstagramParam?['valor2']?.toString() ?? '',
+        nutricionistaFacebookUrl:
+            nutricionistaFacebookParam?['valor']?.toString() ?? '',
+        nutricionistaFacebookLabel:
+            nutricionistaFacebookParam?['valor2']?.toString() ?? '',
       );
     } catch (e) {
       if (!mounted) return;
@@ -1171,16 +1528,14 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
     String periodoLabel,
     EntrenamientoStatsPdfResumen resumen,
   ) {
-    final horas = resumen.totalMinutos ~/ 60;
-    final minutos = resumen.totalMinutos % 60;
     return 'Grafica de estadisticas de actividad\n'
         'Periodo: $periodoLabel\n'
-        'Actividades: ${resumen.totalActividades}\n'
-        'Kilometros: ${resumen.totalKilometros.toStringAsFixed(1)}\n'
-        'Subida: ${resumen.totalDesnivel.toStringAsFixed(0)} m\n'
-        'Tiempo: ${horas}h ${minutos}m\n'
-        'Peso: ${resumen.totalPesoKg.toStringAsFixed(1)} kg\n'
-        'Ejercicios: ${resumen.totalEjercicios}';
+        'Actividades: ${_formatInteger(resumen.totalActividades)}\n'
+        'Kilometros: ${_formatDecimal(resumen.totalKilometros, decimals: 1)}\n'
+        'Subida: ${_formatDecimal(resumen.totalDesnivel, decimals: 0)} m\n'
+        'Tiempo: ${_formatMinutesAsDuration(resumen.totalMinutos)}\n'
+        'Peso: ${_formatDecimal(resumen.totalPesoKg, decimals: 1)} kg\n'
+        'Ejercicios: ${_formatInteger(resumen.totalEjercicios)}';
   }
 
   String _buildPeriodoLabel(List<ChartData> datos, int intervaloAgrupacion) {
@@ -1192,6 +1547,35 @@ class _EntrenamientoStatsChartState extends State<EntrenamientoStatsChart> {
     final endStr = _formatDate(end);
     final tipo = intervaloAgrupacion == 1 ? 'diario' : 'agrupado';
     return '$startStr - $endStr ($tipo)';
+  }
+
+  String _buildSelectedPeriodLabel() {
+    if (widget.entrenamientos.isEmpty) {
+      return 'Desde - hasta - (0 días)';
+    }
+
+    final sorted = List<Entrenamiento>.from(widget.entrenamientos)
+      ..sort((a, b) => a.fecha.compareTo(b.fecha));
+    final start = sorted.first.fecha;
+    final end = sorted.last.fecha;
+    final days = end.difference(start).inDays.abs() + 1;
+    return 'Desde ${_formatDate(start)} hasta ${_formatDate(end)} ($days días)';
+  }
+
+  String _formatMinutesAsDuration(int totalMinutes) {
+    final safeMinutes = math.max(0, totalMinutes);
+    final days = safeMinutes ~/ (24 * 60);
+    final remainingAfterDays = safeMinutes % (24 * 60);
+    final hours = remainingAfterDays ~/ 60;
+    final minutes = remainingAfterDays % 60;
+
+    if (days > 0) {
+      return '${_formatInteger(days)}d ${_formatInteger(hours)}h ${_formatInteger(minutes)}m';
+    }
+    if (hours > 0) {
+      return '${_formatInteger(hours)}h ${_formatInteger(minutes)}m';
+    }
+    return '${_formatInteger(minutes)}m';
   }
 
   String _formatDate(DateTime date) {
@@ -1241,5 +1625,33 @@ class ChartData {
     required this.minutos,
     required this.pesoKg,
     required this.ejercicios,
+  });
+}
+
+class _VisibleSeriesDescriptor {
+  final String label;
+  final Color color;
+  final String Function(double value) formatValue;
+
+  const _VisibleSeriesDescriptor({
+    required this.label,
+    required this.color,
+    required this.formatValue,
+  });
+}
+
+enum _TemporalAxisMode { daily, weekly, monthly, quarterly, yearly }
+
+class _TemporalAxisConfig {
+  final _TemporalAxisMode mode;
+  final int step;
+  final double reservedSize;
+  final bool includeYear;
+
+  const _TemporalAxisConfig({
+    required this.mode,
+    required this.step,
+    required this.reservedSize,
+    required this.includeYear,
   });
 }

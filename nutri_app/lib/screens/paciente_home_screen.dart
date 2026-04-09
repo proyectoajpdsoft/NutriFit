@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:nutri_app/models/paciente.dart';
 import 'package:nutri_app/models/usuario.dart';
 import 'package:nutri_app/models/consejo.dart';
@@ -16,13 +17,17 @@ import 'package:nutri_app/screens/etiqueta_nutricional_scanner_screen.dart';
 import 'package:nutri_app/screens/planes_fit/plan_fit_ejercicios_catalog_screen.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/adherencia_service.dart';
+import 'package:nutri_app/services/ads_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/services/config_service.dart';
+import 'package:nutri_app/services/menu_visibility_premium_service.dart';
 import 'package:nutri_app/services/push_notifications_service.dart';
 import 'package:nutri_app/widgets/app_drawer.dart';
 import 'package:nutri_app/widgets/adherencia_registro_bottom_sheet.dart';
 import 'package:nutri_app/widgets/image_viewer_dialog.dart';
+import 'package:nutri_app/widgets/premium_native_entry_ad.dart';
 import 'package:nutri_app/widgets/restricted_access_dialog_helper.dart';
+import 'package:nutri_app/screens/premium_info_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -67,6 +72,9 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   bool _isRecomendacionesCardExpanded = true;
   bool _twoFactorPromptShownInSession = false;
   bool _premiumWarningShownInSession = false;
+  bool _entryOverlaysHandled = false;
+  Map<String, MenuEntryConfig> _menuConfig =
+      MenuVisibilityPremiumService.defaultConfig();
 
   @override
   void initState() {
@@ -83,10 +91,107 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     _loadContactCardExpandedState();
     _loadAdherenciaCardExpandedState();
     _loadRecomendacionesCardExpandedState();
+    _loadMenuConfig();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _checkAndShowTwoFactorRecommendation();
-      _checkAndShowPremiumExpiryWarning();
+      _handleEntryOverlays();
     });
+  }
+
+  Future<void> _loadMenuConfig() async {
+    final config = await MenuVisibilityPremiumService.loadConfig(
+      apiService: _apiService,
+    );
+    if (!mounted) return;
+    setState(() {
+      _menuConfig = config;
+    });
+  }
+
+  bool _isMenuEntryVisible(String key) {
+    return MenuVisibilityPremiumService.isVisible(_menuConfig, key);
+  }
+
+  bool _isMenuEntryPremium(String key) {
+    return MenuVisibilityPremiumService.isPremium(_menuConfig, key);
+  }
+
+  int _homeGridCrossAxisCount(double width) {
+    if (width >= 1500) return 5;
+    if (width >= 1000) return 4;
+    if (width >= 700) return 3;
+    return 2;
+  }
+
+  double _homeGridChildAspectRatio(double width) {
+    if (width >= 1500) return 1.28;
+    if (width >= 1000) return 1.24;
+    if (width >= 700) return 1.34;
+    return 1.5;
+  }
+
+  Future<void> _handleEntryOverlays() async {
+    if (!mounted || _entryOverlaysHandled) return;
+    _entryOverlaysHandled = true;
+
+    await _checkAndShowPremiumPaymentConfirmation();
+    if (!mounted) return;
+
+    _checkAndShowTwoFactorRecommendation();
+    _checkAndShowPremiumExpiryWarning();
+  }
+
+  Future<void> _checkAndShowPremiumPaymentConfirmation() async {
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args is! Map<String, dynamic>) return;
+    if (args[premiumPaymentConfirmationArgumentKey] != true) return;
+    final l10n = AppLocalizations.of(context)!;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isDismissible: false,
+      enableDrag: false,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.verified_outlined,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        l10n.homePaymentNotifiedTitle,
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(l10n.homePaymentNotifiedMessage),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(sheetContext).pop(),
+                    child: Text(l10n.commonAgree),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   String _premiumWarningShownKey(String userCode, String dayKey) {
@@ -109,9 +214,9 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
 
     int warningDays = 7;
     try {
-      final raw = await context
-          .read<ApiService>()
-          .getParametroValor('premium_dias_aviso_vencimiento');
+      final raw = await context.read<ApiService>().getParametroValor(
+            'premium_dias_aviso_vencimiento',
+          );
       final parsed = int.tryParse((raw ?? '').trim());
       if (parsed != null && parsed > 0 && parsed <= 90) {
         warningDays = parsed;
@@ -132,6 +237,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     final formattedExpiry =
         '${expiry.day.toString().padLeft(2, '0')}/${expiry.month.toString().padLeft(2, '0')}/${expiry.year}';
     final isExpired = days < 0;
+    final l10n = AppLocalizations.of(context)!;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -155,8 +261,8 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                     Expanded(
                       child: Text(
                         isExpired
-                            ? 'Tu Premium ha caducado'
-                            : 'Tu Premium está próximo a caducar',
+                            ? l10n.homePremiumExpiredTitle
+                            : l10n.homePremiumExpiringTitle,
                         style: const TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 15,
@@ -168,8 +274,14 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                 const SizedBox(height: 8),
                 Text(
                   isExpired
-                      ? 'Tu Premium caducó el $formattedExpiry. Puedes renovarlo ahora.'
-                      : 'Tu Premium vence el $formattedExpiry (${days == 0 ? 'hoy' : 'en $days día${days == 1 ? '' : 's'}'}). Te recomendamos renovarlo para no perder ventajas.',
+                      ? l10n.homePremiumExpiredMessage(formattedExpiry)
+                      : days == 0
+                          ? l10n
+                              .homePremiumExpiringTodayMessage(formattedExpiry)
+                          : l10n.homePremiumExpiringInDaysMessage(
+                              formattedExpiry,
+                              days,
+                            ),
                 ),
                 const SizedBox(height: 12),
                 Wrap(
@@ -178,7 +290,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                   children: [
                     TextButton(
                       onPressed: () => Navigator.of(sheetContext).pop(),
-                      child: const Text('Más tarde'),
+                      child: Text(l10n.commonLater),
                     ),
                     ElevatedButton.icon(
                       onPressed: () {
@@ -186,7 +298,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                         Navigator.pushNamed(context, '/premium_info');
                       },
                       icon: const Icon(Icons.workspace_premium_outlined),
-                      label: const Text('Renovar Premium'),
+                      label: Text(l10n.homeRenewPremium),
                     ),
                   ],
                 ),
@@ -251,6 +363,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     }
 
     _twoFactorPromptShownInSession = true;
+    final l10n = AppLocalizations.of(context)!;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -272,9 +385,9 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                       color: Theme.of(context).colorScheme.primary,
                     ),
                     const SizedBox(width: 8),
-                    const Expanded(
+                    Expanded(
                       child: Text(
-                        'Mejora la seguridad de tu cuenta',
+                        l10n.patientSecurityRecommendedTitle,
                         style: TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 15,
@@ -289,9 +402,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'Te recomendamos activar el doble factor (2FA). Añade una capa extra de protección además de tu contraseña.',
-                ),
+                Text(l10n.patientSecurityRecommendedBody),
                 const SizedBox(height: 10),
                 Wrap(
                   spacing: 8,
@@ -303,7 +414,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                         await _openProfileEditor();
                       },
                       icon: const Icon(Icons.person_outline, size: 18),
-                      label: const Text('Ir a editar perfil'),
+                      label: Text(l10n.homeGoToEditProfile),
                     ),
                     TextButton(
                       onPressed: () async {
@@ -315,7 +426,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                           Navigator.of(sheetContext).pop();
                         }
                       },
-                      child: const Text('No volver a mostrar'),
+                      child: Text(l10n.homeDoNotShowAgain),
                     ),
                   ],
                 ),
@@ -437,11 +548,10 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
       });
     } on SocketException {
       if (mounted) {
+        final l10n = AppLocalizations.of(context)!;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'No se ha podido realizar el proceso. Revise la conexión a Internet',
-            ),
+          SnackBar(
+            content: Text(l10n.patientChatLoadError),
             backgroundColor: Colors.red,
           ),
         );
@@ -641,18 +751,38 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   }
 
   String _adherenciaTipoLabel(AdherenciaTipo tipo) {
-    return tipo == AdherenciaTipo.nutri ? 'Plan nutricional' : 'Plan Fit';
+    final l10n = AppLocalizations.of(context)!;
+    return tipo == AdherenciaTipo.nutri
+        ? l10n.patientAdherenceNutriPlan
+        : l10n.patientAdherenceFitPlan;
+  }
+
+  String _adherenciaConsejoLabel(AdherenciaConsejoClave consejo) {
+    final l10n = AppLocalizations.of(context)!;
+    switch (consejo) {
+      case AdherenciaConsejoClave.nutriTarget:
+        return l10n.patientAdherenceImprovementNutriTarget;
+      case AdherenciaConsejoClave.nutriTrend:
+        return l10n.patientAdherenceImprovementNutriTrend;
+      case AdherenciaConsejoClave.fitTarget:
+        return l10n.patientAdherenceImprovementFitTarget;
+      case AdherenciaConsejoClave.fitTrend:
+        return l10n.patientAdherenceImprovementFitTrend;
+      case AdherenciaConsejoClave.keepGoing:
+        return l10n.patientAdherenceImprovementKeepGoing;
+    }
   }
 
   // ignore: unused_element
   String _adherenciaEstadoLabel(AdherenciaEstado estado) {
+    final l10n = AppLocalizations.of(context)!;
     switch (estado) {
       case AdherenciaEstado.cumplido:
-        return 'Cumplido';
+        return l10n.patientAdherenceCompleted;
       case AdherenciaEstado.parcial:
-        return 'Parcial';
+        return l10n.patientAdherencePartial;
       case AdherenciaEstado.noRealizado:
-        return 'No realizado';
+        return l10n.patientAdherenceNotDone;
     }
   }
 
@@ -663,6 +793,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   }
 
   Widget _buildAdherenciaMetric(AdherenciaMetricaSemanal metric) {
+    final l10n = AppLocalizations.of(context)!;
     final trend = metric.tendencia;
     final trendColor = trend > 0
         ? Colors.green
@@ -721,8 +852,10 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
               const SizedBox(width: 4),
               Text(
                 trend == 0
-                    ? 'Sin cambios'
-                    : '${trend > 0 ? '+' : ''}$trend pts',
+                    ? l10n.patientAdherenceNoChanges
+                    : l10n.patientAdherenceTrendPoints(
+                        '${trend > 0 ? '+' : ''}$trend',
+                      ),
                 style: TextStyle(
                   color: trendColor,
                   fontWeight: FontWeight.w600,
@@ -745,9 +878,11 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     required String label,
     required int percent,
     VoidCallback? onTap,
+    VoidCallback? onLongPress,
   }) {
     return GestureDetector(
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Tooltip(
         message: '$label: $percent%',
         child: SizedBox(
@@ -821,6 +956,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   }
 
   Widget _buildAdherenciaCard() {
+    final l10n = AppLocalizations.of(context)!;
     if (_loadingAdherencia) {
       return const Card(
         child: Padding(
@@ -846,15 +982,31 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
           children: [
             Row(
               children: [
-                Icon(
-                  Icons.fact_check_outlined,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text(
-                    'Cumplimiento',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () {
+                      final next = !_isAdherenciaCardExpanded;
+                      setState(() {
+                        _isAdherenciaCardExpanded = next;
+                      });
+                      _saveAdherenciaCardExpandedState(next);
+                    },
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.fact_check_outlined,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          l10n.patientAdherenceTitle,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 if (resumen.nutri != null)
@@ -863,6 +1015,13 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                     percent: resumen.nutri!.porcentaje,
                     onTap: () => _showAdherenciaRegistroRapido(
                       tipoInicial: AdherenciaTipo.nutri,
+                    ),
+                    onLongPress: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) =>
+                            const PlanesPacienteListScreen(initialTabIndex: 1),
+                      ),
                     ),
                   ),
                 if (resumen.nutri != null && resumen.fit != null)
@@ -874,11 +1033,21 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                     onTap: () => _showAdherenciaRegistroRapido(
                       tipoInicial: AdherenciaTipo.fit,
                     ),
+                    onLongPress: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const PlanesFitPacienteListScreen(
+                          initialTabIndex: 1,
+                        ),
+                      ),
+                    ),
                   ),
                 if (resumen.nutri != null || resumen.fit != null)
                   const SizedBox(width: 8),
                 IconButton(
-                  tooltip: _isAdherenciaCardExpanded ? 'Plegar' : 'Desplegar',
+                  tooltip: _isAdherenciaCardExpanded
+                      ? l10n.commonCollapse
+                      : l10n.commonExpand,
                   onPressed: () {
                     final next = !_isAdherenciaCardExpanded;
                     setState(() {
@@ -905,15 +1074,15 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
               ],
               if (resumen.puntosMejora.isNotEmpty) ...[
                 const SizedBox(height: 10),
-                const Text(
-                  'Puntos de mejora',
+                Text(
+                  l10n.patientAdherenceImprovementPoints,
                   style: TextStyle(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 4),
                 ...resumen.puntosMejora.map(
                   (tip) => Padding(
                     padding: const EdgeInsets.only(bottom: 2),
-                    child: Text('• $tip'),
+                    child: Text('• ${_adherenciaConsejoLabel(tip)}'),
                   ),
                 ),
               ],
@@ -927,6 +1096,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   Widget _buildRecomendacionesPersonalizadasCard({
     required bool hasPendientesPersonalizadas,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     if (!hasPendientesPersonalizadas) {
       return const SizedBox.shrink();
     }
@@ -952,9 +1122,9 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                   size: 22,
                 ),
                 const SizedBox(width: 8),
-                const Expanded(
+                Expanded(
                   child: Text(
-                    'Recomendaciones para ti',
+                    l10n.patientRecommendationsForYou,
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -988,8 +1158,9 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                   ),
                 const SizedBox(width: 6),
                 IconButton(
-                  tooltip:
-                      _isRecomendacionesCardExpanded ? 'Plegar' : 'Desplegar',
+                  tooltip: _isRecomendacionesCardExpanded
+                      ? l10n.commonCollapse
+                      : l10n.commonExpand,
                   onPressed: () {
                     final next = !_isRecomendacionesCardExpanded;
                     setState(() {
@@ -1205,9 +1376,10 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
       rethrow;
     } catch (e) {
       if (mounted) {
+        final l10n = AppLocalizations.of(context)!;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('No se pudo abrir el enlace'),
+          SnackBar(
+            content: Text(l10n.commonCouldNotOpenLink),
             backgroundColor: Colors.red,
           ),
         );
@@ -1217,9 +1389,40 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
 
   Future<void> _launchEmail(String email) async {
     if (email.isEmpty) return;
+    final l10n = AppLocalizations.of(context)!;
     await _launchExternalUrl(
-      'mailto:$email?subject=Solicitud de servicios de Nutricionista Online',
+      'mailto:$email?subject=${Uri.encodeComponent(l10n.patientContactEmailSubject)}',
     );
+  }
+
+  String _normalizeWhatsAppPhone(String rawPhone) {
+    final trimmed = rawPhone.trim();
+    if (trimmed.isEmpty) return '';
+
+    final digits = trimmed.replaceAll(RegExp(r'[^\d]'), '');
+    if (digits.isEmpty) return '';
+
+    if (trimmed.startsWith('+')) {
+      return '+$digits';
+    }
+
+    if (digits.startsWith('00')) {
+      return '+${digits.substring(2)}';
+    }
+
+    if (digits.startsWith('34')) {
+      return '+$digits';
+    }
+
+    return '+34$digits';
+  }
+
+  Future<void> _launchWhatsApp(String phoneNumber) async {
+    final normalized = _normalizeWhatsAppPhone(phoneNumber);
+    if (normalized.isEmpty) return;
+
+    final digitsOnly = normalized.replaceAll(RegExp(r'[^\d]'), '');
+    await _launchExternalUrl('https://wa.me/$digitsOnly');
   }
 
   // ignore: unused_element
@@ -1235,10 +1438,13 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   }
 
   Widget _buildWelcomeCard() {
+    final l10n = AppLocalizations.of(context)!;
     final genero = _paciente?.sexo ?? '';
     final saludo = genero.isEmpty
-        ? 'Bienvenid@'
-        : (genero.toLowerCase() == 'mujer' ? 'Bienvenida' : 'Bienvenido');
+        ? l10n.patientWelcomeNeutral
+        : (genero.toLowerCase() == 'mujer'
+            ? l10n.patientWelcomeFemale
+            : l10n.patientWelcomeMale);
 
     return Card(
       elevation: 4,
@@ -1261,7 +1467,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '$saludo a NutriFit',
+              l10n.patientWelcomeToNutriFit(saludo),
               style: const TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.bold,
@@ -1269,8 +1475,8 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Desde NutriFit podrás consultar tus planes nutricionales y de entrenamiento personalizados. Podrás chatear y contactar con tu dietista online y leer recomendaciones personalizadas. \n\nDispones de Consejos de nutrición y salud, Recetas de cocina, lista de la compra, información de alimentos, mediciones (control de peso), presión arterial y muchas otras cosas...',
+            Text(
+              l10n.patientWelcomeBody,
               style: TextStyle(fontSize: 14, color: Colors.white),
             ),
           ],
@@ -1280,6 +1486,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   }
 
   Widget _buildConsejoDestacadoCard(Consejo consejo) {
+    final l10n = AppLocalizations.of(context)!;
     return Card(
       elevation: 3,
       margin: const EdgeInsets.only(bottom: 12),
@@ -1325,7 +1532,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('Cerrar'),
+                  child: Text(l10n.commonClose),
                 ),
                 TextButton(
                   onPressed: () {
@@ -1343,7 +1550,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                       _loadHasPersonalizados();
                     });
                   },
-                  child: const Text('Leer más'),
+                  child: Text(l10n.commonReadMore),
                 ),
                 ElevatedButton(
                   onPressed: () {
@@ -1354,7 +1561,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                       arguments: {'openTodos': true},
                     );
                   },
-                  child: const Text('Ver todos'),
+                  child: Text(l10n.commonViewAll),
                 ),
               ],
             ),
@@ -1383,8 +1590,8 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                   children: [
                     Row(
                       children: [
-                        const Text(
-                          'Recomendación personal',
+                        Text(
+                          l10n.patientPersonalRecommendation,
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w500,
@@ -1402,8 +1609,8 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                               color: Colors.red,
                               borderRadius: BorderRadius.circular(10),
                             ),
-                            child: const Text(
-                              'NUEVO',
+                            child: Text(
+                              l10n.patientNewBadge,
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 9,
@@ -1441,14 +1648,15 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
 
   // ignore: unused_element
   Widget _buildContactAccordion() {
+    final l10n = AppLocalizations.of(context)!;
     return Theme(
       data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
       child: ExpansionTile(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.help_outline, size: 20),
-            SizedBox(width: 8),
-            Text('Contactar con el dietista...'),
+            const Icon(Icons.help_outline, size: 20),
+            const SizedBox(width: 8),
+            Text(l10n.patientContactDietitianPrompt),
           ],
         ),
         children: [
@@ -1465,6 +1673,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   }
 
   Widget _buildPrimaryContactCard() {
+    final l10n = AppLocalizations.of(context)!;
     return Card(
       elevation: 4,
       margin: const EdgeInsets.only(bottom: 16),
@@ -1488,9 +1697,9 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                 color: Theme.of(context).colorScheme.primary,
               ),
               const SizedBox(width: 8),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Contactar con dietista online',
+                  l10n.patientContactDietitianTrainer,
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
               ),
@@ -1515,7 +1724,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                         ),
                       ),
                       icon: const Icon(Icons.arrow_forward),
-                      label: const Text('Más formas de contacto'),
+                      label: Text(l10n.patientMoreContactOptions),
                     ),
                   ),
                 ],
@@ -1528,21 +1737,30 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   }
 
   Widget _buildPrimaryContactItems() {
+    final l10n = AppLocalizations.of(context)!;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         if ((_contactInfo['email'] ?? '').isNotEmpty) ...[
           _buildSimpleContactRow(
             icon: Icons.email,
-            label: 'Email a dietista',
+            label: l10n.patientContactEmailShort,
             onTap: () => _launchEmail(_contactInfo['email'] ?? ''),
+          ),
+        ],
+        if ((_contactInfo['whatsapp'] ?? '').isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _buildSimpleContactRow(
+            icon: Icons.chat,
+            label: l10n.patientContactWhatsAppShort,
+            onTap: () => _launchWhatsApp(_contactInfo['whatsapp'] ?? ''),
           ),
         ],
         if ((_contactInfo['telegram'] ?? '').isNotEmpty) ...[
           const SizedBox(height: 12),
           _buildSimpleContactRow(
             icon: Icons.telegram,
-            label: 'Telegram a dietista',
+            label: l10n.patientContactTelegramShort,
             onTap: () => _launchTelegram(_contactInfo['telegram'] ?? ''),
           ),
         ],
@@ -1586,19 +1804,17 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   Future<void> _addToContacts() async {
     // Implementación simple: mostrar un diálogo con instrucciones
     if (!mounted) return;
+    final l10n = AppLocalizations.of(context)!;
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Agregar dietista a contactos'),
-        content: const Text(
-          'Por favor, agrega al dietista manualmente a tus contactos con los siguientes datos:\n\n'
-          'Nombre: Dietista Online - NutriFit',
-        ),
+        title: Text(l10n.patientAddDietitianToContactsTitle),
+        content: Text(l10n.patientAddDietitianToContactsBody),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
+            child: Text(l10n.commonOk),
           ),
         ],
       ),
@@ -1606,7 +1822,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   }
 
   Future<void> _handlePlanesAccess(
-    String planType,
+    String dialogTitle,
     Future<void> Function() onAccess,
   ) async {
     final authService = context.read<AuthService>();
@@ -1619,31 +1835,27 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     }
 
     // Si no tiene paciente, mostrar diálogo de contacto
-    final dialogTitle = planType == 'Planes Nutricionales'
-        ? 'Planes nutricionales'
-        : 'Entrenamientos personalizados';
     RestrictedAccessDialogHelper.show(context, title: dialogTitle);
   }
 
   void _showChatGuestDialog() {
+    final l10n = AppLocalizations.of(context)!;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Registro requerido'),
-        content: const Text(
-          'Para chatear con tu dietista online, por favor, regístrate (es gratis).',
-        ),
+        title: Text(l10n.drawerRegistrationRequiredTitle),
+        content: Text(l10n.drawerRegistrationRequiredChatMessage),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
+            child: Text(l10n.commonClose),
           ),
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
               Navigator.pushNamed(context, '/register');
             },
-            child: const Text('Iniciar registro'),
+            child: Text(l10n.navStartRegistration),
           ),
         ],
       ),
@@ -1672,12 +1884,16 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   }
 
   void _handleRecomendacionesPersonalizadas() {
+    final l10n = AppLocalizations.of(context)!;
     final authService = context.read<AuthService>();
     final hasPatient = (authService.patientCode ?? '').isNotEmpty;
 
     // Si no está registrado o no tiene paciente asignado
     if (authService.isGuestMode || !hasPatient) {
-      RestrictedAccessDialogHelper.show(context, title: 'Recomendaciones');
+      RestrictedAccessDialogHelper.show(
+        context,
+        title: l10n.navRecommendations,
+      );
       return;
     }
 
@@ -1690,118 +1906,34 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
   }
 
   void _handleVideosEjerciciosAccess() {
-    final authService = context.read<AuthService>();
-    if (authService.isPremium || authService.userType == 'Nutricionista') {
-      Navigator.pushNamed(context, '/videos_ejercicios');
-      return;
-    }
-    RestrictedAccessDialogHelper.show(
-      context,
-      title: 'Vídeos ejercicios',
-      message:
-          'Los vídeos de ejercicios completos están disponibles para usuarios Premium. Si quieres activar este acceso, puedes revisar las ventajas y solicitarlo directamente al nutricionista.',
-      primaryActionLabel: 'Hazte Premium',
-      primaryActionIcon: Icons.workspace_premium,
-      primaryRouteName: '/premium_info',
-    );
+    Navigator.pushNamed(context, '/videos_ejercicios');
   }
 
   void _handleSustitucionesSaludablesAccess() {
-    final authService = context.read<AuthService>();
-    if (authService.isPremium || authService.userType == 'Nutricionista') {
-      Navigator.pushNamed(context, '/sustituciones_saludables');
-      return;
-    }
-    RestrictedAccessDialogHelper.show(
-      context,
-      title: 'Sustituciones',
-      message:
-          'La biblioteca de sustituciones saludables está disponible para usuarios Premium. Desde aquí puedes consultar equivalencias rápidas, favoritos y filtros para mantener tu plan sin improvisar.',
-      primaryActionLabel: 'Hazte Premium',
-      primaryActionIcon: Icons.workspace_premium,
-      primaryRouteName: '/premium_info',
-    );
+    Navigator.pushNamed(context, '/sustituciones_saludables');
   }
 
   void _handleCharlasSeminariosAccess() {
-    final authService = context.read<AuthService>();
-    if (authService.isPremium ||
-        authService.userType == 'Nutricionista' ||
-        authService.userType == 'Administrador') {
-      Navigator.pushNamed(context, '/charlas_seminarios');
-      return;
-    }
-    RestrictedAccessDialogHelper.show(
-      context,
-      title: 'Charlas y Seminarios',
-      message:
-          'Las charlas y seminarios están disponibles para usuarios Premium. Activa Premium para acceder al contenido exclusivo.',
-      primaryActionLabel: 'Hazte Premium',
-      primaryActionIcon: Icons.workspace_premium,
-      primaryRouteName: '/premium_info',
-    );
+    Navigator.pushNamed(context, '/charlas_seminarios');
   }
 
   void _handleSuplementosAccess() {
-    final authService = context.read<AuthService>();
-    if (authService.isPremium ||
-        authService.userType == 'Nutricionista' ||
-        authService.userType == 'Administrador') {
-      Navigator.pushNamed(context, '/suplementos');
-      return;
-    }
-    RestrictedAccessDialogHelper.show(
-      context,
-      title: 'Suplementos',
-      message:
-          'La sección de suplementos está disponible para usuarios Premium. Activa Premium para consultar el catálogo de suplementos.',
-      primaryActionLabel: 'Hazte Premium',
-      primaryActionIcon: Icons.workspace_premium,
-      primaryRouteName: '/premium_info',
-    );
+    Navigator.pushNamed(context, '/suplementos');
   }
 
   void _handleAditivosAccess() {
-    final authService = context.read<AuthService>();
-    if (authService.isPremium ||
-        authService.userType == 'Nutricionista' ||
-        authService.userType == 'Administrador') {
-      Navigator.pushNamed(context, '/aditivos');
-      return;
-    }
-    RestrictedAccessDialogHelper.show(
-      context,
-      title: 'Aditivos alimentarios',
-      message:
-          'La sección de aditivos alimentarios está disponible para usuarios Premium. Activa Premium para consultar el catálogo de aditivos.',
-      primaryActionLabel: 'Hazte Premium',
-      primaryActionIcon: Icons.workspace_premium,
-      primaryRouteName: '/premium_info',
-    );
+    Navigator.pushNamed(context, '/aditivos');
   }
 
   void _handleCatalogoEjerciciosAccess() {
-    final authService = context.read<AuthService>();
-    if (authService.isPremium || authService.userType == 'Nutricionista') {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => const PlanFitEjerciciosCatalogScreen(
-            readOnly: true,
-            premiumVisibleOnly: true,
-          ),
-        ),
-      );
-      return;
-    }
-    RestrictedAccessDialogHelper.show(
+    Navigator.push(
       context,
-      title: 'Catálogo ejercicios',
-      message:
-          'El catálogo de ejercicios para pacientes está disponible para usuarios Premium. Activa Premium para consultar los ejercicios habilitados y usarlos en tus actividades.',
-      primaryActionLabel: 'Hazte Premium',
-      primaryActionIcon: Icons.workspace_premium,
-      primaryRouteName: '/premium_info',
+      MaterialPageRoute(
+        builder: (context) => const PlanFitEjerciciosCatalogScreen(
+          readOnly: true,
+          premiumVisibleOnly: true,
+        ),
+      ),
     );
   }
 
@@ -1812,6 +1944,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
     required VoidCallback onTap,
     bool showPremiumBadge = false,
   }) {
+    final compact = MediaQuery.sizeOf(context).width >= 700;
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -1819,7 +1952,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.all(12.0),
+          padding: EdgeInsets.all(compact ? 10.0 : 12.0),
           child: Stack(
             alignment: Alignment.center,
             children: [
@@ -1829,10 +1962,10 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                 children: [
                   Icon(
                     icon,
-                    size: 38,
+                    size: compact ? 30 : 38,
                     color: Theme.of(context).colorScheme.primary,
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: compact ? 6 : 8),
                   SizedBox(
                     width: double.infinity,
                     child: Text(
@@ -1841,12 +1974,13 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            fontSize: (Theme.of(context)
-                                        .textTheme
-                                        .titleSmall
-                                        ?.fontSize ??
-                                    14) -
-                                1,
+                            fontSize: ((Theme.of(context)
+                                            .textTheme
+                                            .titleSmall
+                                            ?.fontSize ??
+                                        14) -
+                                    1) -
+                                (compact ? 0.5 : 0),
                             height: 1.1,
                           ),
                     ),
@@ -1879,13 +2013,24 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final adsService = context.watch<AdsService>();
+    final authService = context.watch<AuthService>();
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final homeGridCrossAxisCount = _homeGridCrossAxisCount(screenWidth);
+    final homeGridChildAspectRatio = _homeGridChildAspectRatio(screenWidth);
+    final showNativeEntryAd = adsService.canShowAdsFor(authService) &&
+        adsService.shouldShowNativeEntryPlacement &&
+        adsService.nativeEntryInHomeTop &&
+        adsService.nativeEntryAdUnitId != null;
+
+    final l10n = AppLocalizations.of(context)!;
     final isDebugAppMode =
         context.watch<ConfigService>().appMode == AppMode.debug;
 
     // Si el usuario no está autorizado, mostrar una pantalla de carga mientras se redirige
     if (!_isAuthorized) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Inicio')),
+        appBar: AppBar(title: Text(l10n.navHome)),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
@@ -1896,7 +2041,7 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Inicio'),
+        title: Text(l10n.navHome),
         actions: [
           if (isDebugAppMode)
             Padding(
@@ -1910,8 +2055,8 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                   color: Colors.orange.shade700,
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Text(
-                  'DEBUG',
+                child: Text(
+                  l10n.commonDebug,
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 10,
@@ -2031,6 +2176,14 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                   // Tarjeta de bienvenida (solo primera vez)
                   if (_showWelcomeMessage) _buildWelcomeCard(),
 
+                  if (showNativeEntryAd)
+                    PremiumNativeEntryAd(
+                      adUnitId: adsService.nativeEntryAdUnitId!,
+                      factoryId: AdsService.nativeFactoryId,
+                      template: adsService.nativeEntryTemplate,
+                      timeoutMs: adsService.nativeEntryTimeoutMs,
+                    ),
+
                   // Consejos destacados no leídos
                   if (_consejosDestacados.isNotEmpty) ...[
                     const SizedBox(height: 8),
@@ -2055,7 +2208,9 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                             },
                             icon: const Icon(Icons.arrow_forward),
                             label: Text(
-                              'Ver todos los consejos (${_consejosDestacados.length})',
+                              l10n.patientViewAllTipsCount(
+                                _consejosDestacados.length,
+                              ),
                             ),
                             style: TextButton.styleFrom(
                               foregroundColor: Colors.blue,
@@ -2084,166 +2239,258 @@ class _PacienteHomeScreenState extends State<PacienteHomeScreen> {
                   GridView.count(
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
-                    crossAxisCount: 2,
+                    crossAxisCount: homeGridCrossAxisCount,
                     crossAxisSpacing: 10,
                     mainAxisSpacing: 10,
-                    childAspectRatio: 1.5,
+                    childAspectRatio: homeGridChildAspectRatio,
                     children: [
-                      _buildHomeCard(
-                        context: context,
-                        icon: Icons.recommend_outlined,
-                        label: 'Recomendaciones',
-                        onTap: _handleRecomendacionesPersonalizadas,
-                      ),
-                      _buildHomeCard(
-                        context: context,
-                        icon: Icons.lightbulb_outlined,
-                        label: 'Consejos',
-                        onTap: () => Navigator.pushNamed(
-                          context,
-                          '/consejos_paciente',
-                          arguments: {'openDestacados': true},
+                      if (_isMenuEntryVisible(
+                        MenuVisibilityPremiumService.recomendaciones,
+                      ))
+                        _buildHomeCard(
+                          context: context,
+                          icon: Icons.recommend_outlined,
+                          label: l10n.navRecommendations,
+                          showPremiumBadge: _isMenuEntryPremium(
+                            MenuVisibilityPremiumService.recomendaciones,
+                          ),
+                          onTap: _handleRecomendacionesPersonalizadas,
                         ),
-                      ),
-                      _buildHomeCard(
-                        context: context,
-                        icon: Icons.play_circle_outline,
-                        label: 'Vídeos Ejercicios',
-                        showPremiumBadge: true,
-                        onTap: _handleVideosEjerciciosAccess,
-                      ),
-                      _buildHomeCard(
-                        context: context,
-                        icon: Icons.fitness_center,
-                        label: 'Catálogo ejercicios',
-                        showPremiumBadge: true,
-                        onTap: _handleCatalogoEjerciciosAccess,
-                      ),
-                      _buildHomeCard(
-                        context: context,
-                        icon: Icons.swap_horiz_rounded,
-                        label: 'Sustituciones saludables',
-                        showPremiumBadge: true,
-                        onTap: _handleSustitucionesSaludablesAccess,
-                      ),
-                      _buildHomeCard(
-                        context: context,
-                        icon: Icons.present_to_all_rounded,
-                        label: 'Charlas y Seminarios',
-                        showPremiumBadge: true,
-                        onTap: _handleCharlasSeminariosAccess,
-                      ),
-                      _buildHomeCard(
-                        context: context,
-                        icon: Icons.medication_outlined,
-                        label: 'Suplementos',
-                        showPremiumBadge: true,
-                        onTap: _handleSuplementosAccess,
-                      ),
-                      _buildHomeCard(
-                        context: context,
-                        icon: Icons.science_outlined,
-                        label: 'Aditivos alimentarios',
-                        showPremiumBadge: true,
-                        onTap: _handleAditivosAccess,
-                      ),
-                      _buildHomeCard(
-                        context: context,
-                        icon: Icons.article_outlined,
-                        label: 'Planes Nutri',
-                        onTap: () => _handlePlanesAccess(
-                          'Planes Nutricionales',
-                          () async {
-                            await Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) =>
-                                    const PlanesPacienteListScreen(),
-                              ),
-                            );
-                            if (!mounted) return;
-                            await _loadAdherenciaResumen();
-                          },
-                        ),
-                      ),
-                      _buildHomeCard(
-                        context: context,
-                        icon: Icons.fitness_center_outlined,
-                        label: 'Planes Fit',
-                        onTap: () => _handlePlanesAccess(
-                          'Planes de Entrenamiento',
-                          () async {
-                            await Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) =>
-                                    const PlanesFitPacienteListScreen(),
-                              ),
-                            );
-                            if (!mounted) return;
-                            await _loadAdherenciaResumen();
-                          },
-                        ),
-                      ),
-                      _buildHomeCard(
-                        context: context,
-                        icon: Icons.restaurant_menu,
-                        label: 'Recetas',
-                        onTap: () =>
-                            Navigator.pushNamed(context, '/recetas_paciente'),
-                      ),
-                      _buildHomeCard(
-                        context: context,
-                        icon: Icons.directions_run,
-                        label: 'Actividades',
-                        onTap: () =>
-                            Navigator.pushNamed(context, '/entrenamientos'),
-                      ),
-                      _buildHomeCard(
-                        context: context,
-                        icon: Icons.monitor_weight_outlined,
-                        label: 'Control de peso',
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const PesosUsuarioScreen(),
+                      if (_isMenuEntryVisible(
+                        MenuVisibilityPremiumService.consejos,
+                      ))
+                        _buildHomeCard(
+                          context: context,
+                          icon: Icons.lightbulb_outlined,
+                          label: l10n.navTips,
+                          showPremiumBadge: _isMenuEntryPremium(
+                            MenuVisibilityPremiumService.consejos,
+                          ),
+                          onTap: () => Navigator.pushNamed(
+                            context,
+                            '/consejos_paciente',
+                            arguments: {'openDestacados': true},
                           ),
                         ),
-                      ),
-                      _buildHomeCard(
-                        context: context,
-                        icon: Icons.shopping_cart_outlined,
-                        label: 'Lista Compra',
-                        onTap: () => _handleListaCompraNavigation(context),
-                      ),
-                      _buildHomeCard(
-                        context: context,
-                        icon: Icons.document_scanner_outlined,
-                        label: 'Escáner',
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                const EtiquetaNutricionalScannerScreen(),
+                      if (_isMenuEntryVisible(
+                        MenuVisibilityPremiumService.videosEjercicios,
+                      ))
+                        _buildHomeCard(
+                          context: context,
+                          icon: Icons.play_circle_outline,
+                          label: l10n.navExerciseVideos,
+                          showPremiumBadge: _isMenuEntryPremium(
+                            MenuVisibilityPremiumService.videosEjercicios,
+                          ),
+                          onTap: _handleVideosEjerciciosAccess,
+                        ),
+                      if (_isMenuEntryVisible(
+                        MenuVisibilityPremiumService.catalogoEjercicios,
+                      ))
+                        _buildHomeCard(
+                          context: context,
+                          icon: Icons.fitness_center,
+                          label: l10n.navExerciseCatalog,
+                          showPremiumBadge: _isMenuEntryPremium(
+                            MenuVisibilityPremiumService.catalogoEjercicios,
+                          ),
+                          onTap: _handleCatalogoEjerciciosAccess,
+                        ),
+                      if (_isMenuEntryVisible(
+                        MenuVisibilityPremiumService.sustitucionesSaludables,
+                      ))
+                        _buildHomeCard(
+                          context: context,
+                          icon: Icons.swap_horiz_rounded,
+                          label: l10n.navSubstitutions,
+                          showPremiumBadge: _isMenuEntryPremium(
+                            MenuVisibilityPremiumService
+                                .sustitucionesSaludables,
+                          ),
+                          onTap: _handleSustitucionesSaludablesAccess,
+                        ),
+                      if (_isMenuEntryVisible(
+                        MenuVisibilityPremiumService.charlasSeminarios,
+                      ))
+                        _buildHomeCard(
+                          context: context,
+                          icon: Icons.present_to_all_rounded,
+                          label: l10n.navTalksAndSeminars,
+                          showPremiumBadge: _isMenuEntryPremium(
+                            MenuVisibilityPremiumService.charlasSeminarios,
+                          ),
+                          onTap: _handleCharlasSeminariosAccess,
+                        ),
+                      if (_isMenuEntryVisible(
+                        MenuVisibilityPremiumService.suplementos,
+                      ))
+                        _buildHomeCard(
+                          context: context,
+                          icon: Icons.medication_outlined,
+                          label: l10n.navSupplements,
+                          showPremiumBadge: _isMenuEntryPremium(
+                            MenuVisibilityPremiumService.suplementos,
+                          ),
+                          onTap: _handleSuplementosAccess,
+                        ),
+                      if (_isMenuEntryVisible(
+                        MenuVisibilityPremiumService.aditivosAlimentarios,
+                      ))
+                        _buildHomeCard(
+                          context: context,
+                          icon: Icons.science_outlined,
+                          label: l10n.navFoodAdditives,
+                          showPremiumBadge: _isMenuEntryPremium(
+                            MenuVisibilityPremiumService.aditivosAlimentarios,
+                          ),
+                          onTap: _handleAditivosAccess,
+                        ),
+                      if (_isMenuEntryVisible(
+                        MenuVisibilityPremiumService.planesNutri,
+                      ))
+                        _buildHomeCard(
+                          context: context,
+                          icon: Icons.article_outlined,
+                          label: l10n.navNutriPlans,
+                          showPremiumBadge: _isMenuEntryPremium(
+                            MenuVisibilityPremiumService.planesNutri,
+                          ),
+                          onTap: () => _handlePlanesAccess(
+                            l10n.drawerRestrictedNutriPlansTitle,
+                            () async {
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      const PlanesPacienteListScreen(),
+                                ),
+                              );
+                              if (!mounted) return;
+                              await _loadAdherenciaResumen();
+                            },
                           ),
                         ),
-                      ),
-                      _buildHomeCard(
-                        context: context,
-                        icon: Icons.checklist_outlined,
-                        label: 'Tareas',
-                        onTap: () => Navigator.pushNamed(context, '/todo_list'),
-                      ),
+                      if (_isMenuEntryVisible(
+                        MenuVisibilityPremiumService.planesFit,
+                      ))
+                        _buildHomeCard(
+                          context: context,
+                          icon: Icons.fitness_center_outlined,
+                          label: l10n.navFitPlans,
+                          showPremiumBadge: _isMenuEntryPremium(
+                            MenuVisibilityPremiumService.planesFit,
+                          ),
+                          onTap: () => _handlePlanesAccess(
+                            l10n.drawerRestrictedTrainingTitle,
+                            () async {
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      const PlanesFitPacienteListScreen(),
+                                ),
+                              );
+                              if (!mounted) return;
+                              await _loadAdherenciaResumen();
+                            },
+                          ),
+                        ),
+                      if (_isMenuEntryVisible(
+                        MenuVisibilityPremiumService.recetas,
+                      ))
+                        _buildHomeCard(
+                          context: context,
+                          icon: Icons.restaurant_menu,
+                          label: l10n.navRecipes,
+                          showPremiumBadge: _isMenuEntryPremium(
+                            MenuVisibilityPremiumService.recetas,
+                          ),
+                          onTap: () =>
+                              Navigator.pushNamed(context, '/recetas_paciente'),
+                        ),
+                      if (_isMenuEntryVisible(
+                        MenuVisibilityPremiumService.actividades,
+                      ))
+                        _buildHomeCard(
+                          context: context,
+                          icon: Icons.directions_run,
+                          label: l10n.navActivities,
+                          showPremiumBadge: _isMenuEntryPremium(
+                            MenuVisibilityPremiumService.actividades,
+                          ),
+                          onTap: () =>
+                              Navigator.pushNamed(context, '/entrenamientos'),
+                        ),
+                      if (_isMenuEntryVisible(
+                        MenuVisibilityPremiumService.controlPeso,
+                      ))
+                        _buildHomeCard(
+                          context: context,
+                          icon: Icons.monitor_weight_outlined,
+                          label: l10n.navWeightControl,
+                          showPremiumBadge: _isMenuEntryPremium(
+                            MenuVisibilityPremiumService.controlPeso,
+                          ),
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const PesosUsuarioScreen(),
+                            ),
+                          ),
+                        ),
+                      if (_isMenuEntryVisible(
+                        MenuVisibilityPremiumService.listaCompra,
+                      ))
+                        _buildHomeCard(
+                          context: context,
+                          icon: Icons.shopping_cart_outlined,
+                          label: l10n.navShoppingList,
+                          showPremiumBadge: _isMenuEntryPremium(
+                            MenuVisibilityPremiumService.listaCompra,
+                          ),
+                          onTap: () => _handleListaCompraNavigation(context),
+                        ),
+                      if (_isMenuEntryVisible(
+                        MenuVisibilityPremiumService.escaner,
+                      ))
+                        _buildHomeCard(
+                          context: context,
+                          icon: Icons.document_scanner_outlined,
+                          label: l10n.navScanner,
+                          showPremiumBadge: _isMenuEntryPremium(
+                            MenuVisibilityPremiumService.escaner,
+                          ),
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  const EtiquetaNutricionalScannerScreen(),
+                            ),
+                          ),
+                        ),
+                      if (_isMenuEntryVisible(
+                        MenuVisibilityPremiumService.tareas,
+                      ))
+                        _buildHomeCard(
+                          context: context,
+                          icon: Icons.checklist_outlined,
+                          label: l10n.navTasks,
+                          showPremiumBadge: _isMenuEntryPremium(
+                            MenuVisibilityPremiumService.tareas,
+                          ),
+                          onTap: () =>
+                              Navigator.pushNamed(context, '/todo_list'),
+                        ),
                       _buildHomeCard(
                         context: context,
                         icon: Icons.mark_chat_unread_outlined,
-                        label: 'Chat con dietista',
+                        label: l10n.navChatWithDietitian,
                         onTap: _handleChatDietista,
                       ),
                       _buildHomeCard(
                         context: context,
                         icon: Icons.settings_outlined,
-                        label: 'Ajustes',
+                        label: l10n.settingsAndPrivacyTitle,
                         onTap: () =>
                             Navigator.pushNamed(context, '/user_settings'),
                       ),

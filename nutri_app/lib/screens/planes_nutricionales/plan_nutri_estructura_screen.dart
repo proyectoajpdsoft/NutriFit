@@ -4310,7 +4310,27 @@ class _PlanNutriEstructuraScreenState extends State<PlanNutriEstructuraScreen> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setLocal) => AlertDialog(
-          title: Text('Copiar ${ingesta.tipoIngesta}'),
+          titlePadding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+          title: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Copiar ${ingesta.tipoIngesta}',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Cancelar',
+                style: IconButton.styleFrom(
+                  shape: const CircleBorder(),
+                  padding: EdgeInsets.zero,
+                  minimumSize: const Size(32, 32),
+                ),
+                icon: const Icon(Icons.close, size: 18),
+                onPressed: () => Navigator.pop(context, false),
+              ),
+            ],
+          ),
           content: SizedBox(
             width: 320,
             child: Column(
@@ -4358,10 +4378,6 @@ class _PlanNutriEstructuraScreenState extends State<PlanNutriEstructuraScreen> {
             ),
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancelar'),
-            ),
             FilledButton(
               onPressed:
                   selected.isEmpty ? null : () => Navigator.pop(context, true),
@@ -5033,8 +5049,8 @@ class _PlanNutriEstructuraScreenState extends State<PlanNutriEstructuraScreen> {
     final hastaResumen = _formatDateShort(widget.plan.hasta);
     final planHeaderSummary =
         (desdeResumen.isNotEmpty || hastaResumen.isNotEmpty)
-        ? '$desdeResumen - $hastaResumen'
-        : '';
+            ? '$desdeResumen - $hastaResumen'
+            : '';
 
     return WillPopScope(
       onWillPop: _onWillPop,
@@ -6840,7 +6856,7 @@ class _AlimentoCatalogPickerDialogState
                 children: [
                   Expanded(
                     child: Text(
-                      'Seleccionar alimento',
+                      'Alimento',
                       style: Theme.of(context)
                           .textTheme
                           .titleSmall
@@ -7095,7 +7111,33 @@ class _AlimentoCatalogPickerDialogState
                             selected.isEmpty ? null : selected,
                           );
                         },
-                        child: const Text('Añadir'),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('Aplicar'),
+                            const SizedBox(width: 8),
+                            Container(
+                              width: 20,
+                              height: 20,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: _selectedCodigos.isEmpty
+                                    ? Colors.grey
+                                    : Colors.green,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Text(
+                                _selectedCodigos.length.toString(),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ],

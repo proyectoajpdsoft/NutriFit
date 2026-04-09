@@ -21,7 +21,44 @@ $request_method = $_SERVER["REQUEST_METHOD"];
 
 $validator = new AutoValidator($db);
 $user = $validator->validate();
-PermissionManager::checkPermission($user, 'videos_ejercicios');
+
+function is_safe_video_preview_read_request() {
+    return $_SERVER['REQUEST_METHOD'] === 'GET'
+        && (
+            isset($_GET['categorias'])
+            || isset($_GET['usuario'])
+            || !empty($_GET['codigo'])
+        );
+}
+
+function can_read_video_preview($user) {
+    $user_type = PermissionManager::getUserType($user);
+
+    return in_array($user_type, array(
+        PermissionManager::TYPE_USER_NO_PATIENT,
+        PermissionManager::TYPE_USER_WITH_PATIENT,
+        PermissionManager::TYPE_PREMIUM,
+        PermissionManager::TYPE_NUTRITIONIST,
+        PermissionManager::TYPE_ADMIN,
+    ), true);
+}
+
+function can_manage_video_catalog($user) {
+    $user_type = PermissionManager::getUserType($user);
+
+    return in_array($user_type, array(
+        PermissionManager::TYPE_NUTRITIONIST,
+        PermissionManager::TYPE_ADMIN,
+    ), true);
+}
+
+if (is_safe_video_preview_read_request()) {
+    if (!can_read_video_preview($user)) {
+        PermissionManager::checkPermission($user, 'videos_ejercicios');
+    }
+} else {
+    PermissionManager::checkPermission($user, 'videos_ejercicios');
+}
 
 $is_admin = PermissionManager::isAdmin($user);
 
@@ -220,8 +257,19 @@ function encode_miniatura(&$video) {
     }
 }
 
-function video_select_base() {
+function encode_imagen(&$video) {
+    if (!empty($video['imagen'])) {
+        $video['imagen'] = base64_encode($video['imagen']);
+    }
+}
+
+function video_select_base($include_full_image = false) {
+    $full_image_sql = $include_full_image
+        ? "v.imagen, v.imagen_nombre,"
+        : "v.imagen_nombre,";
+
     return "v.codigo, v.titulo, v.descripcion, v.tipo_media, v.ruta_video, v.formato,
+            $full_image_sql
             v.imagen_miniatura, v.imagen_miniatura_nombre,
             v.visible, v.total_likes,
             v.fechaa, v.codusuarioa, v.fecham, v.codusuariom,
@@ -296,18 +344,24 @@ function get_videos_favoritos_usuario($codigo_usuario) {
 
 // Detalle de un vídeo
 function get_video_ejercicio($codigo) {
-    global $db;
-    $query = "SELECT " . video_select_base() . ",
+    global $db, $user;
+    $query = "SELECT " . video_select_base(true) . ",
               'N' AS me_gusta,
               'N' AS favorito
               FROM nu_video_ejercicio v
               WHERE v.codigo = :codigo";
+
+    if (!can_manage_video_catalog($user)) {
+        $query .= " AND v.visible = 'S'";
+    }
+
     $stmt = $db->prepare($query);
     $stmt->bindParam(':codigo', $codigo);
     $stmt->execute();
     $video = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if ($video) {
+        encode_imagen($video);
         encode_miniatura($video);
         ob_clean();
         echo json_encode($video);
@@ -335,8 +389,15 @@ function create_video_ejercicio() {
     $ruta_video             = isset($data->ruta_video)     ? trim($data->ruta_video)  : null;
     $formato                = isset($data->formato)        ? $data->formato           : null;
     $descripcion            = isset($data->descripcion)    ? $data->descripcion       : null;
+    $imagen                 = null;
+    $imagen_nombre          = null;
     $imagen_miniatura       = null;
     $imagen_miniatura_nombre = null;
+
+    if (!empty($data->imagen)) {
+        $imagen = base64_decode($data->imagen);
+        $imagen_nombre = $data->imagen_nombre ?? 'imagen.jpg';
+    }
 
     if (!empty($data->imagen_miniatura)) {
         $imagen_miniatura        = base64_decode($data->imagen_miniatura);
@@ -349,6 +410,8 @@ function create_video_ejercicio() {
                 tipo_media              = :tipo_media,
                 ruta_video              = :ruta_video,
                 formato                 = :formato,
+                imagen                  = :imagen,
+                imagen_nombre           = :imagen_nombre,
                 imagen_miniatura        = :imagen_miniatura,
                 imagen_miniatura_nombre = :imagen_miniatura_nombre,
                 visible                 = :visible,
@@ -362,6 +425,8 @@ function create_video_ejercicio() {
     $stmt->bindParam(':tipo_media',              $tipo_media);
     $stmt->bindParam(':ruta_video',              $ruta_video);
     $stmt->bindParam(':formato',                 $formato);
+    $stmt->bindParam(':imagen',                  $imagen, PDO::PARAM_LOB);
+    $stmt->bindParam(':imagen_nombre',           $imagen_nombre);
     $stmt->bindParam(':imagen_miniatura',        $imagen_miniatura, PDO::PARAM_LOB);
     $stmt->bindParam(':imagen_miniatura_nombre', $imagen_miniatura_nombre);
     $stmt->bindParam(':visible',                 $visible);
@@ -399,9 +464,21 @@ function update_video_ejercicio() {
     $formato     = isset($data->formato)     ? $data->formato           : null;
     $visible     = isset($data->visible)     ? $data->visible           : 'S';
     $descripcion = isset($data->descripcion) ? $data->descripcion       : null;
+    $clear_imagen = !empty($data->clear_imagen);
+
+    $has_new_imagen = !empty($data->imagen);
+    if ($has_new_imagen) {
+        $imagen = base64_decode($data->imagen);
+        $imagen_nombre = $data->imagen_nombre ?? 'imagen.jpg';
+        $imagen_sql = ", imagen = :imagen, imagen_nombre = :imagen_nombre";
+    } elseif ($clear_imagen) {
+        $imagen_sql = ", imagen = NULL, imagen_nombre = NULL, imagen_miniatura = NULL, imagen_miniatura_nombre = NULL";
+    } else {
+        $imagen_sql = "";
+    }
 
     $has_new_miniatura = !empty($data->imagen_miniatura);
-    if ($has_new_miniatura) {
+    if ($has_new_miniatura && !$clear_imagen) {
         $imagen_miniatura        = base64_decode($data->imagen_miniatura);
         $imagen_miniatura_nombre = $data->imagen_miniatura_nombre ?? 'miniatura.jpg';
         $miniatura_sql = ", imagen_miniatura = :imagen_miniatura, imagen_miniatura_nombre = :imagen_miniatura_nombre";
@@ -418,6 +495,7 @@ function update_video_ejercicio() {
                 visible      = :visible,
                 fecham       = NOW(),
                 codusuariom  = :codusuariom
+                                $imagen_sql
                 $miniatura_sql
               WHERE codigo = :codigo";
 
@@ -431,7 +509,12 @@ function update_video_ejercicio() {
     $stmt->bindParam(':visible',     $visible);
     $stmt->bindParam(':codusuariom', $codusuariom);
 
-    if ($has_new_miniatura) {
+    if ($has_new_imagen) {
+        $stmt->bindParam(':imagen', $imagen, PDO::PARAM_LOB);
+        $stmt->bindParam(':imagen_nombre', $imagen_nombre);
+    }
+
+    if ($has_new_miniatura && !$clear_imagen) {
         $stmt->bindParam(':imagen_miniatura',        $imagen_miniatura, PDO::PARAM_LOB);
         $stmt->bindParam(':imagen_miniatura_nombre', $imagen_miniatura_nombre);
     }

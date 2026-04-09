@@ -6,13 +6,22 @@ import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugins.googlemobileads.GoogleMobileAdsPlugin
 
 class MainActivity : FlutterActivity() {
 	private val channelName = "nutri_app/external_url"
 	private val screenAwakeChannelName = "nutri_app/screen_awake"
+	private var nativeAdFactory: NativeAdvancedAdFactory? = null
 
 	override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
 		super.configureFlutterEngine(flutterEngine)
+
+		nativeAdFactory = NativeAdvancedAdFactory(layoutInflater)
+		GoogleMobileAdsPlugin.registerNativeAdFactory(
+			flutterEngine,
+			"homeNativeAdvanced",
+			nativeAdFactory!!,
+		)
 
 		MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
 			.setMethodCallHandler { call, result ->
@@ -47,5 +56,11 @@ class MainActivity : FlutterActivity() {
 					result.notImplemented()
 				}
 			}
+	}
+
+	override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+		GoogleMobileAdsPlugin.unregisterNativeAdFactory(flutterEngine, "homeNativeAdvanced")
+		nativeAdFactory = null
+		super.cleanUpFlutterEngine(flutterEngine)
 	}
 }

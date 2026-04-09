@@ -1,14 +1,23 @@
 import 'package:flutter/foundation.dart';
+import 'dart:ui' show Locale, PlatformDispatcher;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api_service.dart';
 
 enum AppMode { normal, debug }
 
 class ConfigService with ChangeNotifier {
+  static const List<String> defaultUserTypeOptions = <String>[
+    'Usuario',
+    'Paciente',
+    'Premium',
+    'Nutricionista',
+  ];
+
   static const _kDebugModeKey = 'isDebugMode';
   static const _kEffectiveDebugModeKey = 'effectiveDebugMode';
   static const _kDefaultTipoCitaKey = 'defaultTipoCita';
   static const _kDefaultEstadoCitaKey = 'defaultEstadoCita';
+  static const _kPreferredLanguageCodeKey = 'preferredLanguageCode';
   static const _kDefaultOnlineCitaKey = 'defaultOnlineCita';
   static const _kDefaultCompletadaEntrevistaKey = 'defaultCompletadaEntrevista';
   static const _kDefaultOnlineEntrevistaKey = 'defaultOnlineEntrevista';
@@ -53,12 +62,20 @@ class ConfigService with ChangeNotifier {
   bool _passwordRequireUpperLower = false;
   bool _passwordRequireNumbers = false;
   bool _passwordRequireSpecialChars = false;
-  String _defaultTipoUsuario = 'Paciente';
+  String _defaultTipoUsuario = 'Usuario';
   bool _defaultActivoUsuario = true;
   bool _defaultAccesoUsuario = true;
   bool _showEquivalenciasActividades = true;
   double _deleteSwipePercentage = 50.0;
   bool _isInitialized = false;
+  static const List<Locale> supportedAppLocales = <Locale>[
+    Locale('es'),
+    Locale('en'),
+    Locale('it'),
+    Locale('de'),
+    Locale('fr'),
+    Locale('pt'),
+  ];
 
   AppMode get appMode => _appMode;
   String? get defaultTipoCita => _defaultTipoCita;
@@ -87,6 +104,10 @@ class ConfigService with ChangeNotifier {
   double get deleteSwipePercentage => _deleteSwipePercentage;
   double get deleteSwipeDismissThreshold =>
       (_deleteSwipePercentage / 100).clamp(0.05, 1.0);
+  Locale get appLocale => _appLocale;
+  Locale _appLocale = _resolveSupportedLocale(
+    PlatformDispatcher.instance.locale,
+  );
   bool get isInitialized => _isInitialized;
 
   ConfigService() {
@@ -95,6 +116,8 @@ class ConfigService with ChangeNotifier {
 
   Future<void> _loadConfig() async {
     final prefs = await SharedPreferences.getInstance();
+    final preferredLanguageCode =
+        prefs.getString(_kPreferredLanguageCodeKey)?.trim().toLowerCase();
     final isDebug = prefs.getBool(_kDebugModeKey) ?? false;
     final effectiveDebug = prefs.getBool(_kEffectiveDebugModeKey);
     final debugEnabled = kDebugMode || (effectiveDebug ?? isDebug);
@@ -140,8 +163,9 @@ class ConfigService with ChangeNotifier {
         prefs.getBool(_kPasswordRequireSpecialCharsKey) ?? false;
 
     // Cargar valores por defecto de usuario
-    _defaultTipoUsuario =
-        prefs.getString(_kDefaultTipoUsuarioKey) ?? 'Paciente';
+    _defaultTipoUsuario = _normalizeDefaultTipoUsuario(
+      prefs.getString(_kDefaultTipoUsuarioKey),
+    );
     _defaultActivoUsuario = prefs.getBool(_kDefaultActivoUsuarioKey) ?? true;
     _defaultAccesoUsuario = prefs.getBool(_kDefaultAccesoUsuarioKey) ?? true;
     _showEquivalenciasActividades =
@@ -151,8 +175,39 @@ class ConfigService with ChangeNotifier {
     _deleteSwipePercentage = _sanitizeDeleteSwipePercentage(
       _deleteSwipePercentage,
     );
+    _appLocale = _localeForLanguageCode(preferredLanguageCode) ??
+        _resolveSupportedLocale(PlatformDispatcher.instance.locale);
 
     _isInitialized = true;
+    notifyListeners();
+  }
+
+  static Locale _resolveSupportedLocale(Locale? locale) {
+    final languageCode = locale?.languageCode.trim().toLowerCase() ?? '';
+    return _localeForLanguageCode(languageCode) ?? const Locale('es');
+  }
+
+  static Locale? _localeForLanguageCode(String? languageCode) {
+    final normalized = (languageCode ?? '').trim().toLowerCase();
+    if (normalized.isEmpty) return null;
+
+    for (final locale in supportedAppLocales) {
+      if (locale.languageCode == normalized) {
+        return locale;
+      }
+    }
+    return null;
+  }
+
+  Future<void> setPreferredLanguageCode(String languageCode) async {
+    final locale = _localeForLanguageCode(languageCode) ?? const Locale('es');
+    if (_appLocale.languageCode == locale.languageCode) {
+      return;
+    }
+
+    _appLocale = locale;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kPreferredLanguageCodeKey, locale.languageCode);
     notifyListeners();
   }
 
@@ -412,9 +467,10 @@ class ConfigService with ChangeNotifier {
 
   // Métodos para valores por defecto de usuario
   Future<void> setDefaultTipoUsuario(String tipo) async {
-    _defaultTipoUsuario = tipo;
+    final normalizedTipo = _normalizeDefaultTipoUsuario(tipo);
+    _defaultTipoUsuario = normalizedTipo;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kDefaultTipoUsuarioKey, tipo);
+    await prefs.setString(_kDefaultTipoUsuarioKey, normalizedTipo);
     notifyListeners();
   }
 
@@ -447,6 +503,14 @@ class ConfigService with ChangeNotifier {
     if (value < 5.0) return 5.0;
     if (value > 100.0) return 100.0;
     return value;
+  }
+
+  String _normalizeDefaultTipoUsuario(String? tipo) {
+    final normalized = (tipo ?? '').trim();
+    if (defaultUserTypeOptions.contains(normalized)) {
+      return normalized;
+    }
+    return 'Usuario';
   }
 
   Future<void> setDeleteSwipePercentage(double percentage) async {

@@ -18,6 +18,10 @@ class CharlaSeminario {
     this.codusuarioa,
     this.fecham,
     this.codusuariom,
+    this.audioGlobal,
+    this.audioGlobalNombre,
+    this.audioGlobalMime,
+    this.timelinePresentacionJson,
     List<int>? categoriaIds,
     List<String>? categoriaNombres,
   })  : categoriaIds = categoriaIds ?? <int>[],
@@ -37,6 +41,12 @@ class CharlaSeminario {
   String? meGusta;
   String? favorito;
   int ultimaDiapositivaVista;
+
+  /// Audio global base64 (puede ser null si no se ha configurado)
+  String? audioGlobal;
+  String? audioGlobalNombre;
+  String? audioGlobalMime;
+  String? timelinePresentacionJson;
   DateTime? fechaa;
   int? codusuarioa;
   DateTime? fecham;
@@ -80,6 +90,10 @@ class CharlaSeminario {
       codusuariom: json['codusuariom'] != null
           ? int.tryParse(json['codusuariom'].toString())
           : null,
+      audioGlobal: json['audio_global']?.toString(),
+      audioGlobalNombre: json['audio_global_nombre']?.toString(),
+      audioGlobalMime: json['audio_global_mime']?.toString(),
+      timelinePresentacionJson: json['timeline_presentacion_json']?.toString(),
       categoriaIds: _parseIds(json['categorias_ids']),
       categoriaNombres: _parseNames(json['categorias_nombres']),
     );

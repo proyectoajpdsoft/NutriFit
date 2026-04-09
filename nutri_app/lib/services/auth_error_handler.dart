@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:nutri_app/exceptions/auth_exceptions.dart';
 import 'package:nutri_app/services/auth_service.dart';
+import 'package:provider/provider.dart';
 
 /// Manejador global de errores de autenticación
 /// Captura TokenExpiredException y muestra un diálogo amable al usuario
@@ -43,8 +44,10 @@ class AuthErrorHandler {
     _redirectInProgress = true;
 
     try {
-      // Limpia la sesión
-      await AuthService().logout();
+      final rootContext = navigatorKey.currentContext;
+      if (rootContext != null) {
+        await rootContext.read<AuthService>().logout();
+      }
       if (onSessionCleared != null) {
         onSessionCleared();
       }

@@ -99,69 +99,6 @@ class _EntrevistasFitPacientesListScreenState
     }
   }
 
-  Future<void> _showPacienteSelectorAndAdd() async {
-    try {
-      final pacientes = await _apiService.getPacientes(
-        activo: _filtroActivo == "Todos" ? null : _filtroActivo,
-      );
-      if (!mounted) return;
-
-      Paciente? selected;
-      await showDialog(
-        context: context,
-        builder: (context) {
-          return AlertDialog(
-            title: const Text('Nueva Entrevista Fit'),
-            content: SizedBox(
-              width: double.maxFinite,
-              child: DropdownButtonFormField<Paciente>(
-                isExpanded: true,
-                decoration: const InputDecoration(labelText: 'Paciente'),
-                items: pacientes
-                    .map((p) => DropdownMenuItem<Paciente>(
-                          value: p,
-                          child: Text(p.nombre),
-                        ))
-                    .toList(),
-                onChanged: (value) {
-                  selected = value;
-                },
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Cancelar'),
-              ),
-              TextButton(
-                onPressed: () {
-                  if (selected != null) {
-                    Navigator.of(context).pop();
-                    Navigator.of(context)
-                        .push(MaterialPageRoute(
-                      builder: (context) => EntrevistaFitEditScreen(
-                        paciente: selected!,
-                      ),
-                    ))
-                        .then((value) {
-                      _refreshPacientes();
-                    });
-                  }
-                },
-                child: const Text('Continuar'),
-              )
-            ],
-          );
-        },
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-      );
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -207,7 +144,15 @@ class _EntrevistasFitPacientesListScreenState
       ),
       drawer: const AppDrawer(),
       floatingActionButton: FloatingActionButton(
-        onPressed: _showPacienteSelectorAndAdd,
+        onPressed: () {
+          Navigator.of(context)
+              .push(
+                MaterialPageRoute(
+                  builder: (context) => const EntrevistaFitEditScreen(),
+                ),
+              )
+              .then((_) => _refreshPacientes());
+        },
         tooltip: 'Nueva Entrevista Fit',
         child: const Icon(Icons.add),
       ),

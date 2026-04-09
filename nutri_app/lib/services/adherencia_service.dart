@@ -7,6 +7,14 @@ enum AdherenciaEstado { cumplido, parcial, noRealizado }
 
 enum AdherenciaTipo { nutri, fit }
 
+enum AdherenciaConsejoClave {
+  nutriTarget,
+  nutriTrend,
+  fitTarget,
+  fitTrend,
+  keepGoing,
+}
+
 class AdherenciaMetricaSemanal {
   const AdherenciaMetricaSemanal({
     required this.tipo,
@@ -34,7 +42,7 @@ class AdherenciaResumenSemanal {
 
   final AdherenciaMetricaSemanal? nutri;
   final AdherenciaMetricaSemanal? fit;
-  final List<String> puntosMejora;
+  final List<AdherenciaConsejoClave> puntosMejora;
 
   bool get hasData => nutri != null || fit != null;
 }
@@ -253,33 +261,30 @@ class AdherenciaService {
     );
   }
 
-  List<String> _buildPuntosMejora(
+  List<AdherenciaConsejoClave> _buildPuntosMejora(
     AdherenciaMetricaSemanal? nutri,
     AdherenciaMetricaSemanal? fit,
   ) {
-    final tips = <String>[];
+    final tips = <AdherenciaConsejoClave>[];
 
     if (nutri != null) {
       if (nutri.porcentaje < 60) {
-        tips.add('Nutri: intenta cumplir al menos 5 de 7 días esta semana.');
+        tips.add(AdherenciaConsejoClave.nutriTarget);
       } else if (nutri.tendencia < 0) {
-        tips.add(
-            'Nutri: vas a la baja frente a la semana pasada; vuelve a tu rutina base.');
+        tips.add(AdherenciaConsejoClave.nutriTrend);
       }
     }
 
     if (fit != null) {
       if (fit.porcentaje < 60) {
-        tips.add(
-            'Fit: intenta llegar a 3-4 sesiones semanales, aunque sean cortas.');
+        tips.add(AdherenciaConsejoClave.fitTarget);
       } else if (fit.tendencia < 0) {
-        tips.add(
-            'Fit: la tendencia ha bajado; agenda tus próximas sesiones hoy.');
+        tips.add(AdherenciaConsejoClave.fitTrend);
       }
     }
 
     if (tips.isEmpty) {
-      tips.add('Buen ritmo. Mantén la constancia para consolidar resultados.');
+      tips.add(AdherenciaConsejoClave.keepGoing);
     }
 
     return tips.take(3).toList(growable: false);

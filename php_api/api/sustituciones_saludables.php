@@ -19,17 +19,22 @@ $db = $database->getConnection();
 
 $validator = new AutoValidator($db);
 $user = $validator->validate();
-PermissionManager::checkPermission($user, 'premium_exclusive');
 
 ensure_sustitucion_tables();
 
 $request_method = $_SERVER['REQUEST_METHOD'];
+
+function require_sustituciones_permission() {
+    global $user;
+    PermissionManager::checkPermission($user, 'premium_exclusive');
+}
 
 switch ($request_method) {
     case 'GET':
         if (isset($_GET['total'])) {
             get_sustituciones_total();
         } else if (isset($_GET['categorias'])) {
+            require_sustituciones_permission();
             get_sustitucion_categorias();
         } else if (!empty($_GET['codigo'])) {
             get_sustitucion(intval($_GET['codigo']));
@@ -38,10 +43,12 @@ switch ($request_method) {
         } else if (isset($_GET['publico'])) {
             get_public_sustituciones(false);
         } else {
+            require_sustituciones_permission();
             get_sustituciones();
         }
         break;
     case 'POST':
+        require_sustituciones_permission();
         if (isset($_GET['categorias'])) {
             require_manager();
             create_sustitucion_categoria();
@@ -51,6 +58,7 @@ switch ($request_method) {
         }
         break;
     case 'PUT':
+        require_sustituciones_permission();
         require_manager();
         if (isset($_GET['categorias'])) {
             update_sustitucion_categoria();
@@ -59,6 +67,7 @@ switch ($request_method) {
         }
         break;
     case 'DELETE':
+        require_sustituciones_permission();
         require_manager();
         if (isset($_GET['categorias'])) {
             if (!empty($_GET['codigo'])) {
@@ -668,14 +677,20 @@ function get_sustitucion($codigo) {
 
     $user_code = current_user_code();
     $joins = '';
+    $where = array('s.codigo = :codigo');
     if ($user_code > 0) {
         $joins = 'LEFT JOIN nu_sustitucion_saludable_usuario su ON s.codigo = su.codigo_sustitucion AND su.codigo_usuario = :codigo_usuario';
+    }
+
+    if (!is_manager_user()) {
+        $where[] = "s.activo = 'S'";
+        $where[] = "s.visible_para_todos = 'S'";
     }
 
     $query = "SELECT " . base_select_fields(true, true) . "
         FROM nu_sustitucion_saludable s
         $joins
-        WHERE s.codigo = :codigo
+        WHERE " . implode(' AND ', $where) . "
         LIMIT 1";
 
     $stmt = $db->prepare($query);

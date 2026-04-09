@@ -12,6 +12,7 @@ class CharlaDiapositiva {
     this.audioDuracionMs,
     this.anchoPx,
     this.altoPx,
+    this.duracionPresentacionSeg,
   });
 
   int? codigo;
@@ -26,6 +27,9 @@ class CharlaDiapositiva {
   int? audioDuracionMs;
   int? anchoPx;
   int? altoPx;
+
+  /// Duración asignada en la presentación global (segundos). Null = no configurada.
+  double? duracionPresentacionSeg;
 
   factory CharlaDiapositiva.fromJson(Map<String, dynamic> json) {
     return CharlaDiapositiva(
@@ -53,6 +57,9 @@ class CharlaDiapositiva {
       altoPx: json['alto_px'] != null
           ? int.tryParse(json['alto_px'].toString())
           : null,
+      duracionPresentacionSeg: json['duracion_presentacion_seg'] != null
+          ? double.tryParse(json['duracion_presentacion_seg'].toString())
+          : null,
     );
   }
 
@@ -73,6 +80,8 @@ class CharlaDiapositiva {
       if (audioDuracionMs != null) 'audio_duracion_ms': audioDuracionMs,
       if (anchoPx != null) 'ancho_px': anchoPx,
       if (altoPx != null) 'alto_px': altoPx,
+      if (duracionPresentacionSeg != null)
+        'duracion_presentacion_seg': duracionPresentacionSeg,
     };
   }
 }

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../models/consejo.dart';
@@ -23,6 +24,9 @@ class SuplementoDetailScreen extends StatelessWidget {
     this.allSuplementos = const <Suplemento>[],
     this.showPremiumRecommendations = false,
     this.onNavigateToSuplemento,
+    this.allowCopyAndPdf = true,
+    this.allowDiscoveryNavigation = true,
+    this.onRequestPremiumAccess,
   });
 
   final Suplemento suplemento;
@@ -31,6 +35,9 @@ class SuplementoDetailScreen extends StatelessWidget {
   final List<Suplemento> allSuplementos;
   final bool showPremiumRecommendations;
   final Future<void> Function(Suplemento suplemento)? onNavigateToSuplemento;
+  final bool allowCopyAndPdf;
+  final bool allowDiscoveryNavigation;
+  final Future<void> Function(String message)? onRequestPremiumAccess;
 
   String get _descripcion => (suplemento.descripcion ?? '').trim();
 
@@ -122,6 +129,15 @@ class SuplementoDetailScreen extends StatelessWidget {
     BuildContext context,
     ({String prefix, String type, int codigo}) link,
   ) async {
+    final l10n = AppLocalizations.of(context)!;
+    if (!allowDiscoveryNavigation) {
+      await _requestPremiumAccess(
+        context,
+        l10n.supplementsPremiumExploreMessage,
+      );
+      return;
+    }
+
     String endpoint;
     switch (link.type) {
       case 'consejo':
@@ -272,6 +288,14 @@ class SuplementoDetailScreen extends StatelessWidget {
     BuildContext context,
     String rawTitle,
   ) async {
+    if (!allowDiscoveryNavigation) {
+      await _requestPremiumAccess(
+        context,
+        'Los hashtags y las recomendaciones de suplementos están disponibles solo para usuarios Premium.',
+      );
+      return;
+    }
+
     final found = _findSuplementoByTitle(rawTitle);
     if (found == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -379,7 +403,31 @@ class SuplementoDetailScreen extends StatelessWidget {
     return (match?.group(1) ?? line).trim();
   }
 
+  Future<void> _requestPremiumAccess(
+    BuildContext context,
+    String message,
+  ) async {
+    final callback = onRequestPremiumAccess;
+    if (callback != null) {
+      await callback(message);
+      return;
+    }
+
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
   void _handleHashtagTap(BuildContext context, String tag) {
+    if (!allowDiscoveryNavigation) {
+      _requestPremiumAccess(
+        context,
+        'Los hashtags y las recomendaciones de suplementos están disponibles solo para usuarios Premium.',
+      );
+      return;
+    }
+
     final cleanTag = _withoutHashtagPrefix(tag);
     if (onHashtagTap != null) {
       onHashtagTap!(cleanTag);
@@ -689,6 +737,15 @@ class SuplementoDetailScreen extends StatelessWidget {
             tooltip: 'Copiar',
             icon: const Icon(Icons.copy_outlined),
             onPressed: () async {
+              final l10n = AppLocalizations.of(context)!;
+              if (!allowCopyAndPdf) {
+                await _requestPremiumAccess(
+                  context,
+                  l10n.supplementsPremiumCopyPdfMessage,
+                );
+                return;
+              }
+
               final copyText = await _buildCopyText(context);
               await Clipboard.setData(ClipboardData(text: copyText));
               if (!context.mounted) return;
@@ -703,6 +760,15 @@ class SuplementoDetailScreen extends StatelessWidget {
             tooltip: 'PDF',
             icon: const Icon(Icons.picture_as_pdf_outlined),
             onPressed: () {
+              final l10n = AppLocalizations.of(context)!;
+              if (!allowCopyAndPdf) {
+                _requestPremiumAccess(
+                  context,
+                  l10n.supplementsPremiumCopyPdfMessage,
+                );
+                return;
+              }
+
               final sanitizedDescripcion =
                   _replaceStructuredLinks(_descripcion, forDisplay: true);
               final toExport = Suplemento(
@@ -763,7 +829,17 @@ class SuplementoDetailScreen extends StatelessWidget {
                             borderRadius: BorderRadius.circular(12),
                             onTap: onNavigateToSuplemento == null
                                 ? null
-                                : () => onNavigateToSuplemento!(item),
+                                : () {
+                                    final l10n = AppLocalizations.of(context)!;
+                                    if (!allowDiscoveryNavigation) {
+                                      _requestPremiumAccess(
+                                        context,
+                                        l10n.supplementsPremiumExploreMessage,
+                                      );
+                                      return;
+                                    }
+                                    onNavigateToSuplemento!(item);
+                                  },
                             child: Padding(
                               padding: const EdgeInsets.all(12),
                               child: Column(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../l10n/app_localizations.dart';
 import '../models/chat_conversation.dart';
 import '../models/chat_message.dart';
 import '../services/api_service.dart';
@@ -62,6 +63,8 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
   }
 
   Widget _buildGuestGate() {
+    final l10n = AppLocalizations.of(context)!;
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -70,14 +73,14 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
           children: [
             const Icon(Icons.lock_outline, size: 48, color: Colors.grey),
             const SizedBox(height: 12),
-            const Text(
-              'Para chatear con tu dietista online, por favor, regístrate (es gratis).',
+            Text(
+              l10n.messagesInboxGuestBody,
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
             ElevatedButton(
               onPressed: () => Navigator.pushNamed(context, '/register'),
-              child: const Text('Iniciar registro'),
+              child: Text(l10n.messagesInboxGuestAction),
             ),
           ],
         ),
@@ -163,25 +166,27 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
   }
 
   Widget _buildNutriUnreadTab() {
+    final l10n = AppLocalizations.of(context)!;
+
     return ListView(
       children: [
         _buildSectionHeader(
-          'Chats sin leer',
+          l10n.messagesInboxUnreadChats,
           _conversations.length,
           background: const Color(0xFFE7F3FF),
           accent: const Color(0xFF1B6FD8),
           icon: Icons.mark_chat_unread_outlined,
         ),
         if (_conversations.isEmpty)
-          const Padding(
+          Padding(
             padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Text('No hay chats pendientes.'),
+            child: Text(l10n.messagesInboxNoPendingChats),
           )
         else
           ..._conversations.map((convo) {
             final nombre = convo.nombre.isNotEmpty
                 ? convo.nombre
-                : (convo.nick.isNotEmpty ? convo.nick : 'Usuario');
+                : (convo.nick.isNotEmpty ? convo.nick : l10n.messagesInboxUser);
             return ListTile(
               leading: CircleAvatar(
                 child: Text(
@@ -193,8 +198,8 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
                 convo.lastMessage?.isNotEmpty == true
                     ? convo.lastMessage!
                     : (convo.lastImageBase64?.isNotEmpty == true
-                        ? 'Imagen'
-                        : 'Sin mensajes'),
+                        ? l10n.messagesInboxImage
+                        : l10n.messagesInboxNoMessages),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -220,21 +225,21 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
             );
           }),
         _buildSectionHeader(
-          'Sensaciones de ejercicios pendientes',
+          l10n.messagesInboxPendingExerciseFeelings,
           _sensacionesPendientes.length,
           background: const Color(0xFFFFF1E6),
           accent: const Color(0xFFE0721A),
           icon: Icons.assignment_outlined,
         ),
         if (_sensacionesPendientes.isEmpty)
-          const Padding(
+          Padding(
             padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Text('No hay sensaciones de ejercicios pendientes.'),
+            child: Text(l10n.messagesInboxNoPendingExerciseFeelings),
           )
         else
           ListTile(
             leading: const Icon(Icons.assignment_outlined),
-            title: const Text('Ver sensaciones de ejercicios pendientes'),
+            title: Text(l10n.messagesInboxViewPendingExerciseFeelings),
             trailing: const Icon(Icons.chevron_right),
             onTap: () async {
               await Navigator.push(
@@ -256,10 +261,12 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
   }
 
   Widget _buildPacienteContent() {
+    final l10n = AppLocalizations.of(context)!;
+
     return ListView(
       children: [
         _buildSectionHeader(
-          'Chats con dietista sin leer',
+          l10n.messagesInboxUnreadDietitianChats,
           _unreadChatMessages.length,
           background: const Color(0xFFE7F3FF),
           accent: const Color(0xFF1B6FD8),
@@ -268,7 +275,7 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
         if (_unreadChatMessages.isEmpty)
           ListTile(
             leading: const Icon(Icons.mark_chat_unread_outlined),
-            title: const Text('Abrir chat con dietista'),
+            title: Text(l10n.messagesInboxOpenDietitianChat),
             trailing: const Icon(Icons.chevron_right),
             onTap: () async {
               await Navigator.push(
@@ -288,10 +295,12 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
           ..._unreadChatMessages.map((msg) {
             final preview = msg.body?.isNotEmpty == true
                 ? msg.body!
-                : (msg.imageBase64?.isNotEmpty == true ? 'Imagen' : 'Mensaje');
+                : (msg.imageBase64?.isNotEmpty == true
+                    ? l10n.messagesInboxImage
+                    : l10n.messagesInboxMessage);
             return ListTile(
               leading: const Icon(Icons.mark_chat_unread_outlined),
-              title: const Text('Mensaje de dietista'),
+              title: Text(l10n.messagesInboxDietitianMessage),
               subtitle:
                   Text(preview, maxLines: 1, overflow: TextOverflow.ellipsis),
               onTap: () async {
@@ -310,21 +319,21 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
             );
           }),
         _buildSectionHeader(
-          'Comentarios de entrenador sin leer',
+          l10n.messagesInboxUnreadCoachComments,
           _comentariosPendientes.length,
           background: const Color(0xFFF1F7E8),
           accent: const Color(0xFF3E7C29),
           icon: Icons.assignment_outlined,
         ),
         if (_comentariosPendientes.isEmpty)
-          const Padding(
+          Padding(
             padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Text('No tienes comentarios de entrenador personal pendientes de leer.'),
+            child: Text(l10n.messagesInboxNoUnreadCoachComments),
           )
         else
           ListTile(
             leading: const Icon(Icons.assignment_outlined),
-            title: const Text('Ver comentarios pendientes'),
+            title: Text(l10n.messagesInboxViewPendingComments),
             trailing: const Icon(Icons.chevron_right),
             onTap: () async {
               await Navigator.push(
@@ -348,10 +357,11 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
   @override
   Widget build(BuildContext context) {
     final authService = context.watch<AuthService>();
+    final l10n = AppLocalizations.of(context)!;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Mensajes sin leer'),
+        title: Text(l10n.messagesInboxTitle),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
@@ -368,7 +378,11 @@ class _MessagesInboxScreenState extends State<MessagesInboxScreen> {
 
                 if (snapshot.hasError) {
                   return Center(
-                    child: Text('Error al cargar mensajes: ${snapshot.error}'),
+                    child: Text(
+                      l10n.messagesInboxLoadError(
+                        snapshot.error.toString(),
+                      ),
+                    ),
                   );
                 }
 

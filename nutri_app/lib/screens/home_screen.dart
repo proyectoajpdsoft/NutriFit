@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:nutri_app/screens/citas/citas_list_screen.dart';
 import 'package:nutri_app/screens/clientes/clientes_list_screen.dart';
 import 'package:nutri_app/screens/cobros/cobros_list_screen.dart';
@@ -25,6 +26,7 @@ import 'package:nutri_app/widgets/app_drawer.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/services/config_service.dart';
+import 'package:nutri_app/services/menu_visibility_premium_service.dart';
 import 'package:nutri_app/services/push_notifications_service.dart';
 import 'package:nutri_app/models/usuario.dart';
 import 'package:nutri_app/mixins/auth_error_handler_mixin.dart';
@@ -46,15 +48,122 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
   bool _isAuthorized = true;
   bool _twoFactorPromptShownInSession = false;
   bool _premiumWarningShownInSession = false;
+  bool _entryOverlaysHandled = false;
+  Map<String, MenuEntryConfig> _menuConfig =
+      MenuVisibilityPremiumService.defaultConfig();
 
   @override
   void initState() {
     super.initState();
     _verifyUserAndLoad();
+    _loadMenuConfig();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _checkAndShowTwoFactorRecommendation();
-      _checkAndShowPremiumExpiryWarning();
+      _handleEntryOverlays();
     });
+  }
+
+  Future<void> _loadMenuConfig() async {
+    try {
+      final config = await MenuVisibilityPremiumService.loadConfig(
+        apiService: context.read<ApiService>(),
+        forceRefresh: true,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _menuConfig = config;
+      });
+    } catch (_) {}
+  }
+
+  bool _isMenuEntryPremium(String key) {
+    return MenuVisibilityPremiumService.isPremium(_menuConfig, key);
+  }
+
+  bool _isMenuEntryVisible(String key) {
+    return MenuVisibilityPremiumService.isVisible(_menuConfig, key);
+  }
+
+  int _dashboardCrossAxisCount(double width) {
+    if (width >= 1600) return 6;
+    if (width >= 1100) return 5;
+    if (width >= 800) return 4;
+    return 3;
+  }
+
+  double _dashboardChildAspectRatio(double width) {
+    if (width >= 1600) return 1.18;
+    if (width >= 1100) return 1.12;
+    if (width >= 800) return 1.05;
+    return 1.1;
+  }
+
+  Future<void> _handleEntryOverlays() async {
+    if (!mounted || _entryOverlaysHandled) return;
+    _entryOverlaysHandled = true;
+
+    await _checkAndShowPremiumPaymentConfirmation();
+    if (!mounted) return;
+
+    _checkAndShowTwoFactorRecommendation();
+    _checkAndShowPremiumExpiryWarning();
+  }
+
+  Future<void> _checkAndShowPremiumPaymentConfirmation() async {
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args is! Map<String, dynamic>) return;
+    if (args[premiumPaymentConfirmationArgumentKey] != true) return;
+    final l10n = AppLocalizations.of(context)!;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isDismissible: false,
+      enableDrag: false,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.verified_outlined,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        l10n.homePaymentNotifiedTitle,
+                        style:
+                            Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  l10n.homePaymentNotifiedMessage,
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(sheetContext).pop(),
+                    child: Text(l10n.commonAgree),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   String _premiumWarningShownKey(String userCode, String dayKey) {
@@ -100,6 +209,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
     final formattedExpiry =
         '${expiry.day.toString().padLeft(2, '0')}/${expiry.month.toString().padLeft(2, '0')}/${expiry.year}';
     final isExpired = days < 0;
+    final l10n = AppLocalizations.of(context)!;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -123,8 +233,8 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
                     Expanded(
                       child: Text(
                         isExpired
-                            ? 'Tu Premium ha caducado'
-                            : 'Tu Premium está próximo a caducar',
+                            ? l10n.homePremiumExpiredTitle
+                            : l10n.homePremiumExpiringTitle,
                         style: const TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 15,
@@ -136,8 +246,15 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
                 const SizedBox(height: 8),
                 Text(
                   isExpired
-                      ? 'Tu Premium caducó el $formattedExpiry. Puedes renovarlo ahora.'
-                      : 'Tu Premium vence el $formattedExpiry (${days == 0 ? 'hoy' : 'en $days día${days == 1 ? '' : 's'}'}). Te recomendamos renovarlo para no perder ventajas.',
+                      ? l10n.homePremiumExpiredMessage(formattedExpiry)
+                      : days == 0
+                          ? l10n.homePremiumExpiringTodayMessage(
+                              formattedExpiry,
+                            )
+                          : l10n.homePremiumExpiringInDaysMessage(
+                              formattedExpiry,
+                              days,
+                            ),
                 ),
                 const SizedBox(height: 12),
                 Wrap(
@@ -146,7 +263,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
                   children: [
                     TextButton(
                       onPressed: () => Navigator.of(sheetContext).pop(),
-                      child: const Text('Más tarde'),
+                      child: Text(l10n.commonLater),
                     ),
                     ElevatedButton.icon(
                       onPressed: () {
@@ -154,7 +271,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
                         Navigator.pushNamed(context, '/premium_info');
                       },
                       icon: const Icon(Icons.workspace_premium_outlined),
-                      label: const Text('Renovar Premium'),
+                      label: Text(l10n.homeRenewPremium),
                     ),
                   ],
                 ),
@@ -192,21 +309,22 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
   }
 
   Future<void> _openPremiumPreviewMenu() async {
+    final l10n = AppLocalizations.of(context)!;
     await showModalBottomSheet<void>(
       context: context,
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const ListTile(
+            ListTile(
               title: Text(
-                'Hazte Premium (vista previa)',
+                l10n.navPremiumPreview,
                 style: TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
             ListTile(
               leading: const Icon(Icons.verified_user_outlined),
-              title: const Text('Ver como usuario registrado'),
+              title: Text(l10n.navPreviewRegisteredUser),
               onTap: () {
                 Navigator.pop(ctx);
                 Navigator.push(
@@ -221,7 +339,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
             ),
             ListTile(
               leading: const Icon(Icons.person_add_alt_1_outlined),
-              title: const Text('Ver como usuario no registrado'),
+              title: Text(l10n.navPreviewGuestUser),
               onTap: () {
                 Navigator.pop(ctx);
                 Navigator.push(
@@ -265,6 +383,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
     if (!mounted || enabled) return;
 
     _twoFactorPromptShownInSession = true;
+    final l10n = AppLocalizations.of(context)!;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -285,9 +404,9 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
                       color: Theme.of(context).colorScheme.primary,
                     ),
                     const SizedBox(width: 8),
-                    const Expanded(
+                    Expanded(
                       child: Text(
-                        'Seguridad recomendada',
+                        l10n.homeSecurityRecommendedTitle,
                         style: TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 15,
@@ -302,8 +421,8 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
                   ],
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'Trabajas con datos médicos sensibles. Te recomendamos activar el doble factor (2FA) para proteger mejor tu cuenta.',
+                Text(
+                  l10n.homeSecurityRecommendedBody,
                 ),
                 const SizedBox(height: 10),
                 Wrap(
@@ -316,7 +435,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
                         await _openProfileEditor();
                       },
                       icon: const Icon(Icons.person_outline, size: 18),
-                      label: const Text('Ir a editar perfil'),
+                      label: Text(l10n.homeGoToEditProfile),
                     ),
                     TextButton(
                       onPressed: () async {
@@ -328,7 +447,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
                           Navigator.of(sheetContext).pop();
                         }
                       },
-                      child: const Text('No volver a mostrar'),
+                      child: Text(l10n.homeDoNotShowAgain),
                     ),
                   ],
                 ),
@@ -406,8 +525,12 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final isDebugAppMode =
         context.watch<ConfigService>().appMode == AppMode.debug;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final crossAxisCount = _dashboardCrossAxisCount(screenWidth);
+    final childAspectRatio = _dashboardChildAspectRatio(screenWidth);
 
     // Si el usuario no está autorizado, mostrar una pantalla de carga mientras se redirige
     if (!_isAuthorized) {
@@ -437,8 +560,8 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
                   color: Colors.orange.shade700,
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Text(
-                  'DEBUG',
+                child: Text(
+                  l10n.commonDebug,
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 10,
@@ -566,15 +689,15 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
           child: GridView.count(
-            crossAxisCount: 3,
+            crossAxisCount: crossAxisCount,
             crossAxisSpacing: 4,
             mainAxisSpacing: 4,
-            childAspectRatio: 1.1,
+            childAspectRatio: childAspectRatio,
             children: <Widget>[
               _buildDashboardCard(
                 context,
                 icon: Icons.mark_chat_unread_outlined,
-                label: 'Chat',
+                label: l10n.navChat,
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -583,7 +706,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               _buildDashboardCard(
                 context,
                 icon: Icons.people_outline,
-                label: 'Pacientes',
+                label: l10n.navPatients,
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -592,7 +715,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               _buildDashboardCard(
                 context,
                 icon: Icons.calendar_today_outlined,
-                label: 'Citas',
+                label: l10n.navAppointments,
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -601,7 +724,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               _buildDashboardCard(
                 context,
                 icon: Icons.rate_review_outlined,
-                label: 'Revisiones',
+                label: l10n.navReviews,
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -611,7 +734,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               _buildDashboardCard(
                 context,
                 icon: Icons.show_chart_outlined,
-                label: 'Mediciones',
+                label: l10n.navMeasurements,
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -621,7 +744,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               _buildDashboardCard(
                 context,
                 icon: Icons.assignment_outlined,
-                label: 'Entrevistas Nutri',
+                label: l10n.navNutriInterviews,
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -631,7 +754,13 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               _buildDashboardCard(
                 context,
                 icon: Icons.article_outlined,
-                label: 'Planes Nutri',
+                label: l10n.navNutriPlans,
+                showPremiumBadge: _isMenuEntryPremium(
+                  MenuVisibilityPremiumService.planesNutri,
+                ),
+                showHiddenBadge: !_isMenuEntryVisible(
+                  MenuVisibilityPremiumService.planesNutri,
+                ),
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -641,7 +770,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               _buildDashboardCard(
                 context,
                 icon: Icons.sports_gymnastics_outlined,
-                label: 'Entrevistas Fit',
+                label: l10n.navFitInterviews,
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -651,7 +780,13 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               _buildDashboardCard(
                 context,
                 icon: Icons.fitness_center_outlined,
-                label: 'Planes Fit',
+                label: l10n.navFitPlans,
+                showPremiumBadge: _isMenuEntryPremium(
+                  MenuVisibilityPremiumService.planesFit,
+                ),
+                showHiddenBadge: !_isMenuEntryVisible(
+                  MenuVisibilityPremiumService.planesFit,
+                ),
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -661,7 +796,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               _buildDashboardCard(
                 context,
                 icon: Icons.set_meal_outlined,
-                label: 'Alimentos',
+                label: l10n.navFoods,
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -670,22 +805,37 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               _buildDashboardCard(
                 context,
                 icon: Icons.medication_outlined,
-                label: 'Suplementos',
-                showPremiumBadge: true,
+                label: l10n.navSupplements,
+                showPremiumBadge: _isMenuEntryPremium(
+                  MenuVisibilityPremiumService.suplementos,
+                ),
+                showHiddenBadge: !_isMenuEntryVisible(
+                  MenuVisibilityPremiumService.suplementos,
+                ),
                 onTap: () => Navigator.pushNamed(context, '/suplementos_list'),
               ),
               _buildDashboardCard(
                 context,
                 icon: Icons.science_outlined,
-                label: 'Aditivos',
-                showPremiumBadge: true,
+                label: l10n.navAdditives,
+                showPremiumBadge: _isMenuEntryPremium(
+                  MenuVisibilityPremiumService.aditivosAlimentarios,
+                ),
+                showHiddenBadge: !_isMenuEntryVisible(
+                  MenuVisibilityPremiumService.aditivosAlimentarios,
+                ),
                 onTap: () => Navigator.pushNamed(context, '/aditivos_list'),
               ),
               _buildDashboardCard(
                 context,
                 icon: Icons.sports_mma,
-                label: 'Ejercicios',
-                showPremiumBadge: true,
+                label: l10n.navExercises,
+                showPremiumBadge: _isMenuEntryPremium(
+                  MenuVisibilityPremiumService.catalogoEjercicios,
+                ),
+                showHiddenBadge: !_isMenuEntryVisible(
+                  MenuVisibilityPremiumService.catalogoEjercicios,
+                ),
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -695,37 +845,58 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               _buildDashboardCard(
                 context,
                 icon: Icons.play_circle_outline,
-                label: 'Vídeos Ejercicios',
-                showPremiumBadge: true,
+                label: l10n.navExerciseVideos,
+                showPremiumBadge: _isMenuEntryPremium(
+                  MenuVisibilityPremiumService.videosEjercicios,
+                ),
+                showHiddenBadge: !_isMenuEntryVisible(
+                  MenuVisibilityPremiumService.videosEjercicios,
+                ),
                 onTap: () =>
                     Navigator.pushNamed(context, '/videos_ejercicios_admin'),
               ),
               _buildDashboardCard(
                 context,
                 icon: Icons.swap_horiz_rounded,
-                label: 'Sustituciones',
-                showPremiumBadge: true,
+                label: l10n.navSubstitutions,
+                showPremiumBadge: _isMenuEntryPremium(
+                  MenuVisibilityPremiumService.sustitucionesSaludables,
+                ),
+                showHiddenBadge: !_isMenuEntryVisible(
+                  MenuVisibilityPremiumService.sustitucionesSaludables,
+                ),
                 onTap: () => Navigator.pushNamed(
                     context, '/sustituciones_saludables_list'),
               ),
               _buildDashboardCard(
                 context,
                 icon: Icons.record_voice_over_outlined,
-                label: 'Charlas',
-                showPremiumBadge: true,
+                label: l10n.navTalks,
+                showPremiumBadge: _isMenuEntryPremium(
+                  MenuVisibilityPremiumService.charlasSeminarios,
+                ),
+                showHiddenBadge: !_isMenuEntryVisible(
+                  MenuVisibilityPremiumService.charlasSeminarios,
+                ),
                 onTap: () =>
                     Navigator.pushNamed(context, '/charlas_seminarios_list'),
               ),
               _buildDashboardCard(
                 context,
                 icon: Icons.workspace_premium_outlined,
-                label: 'Hazte Premium',
+                label: l10n.navPremium,
                 onTap: _openPremiumPreviewMenu,
               ),
               _buildDashboardCard(
                 context,
                 icon: Icons.directions_run,
-                label: 'Actividades',
+                label: l10n.navActivities,
+                showPremiumBadge: _isMenuEntryPremium(
+                  MenuVisibilityPremiumService.actividades,
+                ),
+                showHiddenBadge: !_isMenuEntryVisible(
+                  MenuVisibilityPremiumService.actividades,
+                ),
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -734,7 +905,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               _buildDashboardCard(
                 context,
                 icon: Icons.dashboard_outlined,
-                label: 'Dashboard',
+                label: l10n.navDashboard,
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -743,7 +914,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               _buildDashboardCard(
                 context,
                 icon: Icons.payment_outlined,
-                label: 'Cobros',
+                label: l10n.navCharges,
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -752,7 +923,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               _buildDashboardCard(
                 context,
                 icon: Icons.business_center_outlined,
-                label: 'Clientes',
+                label: l10n.navClients,
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -761,19 +932,37 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               _buildDashboardCard(
                 context,
                 icon: Icons.lightbulb_outlined,
-                label: 'Consejos',
+                label: l10n.navTips,
+                showPremiumBadge: _isMenuEntryPremium(
+                  MenuVisibilityPremiumService.consejos,
+                ),
+                showHiddenBadge: !_isMenuEntryVisible(
+                  MenuVisibilityPremiumService.consejos,
+                ),
                 onTap: () => Navigator.pushNamed(context, '/consejos_list'),
               ),
               _buildDashboardCard(
                 context,
                 icon: Icons.restaurant_menu_outlined,
-                label: 'Recetas',
+                label: l10n.navRecipes,
+                showPremiumBadge: _isMenuEntryPremium(
+                  MenuVisibilityPremiumService.recetas,
+                ),
+                showHiddenBadge: !_isMenuEntryVisible(
+                  MenuVisibilityPremiumService.recetas,
+                ),
                 onTap: () => Navigator.pushNamed(context, '/recetas_list'),
               ),
               _buildDashboardCard(
                 context,
                 icon: Icons.document_scanner_outlined,
-                label: 'Escáner',
+                label: l10n.navScanner,
+                showPremiumBadge: _isMenuEntryPremium(
+                  MenuVisibilityPremiumService.escaner,
+                ),
+                showHiddenBadge: !_isMenuEntryVisible(
+                  MenuVisibilityPremiumService.escaner,
+                ),
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -783,7 +972,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               _buildDashboardCard(
                 context,
                 icon: Icons.settings_outlined,
-                label: 'Ajustes',
+                label: l10n.settingsAndPrivacyTitle,
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -792,7 +981,7 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               _buildDashboardCard(
                 context,
                 icon: Icons.manage_accounts_outlined,
-                label: 'Usuarios',
+                label: l10n.navUsers,
                 onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -801,7 +990,13 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               _buildDashboardCard(
                 context,
                 icon: Icons.checklist_outlined,
-                label: 'Tareas',
+                label: l10n.navTasks,
+                showPremiumBadge: _isMenuEntryPremium(
+                  MenuVisibilityPremiumService.tareas,
+                ),
+                showHiddenBadge: !_isMenuEntryVisible(
+                  MenuVisibilityPremiumService.tareas,
+                ),
                 onTap: () => Navigator.pushNamed(context, '/todo_list'),
               ),
             ],
@@ -815,7 +1010,9 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
       {required IconData icon,
       required String label,
       required VoidCallback onTap,
-      bool showPremiumBadge = false}) {
+      bool showPremiumBadge = false,
+      bool showHiddenBadge = false}) {
+    final compact = MediaQuery.sizeOf(context).width >= 800;
     return Card(
       elevation: 4.0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -829,12 +1026,18 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: <Widget>[
-                Icon(icon, size: 26, color: Theme.of(context).primaryColor),
-                const SizedBox(height: 2),
+                Icon(
+                  icon,
+                  size: compact ? 22 : 26,
+                  color: Theme.of(context).primaryColor,
+                ),
+                SizedBox(height: compact ? 4 : 2),
                 Text(
                   label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 12),
+                  style: TextStyle(fontSize: compact ? 11 : 12),
                 ),
               ],
             ),
@@ -852,6 +1055,24 @@ class _HomeScreenState extends State<HomeScreen> with AuthErrorHandlerMixin {
                     Icons.workspace_premium,
                     size: 12,
                     color: Colors.black87,
+                  ),
+                ),
+              ),
+            if (showHiddenBadge)
+              Positioned(
+                right: 8,
+                bottom: 8,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: Colors.red.shade100),
+                  ),
+                  child: Icon(
+                    Icons.visibility_off_outlined,
+                    size: 12,
+                    color: Colors.red.shade700,
                   ),
                 ),
               ),

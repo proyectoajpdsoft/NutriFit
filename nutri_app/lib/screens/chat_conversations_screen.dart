@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 import '../models/chat_conversation.dart';
 import '../models/paciente.dart';
@@ -309,6 +310,7 @@ class _ChatConversationsScreenState extends State<ChatConversationsScreen> {
   }
 
   Widget _buildGuestGate() {
+    final l10n = AppLocalizations.of(context)!;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -317,14 +319,14 @@ class _ChatConversationsScreenState extends State<ChatConversationsScreen> {
           children: [
             const Icon(Icons.lock_outline, size: 48, color: Colors.grey),
             const SizedBox(height: 12),
-            const Text(
-              'Para chatear con tu dietista online, por favor, regístrate (es gratis).',
+            Text(
+              l10n.messagesInboxGuestBody,
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
             ElevatedButton(
               onPressed: () => Navigator.pushNamed(context, '/register'),
-              child: const Text('Iniciar registro'),
+              child: Text(l10n.messagesInboxGuestAction),
             ),
           ],
         ),

@@ -23,7 +23,10 @@ class Usuario {
   String? premiumFormaPagoSolicitada;
   String? premiumSolicitudPendiente;
   DateTime? premiumFechaSolicitud;
+  String emailVerificado;
   String? imgPerfil; // Base64 de la imagen de perfil
+  String eliminado;
+  DateTime? fechaEliminacion;
 
   Usuario({
     required this.codigo,
@@ -45,7 +48,10 @@ class Usuario {
     this.premiumFormaPagoSolicitada,
     this.premiumSolicitudPendiente,
     this.premiumFechaSolicitud,
+    this.emailVerificado = 'N',
     this.imgPerfil,
+    this.eliminado = 'N',
+    this.fechaEliminacion,
   });
 
   factory Usuario.fromJson(Map<String, dynamic> json) {
@@ -88,7 +94,11 @@ class Usuario {
       premiumFechaSolicitud: DateTime.tryParse(
         json["premium_fecha_solicitud"]?.toString() ?? '',
       ),
+      emailVerificado: json["email_verificado"] ?? 'N',
       imgPerfil: json["img_perfil"],
+      eliminado: json["eliminado"] ?? 'N',
+      fechaEliminacion:
+          DateTime.tryParse(json["fecha_eliminacion"]?.toString() ?? ''),
     );
   }
 
@@ -112,6 +122,9 @@ class Usuario {
         "premium_forma_pago_solicitada": premiumFormaPagoSolicitada,
         "premium_solicitud_pendiente": premiumSolicitudPendiente,
         "premium_fecha_solicitud": premiumFechaSolicitud?.toIso8601String(),
+        "email_verificado": emailVerificado,
         "img_perfil": imgPerfil,
+        "eliminado": eliminado,
+        "fecha_eliminacion": fechaEliminacion?.toIso8601String(),
       };
 }

@@ -24,6 +24,29 @@ $validator = new AutoValidator($db);
 $user = $validator->validate();
 PermissionManager::checkPermission($user, 'recetas');
 
+function should_include_full_cover_images() {
+    if (!isset($_GET['include_images'])) {
+        return true;
+    }
+
+    $value = strtolower(trim((string)$_GET['include_images']));
+    return !in_array($value, array('0', 'false', 'no', 'n'), true);
+}
+
+function encode_receta_images(&$recetas, $include_full_cover_images = true) {
+    foreach ($recetas as &$receta) {
+        if ($include_full_cover_images && !empty($receta['imagen_portada'])) {
+            $receta['imagen_portada'] = base64_encode($receta['imagen_portada']);
+        } else {
+            $receta['imagen_portada'] = null;
+        }
+
+        if (!empty($receta['imagen_miniatura'])) {
+            $receta['imagen_miniatura'] = base64_encode($receta['imagen_miniatura']);
+        }
+    }
+}
+
 switch($request_method) {
     case 'GET':
         $limit = isset($_GET["limit"]) ? max(1, min(100, intval($_GET["limit"]))) : null;
@@ -392,6 +415,7 @@ function get_receta($codigo) {
 function get_recetas_paciente($paciente_codigo, $codigo_usuario = null, $limit = null, $offset = 0) {
     global $db;
     ensure_receta_categoria_tables();
+    $include_full_cover_images = should_include_full_cover_images();
 
     // Si se proporciona codigo_usuario, hacer JOIN para obtener estado de favorito y me_gusta
     if ($codigo_usuario !== null) {
@@ -448,14 +472,7 @@ function get_recetas_paciente($paciente_codigo, $codigo_usuario = null, $limit =
     $stmt->execute();
     $recetas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    foreach ($recetas as &$receta) {
-        if ($receta['imagen_portada']) {
-            $receta['imagen_portada'] = base64_encode($receta['imagen_portada']);
-        }
-        if ($receta['imagen_miniatura']) {
-            $receta['imagen_miniatura'] = base64_encode($receta['imagen_miniatura']);
-        }
-    }
+    encode_receta_images($recetas, $include_full_cover_images);
 
     ob_clean();
     echo json_encode($recetas);
@@ -464,6 +481,7 @@ function get_recetas_paciente($paciente_codigo, $codigo_usuario = null, $limit =
 function get_recetas_portada_paciente($paciente_codigo, $codigo_usuario = null, $limit = null, $offset = 0) {
     global $db;
     ensure_receta_categoria_tables();
+    $include_full_cover_images = should_include_full_cover_images();
 
     $hoy = date('Y-m-d');
 
@@ -549,14 +567,7 @@ function get_recetas_portada_paciente($paciente_codigo, $codigo_usuario = null, 
     $stmt->execute();
     $recetas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    foreach ($recetas as &$receta) {
-        if ($receta['imagen_portada']) {
-            $receta['imagen_portada'] = base64_encode($receta['imagen_portada']);
-        }
-        if ($receta['imagen_miniatura']) {
-            $receta['imagen_miniatura'] = base64_encode($receta['imagen_miniatura']);
-        }
-    }
+    encode_receta_images($recetas, $include_full_cover_images);
 
     ob_clean();
     echo json_encode($recetas);

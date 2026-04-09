@@ -1,10 +1,13 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:nutri_app/models/charla_seminario.dart';
 import 'package:nutri_app/screens/charla_seminario_detail_screen.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
+import 'package:nutri_app/widgets/premium_feature_dialog_helper.dart';
+import 'package:nutri_app/widgets/premium_upsell_card.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -19,6 +22,22 @@ enum _TopActionCharlas {
   ordenarPopular,
 }
 
+Future<void> _showPremiumRequiredForCharlasTools(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
+  return PremiumFeatureDialogHelper.show(
+    context,
+    message: l10n.charlasPremiumToolsMessage,
+  );
+}
+
+Future<void> _showPremiumRequiredForCharlasContent(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
+  return PremiumFeatureDialogHelper.show(
+    context,
+    message: l10n.charlasPremiumContentMessage,
+  );
+}
+
 class CharlasSeminariosScreen extends StatefulWidget {
   const CharlasSeminariosScreen({super.key, this.initialSearchQuery = ''});
 
@@ -31,6 +50,8 @@ class CharlasSeminariosScreen extends StatefulWidget {
 
 class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
     with SingleTickerProviderStateMixin {
+  static const String _paramNonPremiumPreviewCodes =
+      'codigos_charlas_no_premium';
   static const String _prefsSearchVisible = 'charlas_seminarios_search_visible';
   static const String _prefsSearchQuery = 'charlas_seminarios_search_query';
   static const String _prefsOrden = 'charlas_seminarios_orden';
@@ -56,12 +77,22 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
   bool _loadingCategorias = false;
   bool _showFilters = false;
   String _searchQuery = '';
+  List<int>? _nonPremiumPreviewCodes;
   List<int> _selectedCategoriaIds = <int>[];
   bool _categoriaMatchAll = false;
   _OrdenCharlas _orden = _OrdenCharlas.nombre;
   bool _ordenAscendente = true;
 
   String? get _userCode => context.read<AuthService>().userCode;
+  bool get _canAccessFullCatalog {
+    final authService = context.read<AuthService>();
+    final userType = (authService.userType ?? '').toLowerCase().trim();
+    return authService.isPremium ||
+        userType == 'nutricionista' ||
+        userType == 'administrador';
+  }
+
+  bool get _isPreviewMode => !_canAccessFullCatalog;
 
   @override
   void initState() {
@@ -72,10 +103,16 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
     _searchCtrl.text = _searchQuery;
     _restoreListState().whenComplete(() {
       if (!mounted) return;
-      _loadCategorias();
+      if (_isPreviewMode) {
+        _loadingFavoritas = false;
+      } else {
+        _loadCategorias();
+      }
       _loadDestacadas();
       _loadTodas();
-      _loadFavoritas();
+      if (!_isPreviewMode) {
+        _loadFavoritas();
+      }
     });
   }
 
@@ -92,11 +129,19 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
   Future<void> _loadDestacadas() async {
     setState(() => _loadingDestacadas = true);
     try {
+      final previewCodesFuture = _isPreviewMode
+          ? context
+              .read<ApiService>()
+              .getParametroValor(_paramNonPremiumPreviewCodes)
+              .then(_parsePreviewCodes)
+              .catchError((_) => null)
+          : Future<List<int>?>.value(null);
       final response = await context.read<ApiService>().get(
             'api/charlas_seminarios.php?portada=1',
           );
       if (response.statusCode == 200 && mounted) {
         final List<dynamic> data = jsonDecode(response.body) as List<dynamic>;
+        final previewCodes = await previewCodesFuture;
         setState(() {
           _destacadas = data
               .map(
@@ -105,6 +150,7 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
                 ),
               )
               .toList(growable: false);
+          _nonPremiumPreviewCodes = previewCodes;
         });
       }
     } catch (_) {
@@ -140,6 +186,15 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
   }
 
   Future<void> _loadFavoritas() async {
+    if (_isPreviewMode) {
+      if (mounted) {
+        setState(() {
+          _favoritas = <CharlaSeminario>[];
+          _loadingFavoritas = false;
+        });
+      }
+      return;
+    }
     setState(() => _loadingFavoritas = true);
     try {
       final response = await context.read<ApiService>().get(
@@ -165,10 +220,23 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
   }
 
   Future<void> _refreshAll() async {
+    if (_isPreviewMode) {
+      await Future.wait([_loadDestacadas(), _loadTodas()]);
+      return;
+    }
     await Future.wait([_loadDestacadas(), _loadTodas(), _loadFavoritas()]);
   }
 
   Future<void> _loadCategorias() async {
+    if (_isPreviewMode) {
+      if (mounted) {
+        setState(() {
+          _categoriasCatalogo = <Map<String, dynamic>>[];
+          _loadingCategorias = false;
+        });
+      }
+      return;
+    }
     setState(() => _loadingCategorias = true);
     try {
       final response = await context.read<ApiService>().get(
@@ -233,6 +301,14 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
             : _orden;
 
         _ordenAscendente = prefs.getBool(_prefsOrdenAsc) ?? _ordenAscendente;
+
+        if (_isPreviewMode) {
+          _showFilters = false;
+          _searchQuery = '';
+          _searchCtrl.clear();
+          _selectedCategoriaIds = <int>[];
+          _categoriaMatchAll = false;
+        }
       });
     } catch (_) {
       // Ignorar fallos de restauración para mantener valores por defecto.
@@ -240,6 +316,10 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
   }
 
   void _toggleFiltersVisibility() {
+    if (_isPreviewMode) {
+      _showPremiumRequiredForCharlasTools(context);
+      return;
+    }
     final next = !_showFilters;
     setState(() {
       _showFilters = next;
@@ -252,6 +332,10 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
   }
 
   void _applySortSelection(_OrdenCharlas orden) {
+    if (_isPreviewMode) {
+      _showPremiumRequiredForCharlasTools(context);
+      return;
+    }
     setState(() {
       if (_orden == orden) {
         _ordenAscendente = !_ordenAscendente;
@@ -267,6 +351,10 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
   }
 
   Future<void> _handleTopAction(_TopActionCharlas action) async {
+    if (_isPreviewMode) {
+      await _showPremiumRequiredForCharlasTools(context);
+      return;
+    }
     switch (action) {
       case _TopActionCharlas.buscar:
         _toggleFiltersVisibility();
@@ -292,6 +380,10 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
   // ─── TOGGLE LIKE / FAVORITO ───────────────────────────────────────
 
   Future<void> _toggleLike(CharlaSeminario item) async {
+    if (_isPreviewMode) {
+      await _showPremiumRequiredForCharlasTools(context);
+      return;
+    }
     final userCode = _userCode;
     if (userCode == null || userCode.isEmpty) return;
 
@@ -318,6 +410,10 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
   }
 
   Future<void> _toggleFavorito(CharlaSeminario item) async {
+    if (_isPreviewMode) {
+      await _showPremiumRequiredForCharlasTools(context);
+      return;
+    }
     final userCode = _userCode;
     if (userCode == null || userCode.isEmpty) return;
 
@@ -357,6 +453,64 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
       list[idx].favorito = updated.favorito;
       list[idx].totalLikes = updated.totalLikes;
     }
+  }
+
+  List<int>? _parsePreviewCodes(String? rawValue) {
+    if (rawValue == null || rawValue.trim().isEmpty) {
+      return null;
+    }
+
+    final codes = rawValue
+        .split(',')
+        .map((value) => int.tryParse(value.trim()))
+        .whereType<int>()
+        .where((value) => value > 0)
+        .toList();
+
+    if (codes.isEmpty) {
+      return null;
+    }
+
+    return codes.toSet().toList();
+  }
+
+  List<CharlaSeminario> _buildPreviewCharlas(
+    List<CharlaSeminario> source,
+    List<int>? previewCodes,
+  ) {
+    if (source.isEmpty) {
+      return <CharlaSeminario>[];
+    }
+
+    if (previewCodes != null && previewCodes.isNotEmpty) {
+      final byCode = <int, CharlaSeminario>{
+        for (final charla in source)
+          if (charla.codigo != null) charla.codigo!: charla,
+      };
+      final selected = previewCodes
+          .map((code) => byCode[code])
+          .whereType<CharlaSeminario>()
+          .toList();
+      if (selected.isNotEmpty) {
+        return selected;
+      }
+    }
+
+    final sorted = List<CharlaSeminario>.from(source)
+      ..sort((a, b) => (b.codigo ?? 0).compareTo(a.codigo ?? 0));
+
+    return sorted.take(3).toList();
+  }
+
+  String _catalogHighlightCount(int total) {
+    if (total <= 0) {
+      return '0';
+    }
+    if (total < 10) {
+      return '$total';
+    }
+    final rounded = (total ~/ 10) * 10;
+    return '$rounded+';
   }
 
   // ─── HELPERS ─────────────────────────────────────────────────────
@@ -445,6 +599,10 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
   }
 
   Future<void> _showCategoriaFilterDialog() async {
+    if (_isPreviewMode) {
+      await _showPremiumRequiredForCharlasTools(context);
+      return;
+    }
     if (_categoriasCatalogo.isEmpty && !_loadingCategorias) {
       await _loadCategorias();
     }
@@ -636,7 +794,10 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
     final result = await Navigator.push<CharlaSeminario?>(
       context,
       MaterialPageRoute(
-        builder: (_) => CharlaSeminarioDetailScreen(charla: item),
+        builder: (_) => CharlaSeminarioDetailScreen(
+          charla: item,
+          previewMode: _isPreviewMode,
+        ),
       ),
     );
     if (result != null && mounted) {
@@ -656,7 +817,9 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
             IconButton(
               tooltip: 'Buscar',
               icon: const Icon(Icons.search),
-              onPressed: _toggleFiltersVisibility,
+              onPressed: _isPreviewMode
+                  ? () => _showPremiumRequiredForCharlasTools(context)
+                  : _toggleFiltersVisibility,
             ),
           IconButton(
             tooltip: _selectedCategoriaIds.isEmpty
@@ -691,7 +854,9 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
                   ),
               ],
             ),
-            onPressed: _showCategoriaFilterDialog,
+            onPressed: _isPreviewMode
+                ? () => _showPremiumRequiredForCharlasTools(context)
+                : _showCategoriaFilterDialog,
           ),
           PopupMenuButton<_TopActionCharlas>(
             tooltip: 'Más opciones',
@@ -813,6 +978,14 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
         ],
         bottom: TabBar(
           controller: _tabController,
+          onTap: (index) {
+            if (_isPreviewMode && index == 2) {
+              Future.microtask(
+                () => _showPremiumRequiredForCharlasTools(context),
+              );
+              _tabController.animateTo(0);
+            }
+          },
           tabs: const [
             Tab(text: 'Destacadas'),
             Tab(text: 'Todas'),
@@ -822,12 +995,12 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
       ),
       body: Column(
         children: [
-          if (_showFilters)
+          if (_showFilters && !_isPreviewMode)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
               child: _buildSearchField(),
             ),
-          if (_selectedCategoriaIds.isNotEmpty)
+          if (_selectedCategoriaIds.isNotEmpty && !_isPreviewMode)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
               child: SizedBox(
@@ -868,6 +1041,8 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
           Expanded(
             child: TabBarView(
               controller: _tabController,
+              physics:
+                  _isPreviewMode ? const NeverScrollableScrollPhysics() : null,
               children: [
                 _buildTab(
                   _destacadas,
@@ -878,6 +1053,7 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
                   _todas,
                   _loadingTodas,
                   emptyText: 'No hay charlas disponibles.',
+                  addUpsell: _isPreviewMode,
                 ),
                 _buildTab(
                   _favoritas,
@@ -896,12 +1072,15 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
     List<CharlaSeminario> items,
     bool loading, {
     required String emptyText,
+    bool addUpsell = false,
   }) {
     if (loading) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final shown = _applySearchAndFilters(items);
+    final shown = _isPreviewMode
+        ? _buildPreviewCharlas(items, _nonPremiumPreviewCodes)
+        : _applySearchAndFilters(items);
 
     if (shown.isEmpty) {
       return Center(
@@ -922,13 +1101,30 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
       onRefresh: _refreshAll,
       child: ListView.builder(
         padding: const EdgeInsets.symmetric(vertical: 8),
-        itemCount: shown.length,
-        itemBuilder: (context, index) => _buildCharlaCard(shown[index]),
+        itemCount: addUpsell ? shown.length + 1 : shown.length,
+        itemBuilder: (context, index) {
+          if (addUpsell && index == shown.length) {
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 18),
+              child: PremiumUpsellCard(
+                title: AppLocalizations.of(context)!.charlasPremiumTitle,
+                subtitle: AppLocalizations.of(context)!.charlasPremiumSubtitle,
+                subtitleHighlight: AppLocalizations.of(context)!
+                    .charlasPremiumPreviewHighlight(
+                  _catalogHighlightCount(_todas.length),
+                ),
+                onPressed: () => Navigator.pushNamed(context, '/premium_info'),
+              ),
+            );
+          }
+          return _buildCharlaCard(shown[index]);
+        },
       ),
     );
   }
 
   Widget _buildCharlaCard(CharlaSeminario item) {
+    final isPreviewMode = _isPreviewMode;
     final thumb = _thumbProvider(item);
     final hasSlides = item.totalDiapositivas > 0;
     final meGusta = item.meGusta == 'S';
@@ -1024,6 +1220,18 @@ class _CharlasSeminariosScreenState extends State<CharlasSeminariosScreen>
                         ],
                       ],
                     ),
+                    if (isPreviewMode) ...[
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Vista previa disponible. El contenido completo es Premium.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.deepOrange,
+                          fontStyle: FontStyle.italic,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

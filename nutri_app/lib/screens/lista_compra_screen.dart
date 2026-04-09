@@ -7,13 +7,20 @@ import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../l10n/app_localizations.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../services/menu_visibility_premium_service.dart';
 import '../services/user_settings_service.dart';
 import '../models/lista_compra_item.dart';
 import '../models/usuario.dart';
 import '../widgets/app_drawer.dart';
+import '../widgets/premium_feature_dialog_helper.dart';
+import '../widgets/premium_upsell_card.dart';
 import 'lista_compra_edit_screen.dart';
+
+enum _ListaCompraSortMode { nombre, caducidad, categoria }
 
 class ListaCompraScreen extends StatefulWidget {
   const ListaCompraScreen({super.key});
@@ -24,13 +31,27 @@ class ListaCompraScreen extends StatefulWidget {
 
 class _ListaCompraScreenState extends State<ListaCompraScreen>
     with SingleTickerProviderStateMixin {
+  static const _defaultNonPremiumShoppingListLimit = 3;
+  static const _prefsSearchVisible = 'lista_compra_search_visible';
+  static const _prefsSearchQuery = 'lista_compra_search_query';
+  static const _prefsSelectedCategories = 'lista_compra_selected_categories';
+  static const _prefsSortMode = 'lista_compra_sort_mode';
+  static const _prefsSortAscending = 'lista_compra_sort_ascending';
+
   List<ListaCompraItem> _items = [];
   final ImagePicker _picker = ImagePicker();
+  final TextEditingController _searchController = TextEditingController();
   bool _isLoading = true;
   String _filtroActual =
       'todos'; // 'todos', 'pendientes', 'comprados', 'por_caducar', 'caducados'
-  String? _categoriaFiltro;
   late TabController _tabController;
+  bool _isMenuPremiumEnabled = false;
+  int _nonPremiumShoppingListLimit = _defaultNonPremiumShoppingListLimit;
+  bool _isSearchVisible = false;
+  String _searchQuery = '';
+  final Set<String> _selectedCategoriaFilters = <String>{};
+  _ListaCompraSortMode _sortMode = _ListaCompraSortMode.categoria;
+  bool _sortAscending = true;
 
   @override
   void initState() {
@@ -43,10 +64,11 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
     });
 
     final authService = Provider.of<AuthService>(context, listen: false);
+    _restoreUiState();
     if (authService.isGuestMode) {
       _isLoading = false;
     } else {
-      _loadItems();
+      _loadMenuPremiumConfig();
     }
   }
 
@@ -56,6 +78,7 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
 
   @override
   void dispose() {
+    _searchController.dispose();
     _tabController.dispose();
     super.dispose();
   }
@@ -75,9 +98,152 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
     ];
     setState(() {
       _filtroActual = filtros[_tabController.index];
-      _categoriaFiltro = null;
     });
     _loadItems();
+  }
+
+  Future<void> _restoreUiState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      final restoredMode = prefs.getString(_prefsSortMode) ?? 'categoria';
+      setState(() {
+        _isSearchVisible = prefs.getBool(_prefsSearchVisible) ?? false;
+        _searchQuery = prefs.getString(_prefsSearchQuery) ?? '';
+        _selectedCategoriaFilters
+          ..clear()
+          ..addAll(prefs.getStringList(_prefsSelectedCategories) ?? const []);
+        _sortMode = switch (restoredMode) {
+          'nombre' => _ListaCompraSortMode.nombre,
+          'caducidad' => _ListaCompraSortMode.caducidad,
+          _ => _ListaCompraSortMode.categoria,
+        };
+        _sortAscending = prefs.getBool(_prefsSortAscending) ?? true;
+        _searchController.text = _searchQuery;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _saveUiState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_prefsSearchVisible, _isSearchVisible);
+      await prefs.setString(_prefsSearchQuery, _searchQuery);
+      await prefs.setStringList(
+        _prefsSelectedCategories,
+        _selectedCategoriaFilters.toList(growable: false),
+      );
+      await prefs.setString(_prefsSortMode, _sortMode.name);
+      await prefs.setBool(_prefsSortAscending, _sortAscending);
+    } catch (_) {}
+  }
+
+  bool get _canAccessFullShoppingList {
+    final authService = context.read<AuthService>();
+    if (!_isMenuPremiumEnabled) {
+      return true;
+    }
+    return authService.isPremium ||
+        MenuVisibilityPremiumService.isPrivilegedUserType(
+          authService.userType,
+        );
+  }
+
+  bool get _isPreviewMode => !_canAccessFullShoppingList;
+
+  int get _effectiveNonPremiumShoppingListLimit {
+    return _nonPremiumShoppingListLimit > 0
+        ? _nonPremiumShoppingListLimit
+        : _defaultNonPremiumShoppingListLimit;
+  }
+
+  Future<void> _loadMenuPremiumConfig() async {
+    try {
+      final apiService = context.read<ApiService>();
+      final config = await MenuVisibilityPremiumService.loadConfig(
+        apiService: apiService,
+        forceRefresh: true,
+      );
+      final listLimitRaw = await apiService.getParametroValor(
+        'numero_lista_compra_no_premium',
+      );
+      final parsedListLimit = int.tryParse((listLimitRaw ?? '').trim());
+      final listLimit = parsedListLimit != null && parsedListLimit > 0
+          ? parsedListLimit
+          : _defaultNonPremiumShoppingListLimit;
+      final premiumEnabled = MenuVisibilityPremiumService.isPremium(
+        config,
+        MenuVisibilityPremiumService.listaCompra,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isMenuPremiumEnabled = premiumEnabled;
+        _nonPremiumShoppingListLimit = listLimit;
+      });
+      await _loadItems();
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isMenuPremiumEnabled = false;
+        _nonPremiumShoppingListLimit = _defaultNonPremiumShoppingListLimit;
+      });
+      await _loadItems();
+    }
+  }
+
+  Future<void> _showShoppingListPremiumLimitMessage() {
+    final limit = _effectiveNonPremiumShoppingListLimit;
+    final l10n = AppLocalizations.of(context)!;
+    return PremiumFeatureDialogHelper.show(
+      context,
+      message: l10n.shoppingListPremiumLimitMessage(limit),
+    );
+  }
+
+  Future<int> _loadTotalItemsCount() async {
+    final authService = context.read<AuthService>();
+    if (authService.isGuestMode) {
+      return 0;
+    }
+
+    final ownerCode = _getOwnerCode(authService);
+    if (ownerCode == null || ownerCode.isEmpty) {
+      return 0;
+    }
+
+    final response = await context.read<ApiService>().get(
+          'api/lista_compra.php?usuario=$ownerCode',
+        );
+    if (response.statusCode != 200) {
+      throw Exception('Error al validar el límite de items');
+    }
+
+    final data = json.decode(response.body);
+    if (data is! List) {
+      return 0;
+    }
+
+    return data.length;
+  }
+
+  Future<bool> _canCreateMoreItems() async {
+    if (!_isPreviewMode) {
+      return true;
+    }
+
+    final totalItems = await _loadTotalItemsCount();
+    if (totalItems >= _effectiveNonPremiumShoppingListLimit) {
+      if (mounted) {
+        await _showShoppingListPremiumLimitMessage();
+      }
+      return false;
+    }
+
+    return true;
   }
 
   Future<void> _loadItems() async {
@@ -259,6 +425,9 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
   }
 
   Future<void> _abrirAltaManual() async {
+    if (!await _canCreateMoreItems()) {
+      return;
+    }
     await _abrirAltaManualConPrefill();
   }
 
@@ -439,6 +608,10 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
   }
 
   Future<void> _escanearEtiquetaYAbrirAlta() async {
+    if (!await _canCreateMoreItems()) {
+      return;
+    }
+
     final source = await _seleccionarFuenteEscaneo();
     if (source == null) return;
 
@@ -1234,14 +1407,97 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
     );
   }
 
+  int get _activeCategoryFilterCount => _selectedCategoriaFilters.length;
+
+  void _toggleSearchVisibility() {
+    setState(() {
+      _isSearchVisible = !_isSearchVisible;
+    });
+    _saveUiState();
+  }
+
+  bool _matchesSearch(ListaCompraItem item) {
+    final query = _searchQuery.trim().toLowerCase();
+    if (query.isEmpty) {
+      return true;
+    }
+
+    final categoriaNombre =
+        ListaCompraItem.getCategoriaNombre(item.categoria).toLowerCase();
+    return item.nombre.toLowerCase().contains(query) ||
+        categoriaNombre.contains(query) ||
+        item.categoria.toLowerCase().contains(query) ||
+        (item.descripcion ?? '').toLowerCase().contains(query);
+  }
+
+  bool _matchesCategoryFilter(ListaCompraItem item) {
+    return _selectedCategoriaFilters.isEmpty ||
+        _selectedCategoriaFilters.contains(item.categoria);
+  }
+
+  int _compareNullableDate(DateTime? a, DateTime? b) {
+    if (a == null && b == null) return 0;
+    if (a == null) return 1;
+    if (b == null) return -1;
+    return a.compareTo(b);
+  }
+
+  List<ListaCompraItem> _sortItems(List<ListaCompraItem> source) {
+    final items = List<ListaCompraItem>.from(source);
+    items.sort((a, b) {
+      int compare;
+      switch (_sortMode) {
+        case _ListaCompraSortMode.nombre:
+          compare = a.nombre.toLowerCase().compareTo(b.nombre.toLowerCase());
+          break;
+        case _ListaCompraSortMode.caducidad:
+          compare = _compareNullableDate(a.fechaCaducidad, b.fechaCaducidad);
+          break;
+        case _ListaCompraSortMode.categoria:
+          final categoriaCompare =
+              ListaCompraItem.getCategoriaNombre(a.categoria)
+                  .toLowerCase()
+                  .compareTo(
+                    ListaCompraItem.getCategoriaNombre(b.categoria)
+                        .toLowerCase(),
+                  );
+          if (categoriaCompare != 0) {
+            compare = categoriaCompare;
+          } else {
+            compare = a.nombre.toLowerCase().compareTo(b.nombre.toLowerCase());
+          }
+          break;
+      }
+
+      if (compare == 0) {
+        compare = (a.codigo ?? 0).compareTo(b.codigo ?? 0);
+      }
+      return _sortAscending ? compare : -compare;
+    });
+    return items;
+  }
+
   List<ListaCompraItem> get _itemsFiltrados {
-    if (_categoriaFiltro == null) return _items;
-    return _items.where((item) => item.categoria == _categoriaFiltro).toList();
+    final filtered = _items
+        .where(_matchesSearch)
+        .where(_matchesCategoryFilter)
+        .toList(growable: false);
+    return _sortItems(filtered);
+  }
+
+  List<ListaCompraItem> get _itemsVisibles {
+    final filtered = _itemsFiltrados;
+    if (!_isPreviewMode) {
+      return filtered;
+    }
+    return filtered
+        .take(_effectiveNonPremiumShoppingListLimit)
+        .toList(growable: false);
   }
 
   Map<String, List<ListaCompraItem>> get _itemsPorCategoria {
     final Map<String, List<ListaCompraItem>> grouped = {};
-    for (var item in _itemsFiltrados) {
+    for (var item in _itemsVisibles) {
       if (!grouped.containsKey(item.categoria)) {
         grouped[item.categoria] = [];
       }
@@ -1250,9 +1506,492 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
     return grouped;
   }
 
+  void _applySortSelection(_ListaCompraSortMode mode) {
+    setState(() {
+      if (_sortMode == mode) {
+        _sortAscending = !_sortAscending;
+      } else {
+        _sortMode = mode;
+        _sortAscending = true;
+      }
+    });
+    _saveUiState();
+  }
+
+  Future<void> _handleAppBarMenuAction(String action) async {
+    switch (action) {
+      case 'search':
+        _toggleSearchVisibility();
+        break;
+      case 'filter':
+        await _showCategoryFilterDialog();
+        break;
+      case 'refresh':
+        await _loadItems();
+        break;
+      case 'sort_name':
+        _applySortSelection(_ListaCompraSortMode.nombre);
+        break;
+      case 'sort_expiry':
+        _applySortSelection(_ListaCompraSortMode.caducidad);
+        break;
+      case 'sort_category':
+        _applySortSelection(_ListaCompraSortMode.categoria);
+        break;
+    }
+  }
+
+  Widget _buildFilterCountBadge({
+    required int count,
+    double minSize = 18,
+    double fontSize = 10,
+    EdgeInsets padding = const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+  }) {
+    return Container(
+      constraints: BoxConstraints(minWidth: minSize, minHeight: minSize),
+      padding: padding,
+      decoration: const BoxDecoration(
+        color: Colors.blue,
+        shape: BoxShape.circle,
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        '$count',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: fontSize,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMenuLeadingIcon(IconData icon, {int? badgeCount}) {
+    if (badgeCount == null || badgeCount <= 0) {
+      return Icon(icon, size: 18);
+    }
+
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        const SizedBox(width: 18, height: 18),
+        Icon(icon, size: 18),
+        Positioned(
+          right: -2,
+          top: -2,
+          child: _buildFilterCountBadge(
+            count: badgeCount,
+            minSize: 14,
+            fontSize: 8,
+            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+          ),
+        ),
+      ],
+    );
+  }
+
+  PopupMenuItem<String> _buildMenuItem({
+    required String value,
+    required IconData icon,
+    required String label,
+    bool checked = false,
+    bool? ascending,
+    int? badgeCount,
+  }) {
+    Widget trailing = const SizedBox.shrink();
+    if (checked) {
+      trailing = Icon(
+        ascending == true ? Icons.arrow_upward : Icons.arrow_downward,
+        size: 18,
+        color: Theme.of(context).colorScheme.primary,
+      );
+    }
+
+    return PopupMenuItem<String>(
+      value: value,
+      child: Row(
+        children: [
+          _buildMenuLeadingIcon(icon, badgeCount: badgeCount),
+          const SizedBox(width: 10),
+          Expanded(child: Text(label)),
+          trailing,
+        ],
+      ),
+    );
+  }
+
+  List<PopupMenuEntry<String>> _buildSortMenuItems() {
+    return [
+      CheckedPopupMenuItem<String>(
+        value: 'sort_name',
+        checked: _sortMode == _ListaCompraSortMode.nombre,
+        child: Row(
+          children: [
+            const Expanded(child: Text('Ordenar Nombre')),
+            if (_sortMode == _ListaCompraSortMode.nombre)
+              Icon(
+                _sortAscending ? Icons.arrow_upward : Icons.arrow_downward,
+                size: 18,
+              ),
+          ],
+        ),
+      ),
+      CheckedPopupMenuItem<String>(
+        value: 'sort_expiry',
+        checked: _sortMode == _ListaCompraSortMode.caducidad,
+        child: Row(
+          children: [
+            const Expanded(child: Text('Ordenar Caducidad')),
+            if (_sortMode == _ListaCompraSortMode.caducidad)
+              Icon(
+                _sortAscending ? Icons.arrow_upward : Icons.arrow_downward,
+                size: 18,
+              ),
+          ],
+        ),
+      ),
+      CheckedPopupMenuItem<String>(
+        value: 'sort_category',
+        checked: _sortMode == _ListaCompraSortMode.categoria,
+        child: Row(
+          children: [
+            const Expanded(child: Text('Ordenar Categoría')),
+            if (_sortMode == _ListaCompraSortMode.categoria)
+              Icon(
+                _sortAscending ? Icons.arrow_upward : Icons.arrow_downward,
+                size: 18,
+              ),
+          ],
+        ),
+      ),
+    ];
+  }
+
+  Future<void> _showCategoryFilterDialog() async {
+    final tempSelected = Set<String>.from(_selectedCategoriaFilters);
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          titlePadding: const EdgeInsets.fromLTRB(12, 8, 8, 0),
+          title: Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Filtrar por categorías',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Cerrar',
+                onPressed: () => Navigator.pop(dialogContext),
+                icon: const Icon(Icons.close, size: 18),
+                style: IconButton.styleFrom(
+                  shape: const CircleBorder(),
+                  minimumSize: const Size(32, 32),
+                  padding: EdgeInsets.zero,
+                ),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Card(
+              margin: EdgeInsets.zero,
+              clipBehavior: Clip.antiAlias,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.38,
+                ),
+                child: Scrollbar(
+                  thumbVisibility: ListaCompraItem.categorias.length > 8,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(12),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: ListaCompraItem.categorias.map((cat) {
+                        return FilterChip(
+                          avatar: Text(
+                            ListaCompraItem.getCategoriaIcon(cat),
+                            style: const TextStyle(fontSize: 16),
+                          ),
+                          label: Text(ListaCompraItem.getCategoriaNombre(cat)),
+                          selected: tempSelected.contains(cat),
+                          onSelected: (selected) {
+                            setDialogState(() {
+                              if (selected) {
+                                tempSelected.add(cat);
+                              } else {
+                                tempSelected.remove(cat);
+                              }
+                            });
+                          },
+                        );
+                      }).toList(growable: false),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  _selectedCategoriaFilters.clear();
+                });
+                _saveUiState();
+                Navigator.pop(dialogContext);
+              },
+              child: const Text('Limpiar'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                setState(() {
+                  _selectedCategoriaFilters
+                    ..clear()
+                    ..addAll(tempSelected);
+                });
+                _saveUiState();
+                Navigator.pop(dialogContext);
+              },
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Aplicar'),
+                  const SizedBox(width: 6),
+                  Container(
+                    constraints:
+                        const BoxConstraints(minWidth: 18, minHeight: 18),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: tempSelected.isEmpty
+                          ? Colors.grey.shade500
+                          : Colors.blue,
+                      shape: BoxShape.circle,
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      '${tempSelected.length}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchPanel() {
+    if (!_isSearchVisible) {
+      return const SizedBox.shrink();
+    }
+
+    if (_searchController.text != _searchQuery) {
+      _searchController.value = TextEditingValue(
+        text: _searchQuery,
+        selection: TextSelection.collapsed(offset: _searchQuery.length),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      child: Card(
+        margin: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: TextField(
+            controller: _searchController,
+            autofocus: true,
+            decoration: InputDecoration(
+              hintText: 'Buscar por nombre, categoría o descripción',
+              prefixIcon: IconButton(
+                tooltip: _searchQuery.isEmpty ? 'Buscar' : 'Limpiar búsqueda',
+                icon: Icon(
+                  _searchQuery.isEmpty ? Icons.search : Icons.clear,
+                ),
+                onPressed: _searchQuery.isEmpty
+                    ? null
+                    : () {
+                        _searchController.clear();
+                        setState(() {
+                          _searchQuery = '';
+                        });
+                        _saveUiState();
+                      },
+              ),
+              suffixIcon: IconButton(
+                tooltip: 'Ocultar búsqueda',
+                onPressed: _toggleSearchVisibility,
+                icon: const Icon(Icons.visibility_off_outlined),
+              ),
+              border: InputBorder.none,
+            ),
+            onChanged: (value) {
+              setState(() {
+                _searchQuery = value;
+              });
+              _saveUiState();
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildVisibleItemsContent(List<ListaCompraItem> visibleItems) {
+    if (_sortMode != _ListaCompraSortMode.categoria) {
+      return [
+        ...visibleItems.map((item) => _buildItemCard(item)),
+      ];
+    }
+
+    return [
+      ..._itemsPorCategoria.entries.map((entry) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 8,
+                vertical: 12,
+              ),
+              child: Row(
+                children: [
+                  Text(
+                    ListaCompraItem.getCategoriaIcon(entry.key),
+                    style: const TextStyle(fontSize: 24),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    ListaCompraItem.getCategoriaNombre(entry.key),
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '(${entry.value.length})',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            ...entry.value.map((item) => _buildItemCard(item)),
+            const SizedBox(height: 8),
+          ],
+        );
+      }),
+    ];
+  }
+
+  Widget _buildBodyContent({
+    required List<ListaCompraItem> visibleItems,
+    required bool showPremiumUpsell,
+    required int limit,
+  }) {
+    final l10n = AppLocalizations.of(context)!;
+    final hasSearchOrFilter =
+        _searchQuery.trim().isNotEmpty || _activeCategoryFilterCount > 0;
+
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (visibleItems.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.shopping_cart_outlined,
+              size: 80,
+              color: Colors.grey[400],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _items.isEmpty
+                  ? (_filtroActual == 'todos'
+                      ? 'No hay items en tu lista'
+                      : 'No hay items ${_getFiltroTexto()}')
+                  : hasSearchOrFilter
+                      ? 'No hay items que coincidan con la búsqueda o filtros'
+                      : 'No hay items disponibles en esta vista',
+              style: TextStyle(fontSize: 18, color: Colors.grey[600]),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _items.isEmpty
+                  ? 'Toca + para agregar tu primer item'
+                  : hasSearchOrFilter
+                      ? 'Prueba a limpiar la búsqueda o cambiar las categorías seleccionadas.'
+                      : 'Hazte Premium para consultar más items y crear sin límite.',
+              style: const TextStyle(color: Colors.grey),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadItems,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 96),
+        children: [
+          if (_filtroActual == 'todos' && !_isPreviewMode) _buildEstadisticas(),
+          ..._buildVisibleItemsContent(visibleItems),
+          if (showPremiumUpsell) ...[
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: PremiumUpsellCard(
+                title: l10n.shoppingListPremiumTitle,
+                subtitle: l10n.shoppingListPremiumSubtitle(limit),
+                subtitleHighlight: l10n.shoppingListPremiumHighlight,
+                onPressed: () => Navigator.pushNamed(
+                  context,
+                  '/premium_info',
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final isGuest = context.watch<AuthService>().isGuestMode;
+    final limit = _effectiveNonPremiumShoppingListLimit;
+    final filteredItems = _itemsFiltrados;
+    final visibleItems = _itemsVisibles;
+    final showPremiumUpsell =
+        _isPreviewMode && filteredItems.length > visibleItems.length;
+    final content = _buildBodyContent(
+      visibleItems: visibleItems,
+      showPremiumUpsell: showPremiumUpsell,
+      limit: limit,
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -1260,7 +1999,7 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text('Lista de la Compra'),
+        title: Text(l10n.navShoppingList),
         bottom: isGuest
             ? null
             : PreferredSize(
@@ -1270,12 +2009,12 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
                   child: TabBar(
                     controller: _tabController,
                     isScrollable: true,
-                    tabs: const [
-                      Tab(text: 'Todos'),
-                      Tab(text: 'Próxima compra'),
-                      Tab(text: 'Comprados'),
-                      Tab(text: 'Por caducar'),
-                      Tab(text: 'Caducados'),
+                    tabs: [
+                      Tab(text: l10n.shoppingListTabAll),
+                      Tab(text: l10n.shoppingListTabPending),
+                      Tab(text: l10n.shoppingListTabBought),
+                      Tab(text: l10n.shoppingListTabExpiring),
+                      Tab(text: l10n.shoppingListTabExpired),
                     ],
                   ),
                 ),
@@ -1283,146 +2022,97 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
         actions: isGuest
             ? []
             : [
-                if (_filtroActual == 'comprados' && _items.isNotEmpty)
+                if (!_isSearchVisible)
                   IconButton(
-                    icon: const Icon(Icons.delete_sweep),
-                    onPressed: _deleteComprados,
-                    tooltip: 'Limpiar comprados',
+                    tooltip: l10n.chatSearch,
+                    onPressed: _toggleSearchVisibility,
+                    icon: const Icon(Icons.search),
                   ),
+                IconButton(
+                  tooltip: _activeCategoryFilterCount == 0
+                      ? l10n.shoppingListFilterCategories
+                      : l10n.shoppingListFilterCategoriesCount(
+                          _activeCategoryFilterCount,
+                        ),
+                  onPressed: _showCategoryFilterDialog,
+                  icon: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      const Icon(Icons.filter_alt_outlined),
+                      if (_activeCategoryFilterCount > 0)
+                        Positioned(
+                          right: -8,
+                          top: -6,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 1,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.blue,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              '$_activeCategoryFilterCount',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
                 PopupMenuButton<String>(
-                  onSelected: (value) {
-                    setState(() {
-                      _categoriaFiltro = value == 'todas' ? null : value;
-                    });
-                  },
+                  tooltip: l10n.shoppingListMoreOptions,
+                  icon: const Icon(Icons.more_vert),
+                  onSelected: _handleAppBarMenuAction,
                   itemBuilder: (context) => [
-                    const PopupMenuItem(
-                      value: 'todas',
-                      child: Text('Todas las categorías'),
+                    _buildMenuItem(
+                      value: 'search',
+                      icon: _isSearchVisible ? Icons.search_off : Icons.search,
+                      label: l10n.chatSearch,
+                    ),
+                    _buildMenuItem(
+                      value: 'filter',
+                      icon: Icons.filter_alt,
+                      label: l10n.shoppingListFilter,
+                      badgeCount: _activeCategoryFilterCount,
+                    ),
+                    _buildMenuItem(
+                      value: 'refresh',
+                      icon: Icons.refresh,
+                      label: l10n.shoppingListRefresh,
                     ),
                     const PopupMenuDivider(),
-                    ...ListaCompraItem.categorias.map(
-                      (cat) => PopupMenuItem(
-                        value: cat,
-                        child: Row(
-                          children: [
-                            Text(
-                              ListaCompraItem.getCategoriaIcon(cat),
-                              style: const TextStyle(fontSize: 20),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(ListaCompraItem.getCategoriaNombre(cat)),
-                          ],
-                        ),
-                      ),
-                    ),
+                    ..._buildSortMenuItems(),
                   ],
-                  icon: const Icon(Icons.filter_list),
-                  tooltip: 'Filtrar por categoría',
-                ),
-                IconButton(
-                  icon: const Icon(Icons.refresh),
-                  onPressed: _loadItems,
-                  tooltip: 'Refrescar',
                 ),
               ],
       ),
       drawer: const AppDrawer(),
       body: isGuest
           ? _buildGuestBody()
-          : _isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : _items.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.shopping_cart_outlined,
-                            size: 80,
-                            color: Colors.grey[400],
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            _filtroActual == 'todos'
-                                ? 'No hay items en tu lista'
-                                : 'No hay items ${_getFiltroTexto()}',
-                            style: TextStyle(
-                                fontSize: 18, color: Colors.grey[600]),
-                          ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Toca + para agregar tu primer item',
-                            style: TextStyle(color: Colors.grey),
-                          ),
-                        ],
-                      ),
-                    )
-                  : RefreshIndicator(
-                      onRefresh: _loadItems,
-                      child: ListView(
-                        padding: const EdgeInsets.fromLTRB(8, 8, 8, 96),
-                        children: [
-                          // Estadísticas rápidas
-                          if (_filtroActual == 'todos') _buildEstadisticas(),
-
-                          // Items agrupados por categoría
-                          ..._itemsPorCategoria.entries.map((entry) {
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 12,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Text(
-                                        ListaCompraItem.getCategoriaIcon(
-                                            entry.key),
-                                        style: const TextStyle(fontSize: 24),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        ListaCompraItem.getCategoriaNombre(
-                                            entry.key),
-                                        style: const TextStyle(
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        '(${entry.value.length})',
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          color: Colors.grey[600],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                ...entry.value
-                                    .map((item) => _buildItemCard(item)),
-                                const SizedBox(height: 8),
-                              ],
-                            );
-                          }),
-                        ],
-                      ),
-                    ),
+          : Column(
+              children: [
+                _buildSearchPanel(),
+                Expanded(child: content),
+              ],
+            ),
       floatingActionButton: isGuest
           ? null
           : FloatingActionButton(
               onPressed: _mostrarOpcionesAlta,
-              tooltip: 'Añadir item',
+              tooltip: l10n.shoppingListAddItem,
               child: const Icon(Icons.add),
             ),
     );
   }
 
   Widget _buildGuestBody() {
+    final l10n = AppLocalizations.of(context)!;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -1431,15 +2121,15 @@ class _ListaCompraScreenState extends State<ListaCompraScreen>
           children: [
             const Icon(Icons.lock_outline, size: 48),
             const SizedBox(height: 12),
-            const Text(
-              'Para poder usar la Lista de la compra, debes registrarte (es gratis).',
+            Text(
+              l10n.shoppingListGuestMessage,
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
               onPressed: () => Navigator.pushNamed(context, '/register'),
               icon: const Icon(Icons.app_registration),
-              label: const Text('Iniciar registro'),
+              label: Text(l10n.navStartRegistration),
             ),
           ],
         ),

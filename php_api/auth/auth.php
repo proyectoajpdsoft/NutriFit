@@ -12,12 +12,39 @@ function get_auth_token() {
     return null;
 }
 
+function get_usuario_columns_map_auth($db) {
+    $columns = array();
+    try {
+        $stmt = $db->query("SHOW COLUMNS FROM usuario");
+        $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : array();
+        foreach ($rows as $row) {
+            $field = strtolower(trim((string)($row['Field'] ?? '')));
+            if ($field !== '') {
+                $columns[$field] = true;
+            }
+        }
+    } catch (Throwable $e) {
+        $columns = array();
+    }
+    return $columns;
+}
+
 function validate_token($db, $token) {
     if (!$token) {
         return false;
     }
 
+    $columns = get_usuario_columns_map_auth($db);
     $query = "SELECT codigo, tipo, codigo_paciente FROM usuario WHERE token = :token AND (token_expiracion IS NULL OR token_expiracion > NOW())";
+    if (isset($columns['activo'])) {
+        $query .= " AND activo = 'S'";
+    }
+    if (isset($columns['accesoweb'])) {
+        $query .= " AND accesoweb = 'S'";
+    }
+    if (isset($columns['eliminado'])) {
+        $query .= " AND COALESCE(eliminado, 'N') <> 'S'";
+    }
     $stmt = $db->prepare($query);
     $stmt->bindParam(':token', $token);
     $stmt->execute();

@@ -23,9 +23,10 @@ class _ParametroEditScreenState extends State<ParametroEditScreen> {
   bool _hasChanges = false;
   String _tipo = 'General';
   bool _isSaving = false;
+  bool _isLoadingOptions = false;
 
-  final List<String> _categorias = ['Aplicación', 'Otro'];
-  final List<String> _tipos = ['General', 'App', 'Web'];
+  List<String> _categorias = ['Aplicación'];
+  List<String> _tipos = ['General'];
 
   @override
   void initState() {
@@ -45,6 +46,73 @@ class _ParametroEditScreenState extends State<ParametroEditScreen> {
     );
     _categoria = widget.parametro?['categoria'] ?? 'Aplicación';
     _tipo = widget.parametro?['tipo'] ?? 'General';
+    _loadDropdownOptions();
+  }
+
+  Future<void> _loadDropdownOptions() async {
+    setState(() {
+      _isLoadingOptions = true;
+    });
+
+    try {
+      final apiService = Provider.of<ApiService>(context, listen: false);
+      final parametros = await apiService.getParametros();
+
+      final categorias = <String>{};
+      final tipos = <String>{};
+
+      for (final parametro in parametros) {
+        final categoria = (parametro['categoria'] ?? '').toString().trim();
+        final tipo = (parametro['tipo'] ?? '').toString().trim();
+        if (categoria.isNotEmpty) {
+          categorias.add(categoria);
+        }
+        if (tipo.isNotEmpty) {
+          tipos.add(tipo);
+        }
+      }
+
+      if (_categoria.trim().isNotEmpty) {
+        categorias.add(_categoria.trim());
+      }
+      if (_tipo.trim().isNotEmpty) {
+        tipos.add(_tipo.trim());
+      }
+
+      final categoriasOrdenadas = categorias.toList()..sort();
+      final tiposOrdenados = tipos.toList()..sort();
+
+      if (!mounted) return;
+      setState(() {
+        _categorias = categoriasOrdenadas.isNotEmpty
+            ? categoriasOrdenadas
+            : <String>['Aplicación'];
+        _tipos =
+            tiposOrdenados.isNotEmpty ? tiposOrdenados : <String>['General'];
+        if (!_categorias.contains(_categoria)) {
+          _categoria = _categorias.first;
+        }
+        if (!_tipos.contains(_tipo)) {
+          _tipo = _tipos.first;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        if (!_categorias.contains(_categoria)) {
+          _categorias = <String>{..._categorias, _categoria}.toList()..sort();
+        }
+        if (!_tipos.contains(_tipo)) {
+          _tipos = <String>{..._tipos, _tipo}.toList()..sort();
+        }
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingOptions = false;
+        });
+      }
+    }
   }
 
   @override
@@ -250,7 +318,8 @@ class _ParametroEditScreenState extends State<ParametroEditScreen> {
 
               // Categoría
               DropdownButtonFormField<String>(
-                initialValue: _categoria,
+                initialValue:
+                    _categorias.contains(_categoria) ? _categoria : null,
                 decoration: const InputDecoration(
                   labelText: 'Categoría *',
                   border: OutlineInputBorder(),
@@ -259,18 +328,20 @@ class _ParametroEditScreenState extends State<ParametroEditScreen> {
                     .map(
                         (cat) => DropdownMenuItem(value: cat, child: Text(cat)))
                     .toList(),
-                onChanged: (value) {
-                  setState(() {
-                    _categoria = value ?? 'Aplicación';
-                  });
-                  _markDirty();
-                },
+                onChanged: _isLoadingOptions
+                    ? null
+                    : (value) {
+                        setState(() {
+                          _categoria = value ?? 'Aplicación';
+                        });
+                        _markDirty();
+                      },
               ),
               const SizedBox(height: 16),
 
               // Tipo
               DropdownButtonFormField<String>(
-                initialValue: _tipo,
+                initialValue: _tipos.contains(_tipo) ? _tipo : null,
                 decoration: const InputDecoration(
                   labelText: 'Tipo *',
                   border: OutlineInputBorder(),
@@ -279,13 +350,19 @@ class _ParametroEditScreenState extends State<ParametroEditScreen> {
                     .map((tipo) =>
                         DropdownMenuItem(value: tipo, child: Text(tipo)))
                     .toList(),
-                onChanged: (value) {
-                  setState(() {
-                    _tipo = value ?? 'General';
-                  });
-                  _markDirty();
-                },
+                onChanged: _isLoadingOptions
+                    ? null
+                    : (value) {
+                        setState(() {
+                          _tipo = value ?? 'General';
+                        });
+                        _markDirty();
+                      },
               ),
+              if (_isLoadingOptions) ...[
+                const SizedBox(height: 12),
+                const LinearProgressIndicator(minHeight: 2),
+              ],
               const SizedBox(height: 24),
 
               // Botón guardar (solo si no está en la AppBar)

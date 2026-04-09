@@ -21,6 +21,12 @@ subprojects {
 }
 subprojects {
     project.evaluationDependsOn(":app")
+
+    if (name == "path_provider_android") {
+        plugins.withId("com.android.library") {
+            project.dependencies.add("implementation", "androidx.core:core:1.13.1")
+        }
+    }
 }
 
 tasks.register<Delete>("clean") {

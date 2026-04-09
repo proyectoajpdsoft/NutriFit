@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:nutri_app/models/usuario.dart';
 import 'package:nutri_app/screens/paciente_profile_edit_screen.dart';
 import 'package:nutri_app/services/api_service.dart';
@@ -8,6 +9,9 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 enum PremiumPreviewMode { registered, guest }
+
+const String premiumPaymentConfirmationArgumentKey =
+    'showPremiumPaymentConfirmation';
 
 class PremiumInfoScreen extends StatefulWidget {
   const PremiumInfoScreen({super.key, this.previewMode});
@@ -106,17 +110,41 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
 
   Future<void> _loadContent() async {
     final apiService = context.read<ApiService>();
+    final languageCode = Localizations.localeOf(context).languageCode;
+    final l10n = AppLocalizations.of(context)!;
+    final defaultContent = _PremiumContent.defaults(l10n);
 
     try {
       final values = await Future.wait<String?>([
-        apiService.getParametroValor(_paramIntroTitle),
-        apiService.getParametroValor(_paramIntroText),
-        apiService.getParametroValor(_paramBenefits),
-        apiService.getParametroValor(_paramPaymentMethods),
-        apiService.getParametroValor(_paramPaymentIntro),
-        apiService.getParametroValor(_paramActivationNotice),
+        apiService.getParametroValorLocalized(
+          _paramIntroTitle,
+          languageCode: languageCode,
+        ),
+        apiService.getParametroValorLocalized(
+          _paramIntroText,
+          languageCode: languageCode,
+        ),
+        apiService.getParametroValorLocalized(
+          _paramBenefits,
+          languageCode: languageCode,
+        ),
+        apiService.getParametroValorLocalized(
+          _paramPaymentMethods,
+          languageCode: languageCode,
+        ),
+        apiService.getParametroValorLocalized(
+          _paramPaymentIntro,
+          languageCode: languageCode,
+        ),
+        apiService.getParametroValorLocalized(
+          _paramActivationNotice,
+          languageCode: languageCode,
+        ),
         apiService.getParametroValor(_paramPaypalUrl),
-        apiService.getParametroValor(_paramPaypalLabel),
+        apiService.getParametroValorLocalized(
+          _paramPaypalLabel,
+          languageCode: languageCode,
+        ),
         apiService.getParametroValor(_paramPaypalActive),
         apiService.getParametroValor(_paramPaypalEmail),
         apiService.getParametroValor(_paramPaypalConcept),
@@ -124,69 +152,102 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
         apiService.getParametroValor(_paramBizumActive),
         apiService.getParametroValor(_paramBizumHolder),
         apiService.getParametroValor(_paramBizumConcept),
-        apiService.getParametroValor(_paramBizumLabel),
+        apiService.getParametroValorLocalized(
+          _paramBizumLabel,
+          languageCode: languageCode,
+        ),
         apiService.getParametroValor(_paramTransferActive),
         apiService.getParametroValor(_paramTransferOwner),
         apiService.getParametroValor(_paramTransferIban),
         apiService.getParametroValor(_paramTransferBank),
         apiService.getParametroValor(_paramTransferConcept),
-        apiService.getParametroValor(_paramTransferLabel),
+        apiService.getParametroValorLocalized(
+          _paramTransferLabel,
+          languageCode: languageCode,
+        ),
         apiService.getParametroValor(_paramPrice1m),
         apiService.getParametroValor(_paramPrice3m),
         apiService.getParametroValor(_paramPrice6m),
         apiService.getParametroValor(_paramPrice12m),
-        apiService.getParametroValor(_paramPriceText1m),
-        apiService.getParametroValor(_paramPriceText3m),
-        apiService.getParametroValor(_paramPriceText6m),
-        apiService.getParametroValor(_paramPriceText12m),
-        apiService.getParametroValor(_paramPaymentConceptTemplate),
-        apiService.getParametroValor(_paramPaymentStepsPaypal),
-        apiService.getParametroValor(_paramPaymentStepsBizum),
-        apiService.getParametroValor(_paramPaymentStepsTransfer),
+        apiService.getParametroValorLocalized(
+          _paramPriceText1m,
+          languageCode: languageCode,
+        ),
+        apiService.getParametroValorLocalized(
+          _paramPriceText3m,
+          languageCode: languageCode,
+        ),
+        apiService.getParametroValorLocalized(
+          _paramPriceText6m,
+          languageCode: languageCode,
+        ),
+        apiService.getParametroValorLocalized(
+          _paramPriceText12m,
+          languageCode: languageCode,
+        ),
+        apiService.getParametroValorLocalized(
+          _paramPaymentConceptTemplate,
+          languageCode: languageCode,
+        ),
+        apiService.getParametroValorLocalized(
+          _paramPaymentStepsPaypal,
+          languageCode: languageCode,
+        ),
+        apiService.getParametroValorLocalized(
+          _paramPaymentStepsBizum,
+          languageCode: languageCode,
+        ),
+        apiService.getParametroValorLocalized(
+          _paramPaymentStepsTransfer,
+          languageCode: languageCode,
+        ),
       ]);
 
       if (!mounted) return;
 
       setState(() {
         _content = _PremiumContent(
-          introTitle: _textOrDefault(values[0], _content.introTitle),
-          introText: _textOrDefault(values[1], _content.introText),
-          benefits: _linesOrDefault(values[2], _content.benefits),
-          paymentMethods: _linesOrDefault(values[3], _content.paymentMethods),
-          paymentIntro: _textOrDefault(values[4], _content.paymentIntro),
+          introTitle: _textOrDefault(values[0], defaultContent.introTitle),
+          introText: _textOrDefault(values[1], defaultContent.introText),
+          benefits: _linesOrDefault(values[2], defaultContent.benefits),
+          paymentMethods: _linesOrDefault(
+            values[3],
+            defaultContent.paymentMethods,
+          ),
+          paymentIntro: _textOrDefault(values[4], defaultContent.paymentIntro),
           activationNotice: _textOrDefault(
             values[5],
-            _content.activationNotice,
+            defaultContent.activationNotice,
           ),
           paymentStepsPaypalTemplate: _textOrDefault(
             values[31],
-            _content.paymentStepsPaypalTemplate,
+            defaultContent.paymentStepsPaypalTemplate,
           ),
           paymentStepsBizumTemplate: _textOrDefault(
             values[32],
-            _content.paymentStepsBizumTemplate,
+            defaultContent.paymentStepsBizumTemplate,
           ),
           paymentStepsTransferTemplate: _textOrDefault(
             values[33],
-            _content.paymentStepsTransferTemplate,
+            defaultContent.paymentStepsTransferTemplate,
           ),
           paymentOptions: [
             _PaymentOption.paypal(
-              label: _textOrDefault(values[7], 'Pagar por PayPal'),
+              label: _textOrDefault(values[7], l10n.premiumPayWithPaypal),
               url: values[6]?.trim() ?? '',
               active: values[8]?.trim() ?? '',
               email: values[9]?.trim() ?? '',
               concept: values[10]?.trim() ?? '',
             ),
             _PaymentOption.bizum(
-              label: _textOrDefault(values[15], 'Pagar por Bizum'),
+              label: _textOrDefault(values[15], l10n.premiumPayWithBizum),
               phone: values[11]?.trim() ?? '',
               active: values[12]?.trim() ?? '',
               holder: values[13]?.trim() ?? '',
               concept: values[14]?.trim() ?? '',
             ),
             _PaymentOption.transfer(
-              label: _textOrDefault(values[21], 'Pagar por transferencia'),
+              label: _textOrDefault(values[21], l10n.premiumPayWithTransfer),
               active: values[16]?.trim() ?? '',
               owner: values[17]?.trim() ?? '',
               iban: values[18]?.trim() ?? '',
@@ -216,7 +277,7 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _content = _PremiumContent.defaults();
+        _content = defaultContent;
         _isLoading = false;
       });
     }
@@ -241,8 +302,8 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
   }
 
   String _periodLabel(int months) {
-    if (months == 12) return '12 meses';
-    return '$months mes${months == 1 ? '' : 'es'}';
+    final l10n = AppLocalizations.of(context)!;
+    return l10n.premiumPeriodMonths(months);
   }
 
   String _resolvePriceAmount(int months) {
@@ -252,13 +313,14 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
   }
 
   String _resolvePriceDisplayText(int months) {
+    final l10n = AppLocalizations.of(context)!;
     final configuredText = (_priceTextsByPeriod[months] ?? '').trim();
     if (configuredText.isNotEmpty) return configuredText;
     final amount = _resolvePriceAmount(months);
     if (amount == '-') {
-      return 'Precio no disponible para ${_periodLabel(months)}.';
+      return l10n.premiumPriceUnavailable(_periodLabel(months));
     }
-    return 'Precio: $amount (período contratado de ${_periodLabel(months)})';
+    return l10n.premiumPriceDisplay(amount, _periodLabel(months));
   }
 
   Future<void> _startPayment(_PaymentOption option) async {
@@ -270,12 +332,11 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
     }
 
     if (!_emailVerified) {
+      final l10n = AppLocalizations.of(context)!;
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Debes verificar tu email antes de continuar con el pago.',
-          ),
+        SnackBar(
+          content: Text(l10n.premiumVerifyEmailBeforePayment),
           backgroundColor: Colors.orange,
         ),
       );
@@ -346,24 +407,25 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
   }
 
   Future<void> _showRegisterRequiredDialog() async {
+    final l10n = AppLocalizations.of(context)!;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Registro requerido'),
-        content: const Text(
-          'Para hacerte Premium primero tienes que registrarte. El registro es gratis y, una vez tengas tu cuenta, ya podrás solicitar el acceso Premium al dietista.',
+        title: Text(l10n.drawerRegistrationRequiredTitle),
+        content: Text(
+          l10n.premiumRegistrationRequiredBody,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cerrar'),
+            child: Text(l10n.commonClose),
           ),
           ElevatedButton(
             onPressed: () {
               Navigator.pop(dialogContext);
               Navigator.pushNamed(context, '/register');
             },
-            child: const Text('Registrarme gratis'),
+            child: Text(l10n.premiumRegisterFree),
           ),
         ],
       ),
@@ -377,6 +439,7 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
     bool isManager,
     AuthService authService,
   ) {
+    final l10n = AppLocalizations.of(context)!;
     final selectedOption = paymentOptions.firstWhere(
       (item) => item.label == _selectedPaymentLabel,
       orElse: () => paymentOptions.isNotEmpty
@@ -433,7 +496,8 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
                       : (paymentOptions.isNotEmpty
                           ? paymentOptions.first.label
                           : null),
-              decoration: const InputDecoration(labelText: 'Método de pago'),
+              decoration:
+                  InputDecoration(labelText: l10n.premiumPaymentMethodLabel),
               items: paymentOptions
                   .map(
                     (item) => DropdownMenuItem<String>(
@@ -466,7 +530,7 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
                 child: OutlinedButton.icon(
                   onPressed: () => _openProfileToVerifyEmail(authService),
                   icon: const Icon(Icons.mark_email_read_outlined),
-                  label: const Text('Verifica tu email para realizar el pago'),
+                  label: Text(l10n.premiumVerifyEmailAction),
                 ),
               ),
               const SizedBox(height: 8),
@@ -479,8 +543,8 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
                 icon: const Icon(Icons.payments_outlined),
                 label: Text(
                   authService.isPremium
-                      ? 'Renovar Premium'
-                      : 'Continuar con el pago',
+                      ? l10n.homeRenewPremium
+                      : l10n.premiumContinuePayment,
                 ),
               ),
             ),
@@ -495,9 +559,12 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
     required bool needsRegistration,
     required AuthService authService,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     if (_emailVerified) {
       return Text(
-        'Email verificado: ${_verifiedEmail.isNotEmpty ? _verifiedEmail : 'ok'}',
+        l10n.premiumVerifiedEmailStatus(
+          _verifiedEmail.isNotEmpty ? _verifiedEmail : 'ok',
+        ),
         style: TextStyle(
           color: Colors.green.shade700,
           fontWeight: FontWeight.w600,
@@ -506,11 +573,11 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
     }
 
     final messagePrefix = needsRegistration
-        ? 'Para realizar el pago, primero regístrate, es gratis:'
-        : 'Para realizar el pago, primero verifica tu email en';
+        ? l10n.premiumPaymentNeedsRegistration
+        : l10n.premiumPaymentNeedsEmailVerification;
     final linkLabel = needsRegistration
-        ? 'Ir\u00A0al\u00A0registro\u00A0de\u00A0usuario'
-        : 'Editar\u00A0perfil';
+        ? l10n.premiumGoToRegisterLink
+        : l10n.homeGoToEditProfile;
 
     return Container(
       width: double.infinity,
@@ -620,6 +687,7 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
   }
 
   Widget _buildGuestRegistrationCard() {
+    final l10n = AppLocalizations.of(context)!;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -630,15 +698,15 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.app_registration, color: Colors.blue),
-              SizedBox(width: 10),
+              const Icon(Icons.app_registration, color: Colors.blue),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Si todavía no tienes cuenta, primero debes registrarte gratis para poder solicitar el acceso Premium.',
-                  style: TextStyle(fontWeight: FontWeight.w700),
+                  l10n.premiumGuestRegistrationBody,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),
             ],
@@ -649,7 +717,7 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
             child: OutlinedButton.icon(
               onPressed: () => Navigator.pushNamed(context, '/register'),
               icon: const Icon(Icons.person_add_alt_1),
-              label: const Text('Registrarme gratis'),
+              label: Text(l10n.premiumRegisterFree),
             ),
           ),
         ],
@@ -690,6 +758,7 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final authService = context.watch<AuthService>();
     final isManagerUser = authService.userType == 'Nutricionista' ||
         authService.userType == 'Administrador';
@@ -706,7 +775,7 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
     final bottomInset = MediaQuery.of(context).padding.bottom;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Hazte Premium')),
+      appBar: AppBar(title: Text(l10n.navPremium)),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : SafeArea(
@@ -779,7 +848,7 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
                   const SizedBox(height: 20),
                   _buildSectionTitle(
                     context,
-                    'Ventajas de ser Premium',
+                    l10n.premiumBenefitsSectionTitle,
                     Icons.check_circle_outline,
                   ),
                   const SizedBox(height: 12),
@@ -801,8 +870,8 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
                       ),
                       child: Text(
                         needsRegistration
-                            ? 'Vista previa: usuario no registrado/invitado.'
-                            : 'Vista previa: usuario registrado.',
+                            ? l10n.navPreviewGuestUser
+                            : l10n.navPreviewRegisteredUser,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               fontWeight: FontWeight.w600,
                             ),
@@ -816,7 +885,7 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
                   const SizedBox(height: 20),
                   _buildSectionTitle(
                     context,
-                    'Pago y contratación Premium',
+                    l10n.premiumPaymentSectionTitle,
                     Icons.payments_outlined,
                   ),
                   const SizedBox(height: 12),
@@ -844,8 +913,8 @@ class _PremiumInfoScreenState extends State<PremiumInfoScreen> {
                   const SizedBox(height: 10),
                   Text(
                     needsRegistration
-                        ? 'Después del registro podrás usar el asistente de pago Premium en esta misma pantalla.'
-                        : 'La activación final del acceso Premium la realiza el equipo de NutriFit tras validar el pago y el período elegido. Se realizará en las próximas 24/48/72 horas, en función del método elegido.',
+                        ? l10n.premiumAfterRegistrationMessage
+                        : l10n.premiumFinalActivationMessage,
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Colors.grey.shade700,
@@ -883,32 +952,46 @@ class _PremiumContent {
   final String paymentStepsTransferTemplate;
   final List<_PaymentOption> paymentOptions;
 
-  factory _PremiumContent.defaults() {
-    return const _PremiumContent(
-      introTitle: 'Desbloquea tu experiencia Premium',
-      introText:
+  factory _PremiumContent.defaults([AppLocalizations? l10n]) {
+    return _PremiumContent(
+      introTitle:
+          l10n?.premiumDefaultIntroTitle ?? 'Desbloquea tu experiencia Premium',
+      introText: l10n?.premiumDefaultIntroText ??
           'Accede a contenidos exclusivos, recursos avanzados y seguimiento reforzado para sacar más partido a tu plan.',
       benefits: [
-        'Acceso a funcionalidades exclusivas para usuarios Premium, como Vídeos Ejercicios y futuras mejoras.',
-        'Biblioteca de sustituciones saludables: equivalencias rápidas del tipo “si no tengo X, usa Y” para no romper el plan.',
-        'Experiencia más completa dentro de la app con contenido diferencial y acceso ampliado.',
-        'Posibilidad de recibir propuestas personalizadas del nutricionista según el servicio contratado.',
+        l10n?.premiumDefaultBenefit1 ??
+            'Acceso a funcionalidades exclusivas para usuarios Premium, como Vídeos Ejercicios y futuras mejoras.',
+        l10n?.premiumDefaultBenefit2 ??
+            'Biblioteca de sustituciones saludables: equivalencias rápidas del tipo “si no tengo X, usa Y” para no romper el plan.',
+        l10n?.premiumDefaultBenefit3 ??
+            'Experiencia más completa dentro de la app con contenido diferencial y acceso ampliado.',
+        l10n?.premiumDefaultBenefit4 ??
+            'Posibilidad de recibir propuestas personalizadas del nutricionista según el servicio contratado.',
       ],
       paymentMethods: [
-        'El nutricionista puede ofrecer métodos como PayPal, Bizum, transferencia bancaria u otras opciones personalizadas.',
-        'Estos datos son configurables desde parámetros globales para adaptar la propuesta comercial a cada profesional.',
+        l10n?.premiumDefaultPaymentMethod1 ??
+            'El nutricionista puede ofrecer métodos como PayPal, Bizum, transferencia bancaria u otras opciones personalizadas.',
+        l10n?.premiumDefaultPaymentMethod2 ??
+            'Estos datos son configurables desde parámetros globales para adaptar la propuesta comercial a cada profesional.',
       ],
-      paymentIntro:
+      paymentIntro: l10n?.premiumDefaultPaymentIntro ??
           'Intrucciones para realizar el pago y activar tu cuenta Premium.',
-      activationNotice:
+      activationNotice: l10n?.premiumDefaultActivationNotice ??
           'Una vez recibido el pago, tu perfil Premium se activará en un plazo aproximado de 24/48/72 horas, en función del método elegido.',
-      paymentStepsPaypalTemplate:
+      paymentStepsPaypalTemplate: l10n?.premiumDefaultPaypalSteps(
+            '{boton_abrir_url_paypal}',
+            '{email_paypal}',
+            '{url_paypal}',
+          ) ??
           'Abre la pasarela de pago en: {url_paypal}.\nRealiza el pago con la cuenta PayPal ({email_paypal}) e importe indicado.\nSi lo necesitas, usa el botón {boton_abrir_url_paypal}.',
-      paymentStepsBizumTemplate:
+      paymentStepsBizumTemplate: l10n?.premiumDefaultBizumSteps(
+            '{boton_copiar_telefono}',
+            '{telefono_nutricionista}',
+          ) ??
           'Realiza el Bizum al teléfono {telefono_nutricionista}.\nAñade el concepto antes de confirmar el pago.\nSi lo necesitas, usa el botón {boton_copiar_telefono}.',
-      paymentStepsTransferTemplate:
+      paymentStepsTransferTemplate: l10n?.premiumDefaultTransferSteps ??
           'Realiza la transferencia con los datos mostrados en pantalla.\nComprueba el importe y añade el concepto antes de enviar.\nSi lo necesitas, copia los datos bancarios disponibles.',
-      paymentOptions: [],
+      paymentOptions: const [],
     );
   }
 }
@@ -929,47 +1012,48 @@ class _PremiumPeriodChoice {
   final Color softColor;
 }
 
-const List<_PremiumPeriodChoice> _premiumPeriodChoices = [
-  _PremiumPeriodChoice(
-    months: 12,
-    label: '12 meses',
-    badge: 'Máximo descuento',
-    color: Color(0xFFE67E22),
-    softColor: Color(0xFFFFE4BF),
-  ),
-  _PremiumPeriodChoice(
-    months: 6,
-    label: '6 meses',
-    badge: 'Ahorro alto',
-    color: Color(0xFF1F9D74),
-    softColor: Color(0xFFDDF6EC),
-  ),
-  _PremiumPeriodChoice(
-    months: 3,
-    label: '3 meses',
-    badge: 'Ahorro medio',
-    color: Color(0xFF2D7FF9),
-    softColor: Color(0xFFDCEBFF),
-  ),
-  _PremiumPeriodChoice(
-    months: 1,
-    label: '1 mes',
-    badge: 'Sin descuento',
-    color: Color(0xFF6B7280),
-    softColor: Color(0xFFE9EDF2),
-  ),
-];
+List<_PremiumPeriodChoice> _premiumPeriodChoices(AppLocalizations l10n) => [
+      _PremiumPeriodChoice(
+        months: 12,
+        label: l10n.premiumPeriodMonths(12),
+        badge: l10n.premiumPeriodBadgeMaxDiscount,
+        color: const Color(0xFFE67E22),
+        softColor: const Color(0xFFFFE4BF),
+      ),
+      _PremiumPeriodChoice(
+        months: 6,
+        label: l10n.premiumPeriodMonths(6),
+        badge: l10n.premiumPeriodBadgeHighSaving,
+        color: const Color(0xFF1F9D74),
+        softColor: const Color(0xFFDDF6EC),
+      ),
+      _PremiumPeriodChoice(
+        months: 3,
+        label: l10n.premiumPeriodMonths(3),
+        badge: l10n.premiumPeriodBadgeMediumSaving,
+        color: const Color(0xFF2D7FF9),
+        softColor: const Color(0xFFDCEBFF),
+      ),
+      _PremiumPeriodChoice(
+        months: 1,
+        label: l10n.premiumPeriodMonths(1),
+        badge: l10n.premiumPeriodBadgeNoDiscount,
+        color: const Color(0xFF6B7280),
+        softColor: const Color(0xFFE9EDF2),
+      ),
+    ];
 
 Widget _buildPremiumPeriodSelector({
   required BuildContext context,
   required int selectedMonths,
   required ValueChanged<int> onChanged,
 }) {
+  final l10n = AppLocalizations.of(context)!;
   return Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Text(
-        'Período Premium',
+        l10n.premiumPeriodLabel,
         style: Theme.of(
           context,
         ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w800),
@@ -978,7 +1062,7 @@ Widget _buildPremiumPeriodSelector({
       Wrap(
         spacing: 10,
         runSpacing: 10,
-        children: _premiumPeriodChoices.map((choice) {
+        children: _premiumPeriodChoices(l10n).map((choice) {
           final isSelected = selectedMonths == choice.months;
           return Material(
             color: Colors.transparent,
@@ -1238,8 +1322,8 @@ class _PremiumPaymentStepsScreenState
   }
 
   String _periodLabel(int months) {
-    if (months == 12) return '12 meses';
-    return '$months mes${months == 1 ? '' : 'es'}';
+    final l10n = AppLocalizations.of(context)!;
+    return l10n.premiumPeriodMonths(months);
   }
 
   String _resolvePriceAmount(int months) {
@@ -1267,35 +1351,39 @@ class _PremiumPaymentStepsScreenState
   }
 
   String _resolvePriceDisplayText(int months) {
+    final l10n = AppLocalizations.of(context)!;
     final configuredText = (widget.priceTextsByPeriod[months] ?? '').trim();
     if (configuredText.isNotEmpty) return configuredText;
     final amount = _resolvePriceAmount(months);
     if (amount == '-') {
-      return 'Precio no disponible para ${_periodLabel(months)}.';
+      return l10n.premiumPriceUnavailable(_periodLabel(months));
     }
-    return 'Precio: $amount (período contratado de ${_periodLabel(months)})';
+    return l10n.premiumPriceDisplay(amount, _periodLabel(months));
   }
 
   String _resolvePeriodText(int months) {
+    final l10n = AppLocalizations.of(context)!;
     if (months == 12) {
-      return 'Período a contratar de 12 meses (con descuento máximo).';
+      return l10n.premiumPeriodSummaryMaxDiscount;
     }
     if (months == 6) {
-      return 'Período a contratar de 6 meses (con descuento alto).';
+      return l10n.premiumPeriodSummaryHighDiscount;
     }
     if (months == 3) {
-      return 'Período a contratar de 3 meses (con descuento).';
+      return l10n.premiumPeriodSummaryDiscount;
     }
-    return 'Período a contratar de 1 mes.';
+    return l10n.premiumPeriodSummarySingleMonth;
   }
 
   String _resolvePaymentConcept(AuthService authService) {
+    final l10n = AppLocalizations.of(context)!;
     final nick = (authService.userNick ?? '').trim();
-    final safeNick = nick.isNotEmpty ? nick : 'usuario';
-    return 'NutriFit Premium usuario $safeNick.';
+    final safeNick = nick.isNotEmpty ? nick : l10n.commonUser;
+    return l10n.premiumPaymentConcept(safeNick);
   }
 
   List<String> _resolveMethodSteps(AuthService authService) {
+    final l10n = AppLocalizations.of(context)!;
     final nick = (authService.userNick ?? '').trim();
     final email = widget.verifiedEmail.trim();
 
@@ -1306,12 +1394,12 @@ class _PremiumPaymentStepsScreenState
           .replaceAll('{telefono_nutricionista}', widget.nutritionistPhone)
           .replaceAll('{url_paypal}', widget.paypalUrl)
           .replaceAll('{email_paypal}', widget.paypalEmail)
-          .replaceAll('{boton_copiar_telefono}', 'Copiar teléfono')
-          .replaceAll('{botón_copiar_telefono}', 'Copiar teléfono')
-          .replaceAll('{boton_abrir_url_paypal}', 'Acceder al pago')
-          .replaceAll('{botón_abrir_url_paypal}', 'Acceder al pago')
-          .replaceAll('{boton_copiar_concepto}', 'Copiar concepto')
-          .replaceAll('{botón_copiar_concepto}', 'Copiar concepto');
+          .replaceAll('{boton_copiar_telefono}', l10n.premiumCopyPhone)
+          .replaceAll('{botón_copiar_telefono}', l10n.premiumCopyPhone)
+          .replaceAll('{boton_abrir_url_paypal}', l10n.premiumOpenPayment)
+          .replaceAll('{botón_abrir_url_paypal}', l10n.premiumOpenPayment)
+          .replaceAll('{boton_copiar_concepto}', l10n.premiumCopyConcept)
+          .replaceAll('{botón_copiar_concepto}', l10n.premiumCopyConcept);
     }
 
     final rawTemplate = widget.paymentStepsTemplate.trim();
@@ -1334,6 +1422,7 @@ class _PremiumPaymentStepsScreenState
     String value, {
     String? infoCardMessage,
   }) async {
+    final l10n = AppLocalizations.of(context)!;
     await Clipboard.setData(ClipboardData(text: value));
     if (!mounted) return;
     if (infoCardMessage != null && infoCardMessage.trim().isNotEmpty) {
@@ -1344,13 +1433,14 @@ class _PremiumPaymentStepsScreenState
     }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('$label copiado al portapapeles.'),
+        content: Text(l10n.commonCopiedToClipboardLabel(label)),
         backgroundColor: Colors.green,
       ),
     );
   }
 
   Future<void> _openUrl(String rawUrl) async {
+    final l10n = AppLocalizations.of(context)!;
     final trimmed = rawUrl.trim();
     if (trimmed.isEmpty) return;
     final normalizedUrl =
@@ -1360,8 +1450,8 @@ class _PremiumPaymentStepsScreenState
     if (Uri.tryParse(normalizedUrl) == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('URL no válida.'),
+        SnackBar(
+          content: Text(l10n.premiumInvalidUrl),
           backgroundColor: Colors.red,
         ),
       );
@@ -1381,7 +1471,7 @@ class _PremiumPaymentStepsScreenState
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('No se pudo abrir el enlace de pago: $e'),
+            content: Text(l10n.premiumOpenPaymentError('$e')),
             backgroundColor: Colors.red,
           ),
         );
@@ -1390,7 +1480,7 @@ class _PremiumPaymentStepsScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('No se pudo abrir el enlace de pago: $e'),
+          content: Text(l10n.premiumOpenPaymentError('$e')),
           backgroundColor: Colors.red,
         ),
       );
@@ -1398,10 +1488,11 @@ class _PremiumPaymentStepsScreenState
   }
 
   Future<void> _notifyPaymentDone() async {
+    final l10n = AppLocalizations.of(context)!;
     if (!widget.emailVerified) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Debes verificar tu email antes de notificar el pago.'),
+        SnackBar(
+          content: Text(l10n.premiumVerifyEmailBeforeNotifyPayment),
           backgroundColor: Colors.orange,
         ),
       );
@@ -1425,22 +1516,23 @@ class _PremiumPaymentStepsScreenState
             periodMonths: _selectedPeriodMonths,
             priceText: priceText,
             concept: concept,
+            languageCode: Localizations.localeOf(context).languageCode,
           );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Notificación enviada al nutricionista. Revisará el pago y activará tu cuenta Premium.',
-          ),
-          backgroundColor: Colors.green,
-        ),
+      final homeRoute =
+          authService.isPatientAreaUser ? 'paciente_home' : 'home';
+      Navigator.of(context).pushNamedAndRemoveUntil(
+        homeRoute,
+        (route) => false,
+        arguments: {
+          premiumPaymentConfirmationArgumentKey: true,
+        },
       );
-      Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('No se pudo notificar el pago: $e'),
+          content: Text(l10n.premiumNotifyPaymentError('$e')),
           backgroundColor: Colors.red,
         ),
       );
@@ -1453,6 +1545,7 @@ class _PremiumPaymentStepsScreenState
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final authService = context.watch<AuthService>();
     final concept = _resolvePaymentConcept(authService);
     final detailLines = _resolveMethodSteps(authService);
@@ -1460,7 +1553,7 @@ class _PremiumPaymentStepsScreenState
     final bottomInset = MediaQuery.of(context).padding.bottom;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Completar el pago')),
+      appBar: AppBar(title: Text(l10n.premiumCompletePaymentTitle)),
       body: ListView(
         padding: EdgeInsets.fromLTRB(16, 16, 16, 18 + bottomInset),
         children: [
@@ -1498,7 +1591,7 @@ class _PremiumPaymentStepsScreenState
           ),
           const SizedBox(height: 12),
           Text(
-            'Concepto que debes indicar en el método de pago:',
+            l10n.premiumPaymentConceptLabel,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   fontWeight: FontWeight.w800,
                   color: Colors.brown.shade800,
@@ -1530,7 +1623,7 @@ class _PremiumPaymentStepsScreenState
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Pasos para ${widget.option.label}',
+                    l10n.premiumStepsFor(widget.option.label),
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w800,
                         ),
@@ -1551,6 +1644,21 @@ class _PremiumPaymentStepsScreenState
                       ),
                     ),
                   ),
+                  if (widget.option.kind == 'bizum' &&
+                      widget.nutritionistPhone.trim().isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Center(
+                        child: OutlinedButton.icon(
+                          onPressed: () => _copyToClipboard(
+                            l10n.premiumBizumPhoneLabel,
+                            widget.nutritionistPhone.trim(),
+                          ),
+                          icon: const Icon(Icons.copy_rounded),
+                          label: Text(l10n.premiumCopyPhone),
+                        ),
+                      ),
+                    ),
                   if ((widget.option.payUrl ?? '').trim().isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
@@ -1570,7 +1678,7 @@ class _PremiumPaymentStepsScreenState
                           ),
                           onPressed: () => _openUrl(widget.option.payUrl!),
                           icon: const Icon(Icons.open_in_new),
-                          label: const Text('Acceder al pago'),
+                          label: Text(l10n.premiumOpenPayment),
                         ),
                       ),
                     ),
@@ -1608,9 +1716,9 @@ class _PremiumPaymentStepsScreenState
               borderRadius: BorderRadius.circular(14),
               border: Border.all(color: Colors.deepOrange.shade200, width: 1.8),
             ),
-            child: const Text(
-              'Cuando hayas realizado el pago, pulsa en "He realizado el pago" para enviar notificación al equipo de NutriFit. En cuanto se verifique el pago, se activará tu cuenta Premium y se te notificará por email.',
-              style: TextStyle(fontWeight: FontWeight.w800),
+            child: Text(
+              l10n.premiumAfterPaymentNotice,
+              style: const TextStyle(fontWeight: FontWeight.w800),
             ),
           ),
           const SizedBox(height: 12),
@@ -1621,8 +1729,8 @@ class _PremiumPaymentStepsScreenState
               icon: const Icon(Icons.mark_email_read_outlined),
               label: Text(
                 _sendingNotification
-                    ? 'Enviando notificación...'
-                    : 'He realizado el pago',
+                    ? l10n.premiumSendingNotification
+                    : l10n.premiumIHavePaid,
               ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.deepOrange,

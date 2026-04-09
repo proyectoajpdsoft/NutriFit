@@ -7,7 +7,20 @@ import '../services/api_service.dart';
 import 'dart:convert';
 
 class EntrenamientoSensacionesPendientesScreen extends StatefulWidget {
-  const EntrenamientoSensacionesPendientesScreen({super.key});
+  const EntrenamientoSensacionesPendientesScreen({
+    super.key,
+    this.codigoPaciente,
+    this.codigoPlanFit,
+    this.incluirLeidas = false,
+    this.titulo,
+    this.emptyMessage,
+  });
+
+  final int? codigoPaciente;
+  final int? codigoPlanFit;
+  final bool incluirLeidas;
+  final String? titulo;
+  final String? emptyMessage;
 
   @override
   State<EntrenamientoSensacionesPendientesScreen> createState() =>
@@ -26,7 +39,11 @@ class _EntrenamientoSensacionesPendientesScreenState
 
   Future<List<Map<String, dynamic>>> _loadSensaciones() async {
     final apiService = context.read<ApiService>();
-    return apiService.getSensacionesPendientesNutri();
+    return apiService.getSensacionesNutri(
+      codigoPaciente: widget.codigoPaciente,
+      codigoPlanFit: widget.codigoPlanFit,
+      incluirLeidas: widget.incluirLeidas,
+    );
   }
 
   Future<void> _markAsRead(int codigoEjercicio) async {
@@ -65,17 +82,38 @@ class _EntrenamientoSensacionesPendientesScreenState
       notas: null,
       fotos: null,
       vueltas: null,
-      codigoPlanFit: null,
+      codigoPlanFit: int.tryParse(item['codigo_plan_fit']?.toString() ?? ''),
       codUsuario: '',
       fechaA: null,
     );
+  }
+
+  bool _isSensacionLeida(Map<String, dynamic> item) {
+    final raw = item['sensaciones_leido_nutri'];
+    if (raw == null) return false;
+    final value = raw.toString().toLowerCase();
+    return value == '1' || value == 'true' || value == 's';
+  }
+
+  String get _screenTitle {
+    return widget.titulo ??
+        (widget.incluirLeidas
+            ? 'Sensaciones de ejercicios'
+            : 'Sensaciones de ejercicios pendientes');
+  }
+
+  String get _emptyStateMessage {
+    return widget.emptyMessage ??
+        (widget.incluirLeidas
+            ? 'No hay sensaciones de ejercicios registradas.'
+            : 'No hay sensaciones pendientes.');
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Sensaciones de ejercicios pendientes'),
+        title: Text(_screenTitle),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
@@ -96,8 +134,8 @@ class _EntrenamientoSensacionesPendientesScreenState
 
           final items = snapshot.data ?? [];
           if (items.isEmpty) {
-            return const Center(
-              child: Text('No hay sensaciones pendientes.'),
+            return Center(
+              child: Text(_emptyStateMessage),
             );
           }
 
@@ -110,6 +148,9 @@ class _EntrenamientoSensacionesPendientesScreenState
               final paciente = item['nombre_paciente']?.toString() ?? '';
               final fecha = _formatFecha(item['fecha']?.toString());
               final sensaciones = item['sensaciones']?.toString() ?? '';
+              final sensacionLeida = _isSensacionLeida(item);
+              final fechaLectura = _formatFecha(
+                  item['sensaciones_leido_nutri_fecha']?.toString());
               final codigoEjercicio =
                   int.tryParse(item['codigo_ejercicio']?.toString() ?? '') ?? 0;
               final codigoEntrenamiento = int.tryParse(
@@ -240,6 +281,34 @@ class _EntrenamientoSensacionesPendientesScreenState
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    Icon(
+                                      sensacionLeida
+                                          ? Icons.mark_email_read_outlined
+                                          : Icons.mark_email_unread_outlined,
+                                      size: 16,
+                                      color: sensacionLeida
+                                          ? Colors.green.shade700
+                                          : Colors.orange.shade700,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        sensacionLeida
+                                            ? (fechaLectura.isNotEmpty
+                                                ? 'Leído el $fechaLectura'
+                                                : 'Leído')
+                                            : 'Pendiente de leer',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ],
                             ),
                           ),
@@ -279,7 +348,7 @@ class _EntrenamientoSensacionesPendientesScreenState
                           ),
                           const SizedBox(width: 8),
                           ElevatedButton.icon(
-                            onPressed: codigoEjercicio == 0
+                            onPressed: codigoEjercicio == 0 || sensacionLeida
                                 ? null
                                 : () => _markAsRead(codigoEjercicio),
                             icon: const Icon(Icons.mark_chat_read_outlined,

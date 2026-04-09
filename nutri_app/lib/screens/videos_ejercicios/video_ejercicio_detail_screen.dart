@@ -5,15 +5,66 @@ import 'package:flutter/material.dart';
 
 import '../../models/video_ejercicio.dart';
 
-class VideoEjercicioDetailScreen extends StatelessWidget {
+class VideoEjercicioDetailScreen extends StatefulWidget {
   const VideoEjercicioDetailScreen({
     super.key,
     required this.video,
     required this.onPlay,
+    this.onActionSelected,
   });
 
   final VideoEjercicio video;
   final Future<void> Function() onPlay;
+  final Future<void> Function(String action)? onActionSelected;
+
+  @override
+  State<VideoEjercicioDetailScreen> createState() =>
+      _VideoEjercicioDetailScreenState();
+}
+
+class _VideoEjercicioDetailScreenState
+    extends State<VideoEjercicioDetailScreen> {
+  ImageProvider? _thumbProvider;
+
+  @override
+  void initState() {
+    super.initState();
+    _thumbProvider = _buildThumbProvider(widget.video.imagenMiniatura);
+  }
+
+  @override
+  void didUpdateWidget(covariant VideoEjercicioDetailScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.video.imagenMiniatura != widget.video.imagenMiniatura) {
+      _thumbProvider = _buildThumbProvider(widget.video.imagenMiniatura);
+    }
+  }
+
+  ImageProvider? _buildThumbProvider(String? raw) {
+    final value = (raw ?? '').trim();
+    if (value.isEmpty) return null;
+    try {
+      return MemoryImage(base64Decode(value));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Widget _buildYoutubeOverlayBadge() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.38),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+      ),
+      child: const Icon(
+        Icons.smart_display_rounded,
+        color: Colors.white,
+        size: 18,
+      ),
+    );
+  }
 
   Widget _buildHashtagText(
     BuildContext context,
@@ -39,7 +90,14 @@ class VideoEjercicioDetailScreen extends StatelessWidget {
           fontWeight: FontWeight.w600,
         ),
         recognizer: TapGestureRecognizer()
-          ..onTap = () => Navigator.pop(context, tag.replaceFirst('#', '')),
+          ..onTap = () {
+            final action = tag.replaceFirst('#', '');
+            if (widget.onActionSelected != null) {
+              widget.onActionSelected!(action);
+            } else {
+              Navigator.pop(context, action);
+            }
+          },
       ));
       lastEnd = match.end;
     }
@@ -53,12 +111,8 @@ class VideoEjercicioDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    ImageProvider? thumbProvider;
-    if (video.imagenMiniatura != null && video.imagenMiniatura!.isNotEmpty) {
-      try {
-        thumbProvider = MemoryImage(base64Decode(video.imagenMiniatura!));
-      } catch (_) {}
-    }
+    final video = widget.video;
+    final thumbProvider = _thumbProvider;
 
     return Scaffold(
       appBar: AppBar(
@@ -76,14 +130,20 @@ class VideoEjercicioDetailScreen extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
             clipBehavior: Clip.antiAlias,
             child: InkWell(
-              onTap: onPlay,
+              onTap: widget.onPlay,
               child: thumbProvider != null
                   ? AspectRatio(
                       aspectRatio: 16 / 9,
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          Image(image: thumbProvider, fit: BoxFit.cover),
+                          RepaintBoundary(
+                            child: Image(
+                              image: thumbProvider,
+                              fit: BoxFit.cover,
+                              gaplessPlayback: true,
+                            ),
+                          ),
                           Center(
                             child: Container(
                               padding: const EdgeInsets.all(12),
@@ -100,29 +160,58 @@ class VideoEjercicioDetailScreen extends StatelessWidget {
                               ),
                             ),
                           ),
+                          if (video.esYoutube)
+                            Positioned(
+                              right: 10,
+                              bottom: 10,
+                              child: _buildYoutubeOverlayBadge(),
+                            ),
                         ],
                       ),
                     )
                   : Container(
                       height: 210,
                       color: Colors.grey[200],
-                      child: Center(
-                        child: Icon(
-                          video.esYoutube
-                              ? Icons.smart_display_outlined
-                              : Icons.play_circle_outline,
-                          size: 66,
-                          color: Colors.grey[400],
-                        ),
+                      child: Stack(
+                        children: [
+                          Center(
+                            child: Icon(
+                              video.esYoutube
+                                  ? Icons.smart_display_outlined
+                                  : Icons.play_circle_outline,
+                              size: 66,
+                              color: Colors.grey[400],
+                            ),
+                          ),
+                          if (video.esYoutube)
+                            Positioned(
+                              right: 10,
+                              bottom: 10,
+                              child: _buildYoutubeOverlayBadge(),
+                            ),
+                        ],
                       ),
                     ),
             ),
           ),
           const SizedBox(height: 10),
-          TextButton.icon(
-            onPressed: onPlay,
-            icon: const Icon(Icons.play_circle_outline),
-            label: const Text('Reproducir vídeo'),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF6FCF97),
+              foregroundColor: const Color(0xFF103B20),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+              textStyle: const TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 15,
+              ),
+            ),
+            onPressed: widget.onPlay,
+            icon: Icon(
+              video.esYoutube ? Icons.smart_display_rounded : Icons.play_arrow,
+            ),
+            label: Text(
+              video.esYoutube ? 'Reproducir en YouTube' : 'Reproducir vídeo',
+            ),
           ),
           const SizedBox(height: 6),
           Text(
@@ -145,17 +234,13 @@ class VideoEjercicioDetailScreen extends StatelessWidget {
                 color: video.favorito == 'S' ? Colors.amber : null,
                 size: 18,
               ),
-              const SizedBox(width: 10),
-              Chip(
-                label: Text(
-                  video.esYoutube
-                      ? 'YouTube'
-                      : video.esGif
-                          ? 'GIF'
-                          : 'Vídeo',
+              if (!video.esYoutube) ...[
+                const SizedBox(width: 10),
+                Chip(
+                  label: Text(video.esGif ? 'GIF' : 'Vídeo'),
+                  visualDensity: VisualDensity.compact,
                 ),
-                visualDensity: VisualDensity.compact,
-              ),
+              ],
             ],
           ),
           if (video.categoriaNombres.isNotEmpty) ...[
@@ -173,10 +258,15 @@ class VideoEjercicioDetailScreen extends StatelessWidget {
                   return ActionChip(
                     label: Text(c, style: const TextStyle(fontSize: 11)),
                     visualDensity: VisualDensity.compact,
-                    onPressed: () => Navigator.pop(
-                      context,
-                      id != null ? '__catid__:$id' : '__cat__:$c',
-                    ),
+                    onPressed: () {
+                      final action =
+                          id != null ? '__catid__:$id' : '__cat__:$c';
+                      if (widget.onActionSelected != null) {
+                        widget.onActionSelected!(action);
+                      } else {
+                        Navigator.pop(context, action);
+                      }
+                    },
                   );
                 },
               ).toList(),

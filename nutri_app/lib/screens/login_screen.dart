@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:nutri_app/exceptions/auth_exceptions.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/services/config_service.dart';
 import 'package:nutri_app/constants/app_constants.dart';
+import 'package:nutri_app/widgets/app_version_label.dart';
+import 'package:nutri_app/widgets/app_language_dropdown.dart';
 import 'package:nutri_app/widgets/password_requirements_checklist.dart';
 import 'package:provider/provider.dart';
 
@@ -33,6 +36,8 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false;
   bool _passwordVisible = false;
 
+  AppLocalizations get l10n => AppLocalizations.of(context)!;
+
   bool _isNetworkError(String message) {
     final normalized = message.toLowerCase();
     return normalized.contains('sockete') ||
@@ -46,6 +51,14 @@ class _LoginScreenState extends State<LoginScreen> {
         normalized.contains('connection reset');
   }
 
+  bool _isInvalidCredentialsError(String message) {
+    final normalized = message.toLowerCase();
+    return normalized.contains('usuario o contraseña incorrectos') ||
+        normalized.contains('usuario o contrasena incorrectos') ||
+        normalized.contains('invalid username or password') ||
+        normalized.contains('incorrect username or password');
+  }
+
   String _buildLoginErrorMessage(dynamic error) {
     if (error is TwoFactorRequiredException) {
       return error.message;
@@ -53,22 +66,23 @@ class _LoginScreenState extends State<LoginScreen> {
 
     final errorMessage = error.toString().replaceFirst('Exception: ', '');
     if (_isNetworkError(errorMessage)) {
-      return 'Hay algun problema con la conexión a Internet o la app no tiene permisos para conectarse.';
+      return l10n.loginNetworkError;
+    }
+    if (_isInvalidCredentialsError(errorMessage)) {
+      return l10n.loginInvalidCredentials;
     }
     if (errorMessage.contains('Cuenta temporalmente bloqueada')) {
       return errorMessage;
     }
-    return errorMessage.isNotEmpty
-        ? errorMessage
-        : 'No se pudo completar el inicio de sesión. Inténtalo de nuevo.';
+    return errorMessage.isNotEmpty ? errorMessage : l10n.loginFailedGeneric;
   }
 
   String _buildGuestErrorMessage(dynamic error) {
     final errorMessage = error.toString().replaceFirst('Exception: ', '');
     if (_isNetworkError(errorMessage)) {
-      return 'Hay algun problema con la conexión a Internet o la app no tiene permisos para conectarse.';
+      return l10n.loginNetworkError;
     }
-    return 'No se pudo acceder como invitado. Inténtalo de nuevo.';
+    return l10n.loginGuestFailedGeneric;
   }
 
   bool _isNutricionistaTypeValue(dynamic raw) {
@@ -125,8 +139,8 @@ class _LoginScreenState extends State<LoginScreen> {
           await authService.logout();
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Tipo de usuario no reconocido'),
+              SnackBar(
+                content: Text(l10n.loginUnknownUserType),
                 backgroundColor: Colors.red,
               ),
             );
@@ -165,12 +179,32 @@ class _LoginScreenState extends State<LoginScreen> {
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
-            title: const Text('Verificación 2FA'),
+            titlePadding: const EdgeInsets.fromLTRB(16, 10, 8, 6),
+            title: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    l10n.loginTwoFactorTitle,
+                    style: Theme.of(dialogContext).textTheme.titleMedium,
+                  ),
+                ),
+                IconButton(
+                  tooltip: l10n.commonCancel,
+                  onPressed: () => Navigator.of(dialogContext).pop(null),
+                  icon: const Icon(Icons.close),
+                  style: IconButton.styleFrom(
+                    shape: const CircleBorder(),
+                    padding: EdgeInsets.zero,
+                    minimumSize: const Size(32, 32),
+                  ),
+                ),
+              ],
+            ),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text(
-                  'Introduce el código de 6 dígitos de tu aplicación TOTP.',
+                Text(
+                  l10n.loginTwoFactorPrompt,
                 ),
                 const SizedBox(height: 12),
                 TextField(
@@ -179,8 +213,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   textInputAction: TextInputAction.done,
                   maxLength: 6,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: const InputDecoration(
-                    labelText: 'Código 2FA',
+                  decoration: InputDecoration(
+                    labelText: l10n.loginTwoFactorCodeLabel,
                     border: OutlineInputBorder(),
                     counterText: '',
                   ),
@@ -206,25 +240,25 @@ class _LoginScreenState extends State<LoginScreen> {
                       trustThisDevice = value ?? false;
                     });
                   },
-                  title: const Text('Confiar en este dispositivo'),
-                  subtitle: const Text(
-                    'No se volverá a solicitar 2FA en este dispositivo hasta quitar la confianza desde el perfil.',
+                  title: Text(l10n.loginTrustThisDevice),
+                  subtitle: Text(
+                    l10n.loginTrustThisDeviceSubtitle,
                   ),
                 ),
               ],
             ),
             actions: [
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(null),
-                child: const Text('Cancelar'),
-              ),
               ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                ),
                 onPressed: () {
                   final value = codeController.text.trim();
                   if (value.length != 6) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('El código debe tener 6 dígitos.'),
+                      SnackBar(
+                        content: Text(l10n.loginCodeMustHave6Digits),
                       ),
                     );
                     return;
@@ -236,7 +270,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   );
                 },
-                child: const Text('Validar'),
+                child: Text(l10n.commonValidate),
               ),
             ],
           ),
@@ -320,26 +354,26 @@ class _LoginScreenState extends State<LoginScreen> {
   ) {
     final minLength = policy['min_length'] as int? ?? 8;
     if (password.length < minLength) {
-      return 'La nueva contraseña debe tener al menos $minLength caracteres.';
+      return l10n.loginPasswordMinLengthError(minLength);
     }
 
     if (policy['require_upper_lower'] == true) {
       if (!password.contains(RegExp(r'[A-Z]'))) {
-        return 'La nueva contraseña debe contener al menos una letra mayúscula.';
+        return l10n.loginPasswordUppercaseError;
       }
       if (!password.contains(RegExp(r'[a-z]'))) {
-        return 'La nueva contraseña debe contener al menos una letra minúscula.';
+        return l10n.loginPasswordLowercaseError;
       }
     }
 
     if (policy['require_numbers'] == true &&
         !password.contains(RegExp(r'[0-9]'))) {
-      return 'La nueva contraseña debe contener al menos un número.';
+      return l10n.loginPasswordNumberError;
     }
 
     if (policy['require_special_chars'] == true &&
         !password.contains(RegExp(r'[*,.+\-#$?¿!¡_()\/\\%&]'))) {
-      return 'La nueva contraseña debe contener al menos un carácter especial (* , . + - # \$ ? ¿ ! ¡ _ ( ) / \\ % &).';
+      return l10n.loginPasswordSpecialError;
     }
 
     return null;
@@ -354,10 +388,11 @@ class _LoginScreenState extends State<LoginScreen> {
       context: context,
       builder: (dialogContext) {
         String? inlineError;
+        final dialogL10n = AppLocalizations.of(dialogContext)!;
 
         return StatefulBuilder(
           builder: (dialogCtx, setDialogState) => AlertDialog(
-            title: const Text('Recuperar acceso'),
+            title: Text(dialogL10n.loginRecoveryTitle),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -374,7 +409,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Introduce tu usuario (nick) o tu cuenta de email para recuperar el acceso.',
+                            dialogL10n.loginRecoveryIdentifierIntro,
                             style: Theme.of(context).textTheme.bodyMedium,
                           ),
                         ),
@@ -384,8 +419,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 TextField(
                   controller: identifierController,
-                  decoration: const InputDecoration(
-                    labelText: 'Usuario o email',
+                  decoration: InputDecoration(
+                    labelText: dialogL10n.loginUserOrEmailLabel,
                     border: OutlineInputBorder(),
                   ),
                   onChanged: (_) {
@@ -420,20 +455,20 @@ class _LoginScreenState extends State<LoginScreen> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(dialogContext).pop(null),
-                child: const Text('Cancelar'),
+                child: Text(dialogL10n.commonCancel),
               ),
               ElevatedButton(
                 onPressed: () {
                   final value = identifierController.text.trim();
                   if (value.isEmpty) {
                     setDialogState(() {
-                      inlineError = 'Introduce usuario o email.';
+                      inlineError = dialogL10n.loginEnterUserOrEmail;
                     });
                     return;
                   }
                   Navigator.of(dialogContext).pop(value);
                 },
-                child: const Text('Continuar'),
+                child: Text(dialogL10n.commonContinue),
               ),
             ],
           ),
@@ -466,10 +501,8 @@ class _LoginScreenState extends State<LoginScreen> {
       if (methods.isEmpty) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Este usuario no tiene metodos de recuperacion disponibles.',
-            ),
+          SnackBar(
+            content: Text(l10n.loginNoRecoveryMethods),
             backgroundColor: Colors.orange,
           ),
         );
@@ -481,14 +514,14 @@ class _LoginScreenState extends State<LoginScreen> {
         final method = await showDialog<String>(
           context: context,
           builder: (dialogContext) => AlertDialog(
-            title: const Text('Selecciona metodo de recuperacion'),
+            title: Text(l10n.loginSelectRecoveryMethod),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (methods.contains('email'))
                   ListTile(
                     leading: const Icon(Icons.email_outlined),
-                    title: const Text('Mediante tu email'),
+                    title: Text(l10n.loginRecoveryByEmail),
                     subtitle: Text(
                       (options['email_masked'] ?? '').toString(),
                     ),
@@ -497,7 +530,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 if (methods.contains('2fa'))
                   ListTile(
                     leading: const Icon(Icons.shield_outlined),
-                    title: const Text('Mediante doble factor (2FA)'),
+                    title: Text(l10n.loginRecoveryByTwoFactor),
                     onTap: () => Navigator.of(dialogContext).pop('2fa'),
                   ),
               ],
@@ -554,6 +587,7 @@ class _LoginScreenState extends State<LoginScreen> {
         bool codeValidated = false;
         String? inlineMessage;
         Color inlineMessageColor = Colors.orange;
+        final dialogL10n = AppLocalizations.of(dialogContext)!;
 
         return StatefulBuilder(
           builder: (dialogCtx, setDialogState) {
@@ -561,15 +595,15 @@ class _LoginScreenState extends State<LoginScreen> {
               titlePadding: const EdgeInsets.fromLTRB(20, 16, 12, 0),
               title: Row(
                 children: [
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'Recuperar acceso',
-                      style: TextStyle(fontSize: 18),
+                      dialogL10n.loginRecoveryTitle,
+                      style: const TextStyle(fontSize: 18),
                     ),
                   ),
                   IconButton(
                     onPressed: () => Navigator.of(dialogContext).pop(false),
-                    tooltip: 'Cancelar',
+                    tooltip: dialogL10n.commonCancel,
                     style: IconButton.styleFrom(
                       shape: const CircleBorder(),
                     ),
@@ -596,9 +630,12 @@ class _LoginScreenState extends State<LoginScreen> {
                             borderRadius: BorderRadius.circular(8),
                             border: Border.all(color: Colors.blue),
                           ),
-                          child: const Text(
-                            'Te enviaremos un código de recuperación por email. Introduzcalo aquí junto con tu nueva contraseña.',
-                            style: TextStyle(color: Colors.blue, fontSize: 13),
+                          child: Text(
+                            dialogL10n.loginEmailRecoveryIntro,
+                            style: const TextStyle(
+                              color: Colors.blue,
+                              fontSize: 13,
+                            ),
                           ),
                         ),
                         const SizedBox(height: 12),
@@ -617,14 +654,14 @@ class _LoginScreenState extends State<LoginScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Row(
+                                Row(
                                   children: [
-                                    Icon(Icons.info,
+                                    const Icon(Icons.info,
                                         size: 16, color: Color(0xFF00897B)),
-                                    SizedBox(width: 8),
+                                    const SizedBox(width: 8),
                                     Text(
-                                      'Paso 1: Enviar código',
-                                      style: TextStyle(
+                                      dialogL10n.loginRecoveryStep1SendCode,
+                                      style: const TextStyle(
                                         color: Color(0xFF00897B),
                                         fontWeight: FontWeight.bold,
                                       ),
@@ -632,15 +669,15 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ],
                                 ),
                                 const SizedBox(height: 8),
-                                const Text(
-                                  'Pulsa en "Enviar código" para recibir un código de recuperación en tu email.',
+                                Text(
+                                  dialogL10n.loginRecoveryStep1SendCodeBody,
                                   style: TextStyle(fontSize: 13),
                                 ),
                                 const SizedBox(height: 12),
                                 ElevatedButton.icon(
                                   icon:
                                       const Icon(Icons.mail_outline, size: 18),
-                                  label: const Text('Enviar código'),
+                                  label: Text(dialogL10n.loginSendCode),
                                   onPressed: () async {
                                     try {
                                       await _apiService
@@ -660,7 +697,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                             .replaceFirst('Exception: ', '');
                                         inlineMessage = isNutricionista
                                             ? detailed
-                                            : 'No se ha podido enviar el email de recuperación en este momento, inténtelo más tarde.';
+                                            : dialogL10n
+                                                .loginEmailRecoverySendFailedGeneric;
                                         inlineMessageColor = Colors.red;
                                       });
                                     }
@@ -685,14 +723,14 @@ class _LoginScreenState extends State<LoginScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Row(
+                                Row(
                                   children: [
-                                    Icon(Icons.info,
+                                    const Icon(Icons.info,
                                         size: 16, color: Color(0xFF00897B)),
-                                    SizedBox(width: 8),
+                                    const SizedBox(width: 8),
                                     Text(
-                                      'Paso 2: Verificar código',
-                                      style: TextStyle(
+                                      dialogL10n.loginRecoveryStep2VerifyCode,
+                                      style: const TextStyle(
                                         color: Color(0xFF00897B),
                                         fontWeight: FontWeight.bold,
                                       ),
@@ -700,8 +738,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ],
                                 ),
                                 const SizedBox(height: 8),
-                                const Text(
-                                  'Introduce el código que recibiste en tu email.',
+                                Text(
+                                  dialogL10n.loginRecoveryStep2VerifyCodeBody,
                                   style: TextStyle(fontSize: 13),
                                 ),
                                 const SizedBox(height: 12),
@@ -723,10 +761,12 @@ class _LoginScreenState extends State<LoginScreen> {
                                               .digitsOnly,
                                         ],
                                   decoration: InputDecoration(
-                                    labelText: 'Código de recuperación',
+                                    labelText:
+                                        dialogL10n.loginRecoveryCodeLabel,
                                     hintText: recoveryCodeAllowAlnum
-                                        ? 'Ej. 1a3B'
-                                        : 'Ej. 1234',
+                                        ? dialogL10n.loginRecoveryCodeHintAlpha
+                                        : dialogL10n
+                                            .loginRecoveryCodeHintNumeric,
                                     border: OutlineInputBorder(),
                                   ),
                                   onChanged: (_) {
@@ -743,7 +783,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                     final code = codeController.text.trim();
                                     if (code.isEmpty) {
                                       setDialogState(() {
-                                        inlineMessage = 'Introduce el código.';
+                                        inlineMessage =
+                                            dialogL10n.loginRecoveryCodeLabel;
                                         inlineMessageColor = Colors.orange;
                                       });
                                       return;
@@ -770,7 +811,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                       });
                                     }
                                   },
-                                  child: const Text('Verificar código'),
+                                  child: Text(dialogL10n.loginVerifyCode),
                                 ),
                               ],
                             ),
@@ -792,14 +833,14 @@ class _LoginScreenState extends State<LoginScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Row(
+                                Row(
                                   children: [
-                                    Icon(Icons.info,
+                                    const Icon(Icons.info,
                                         size: 16, color: Color(0xFF00897B)),
-                                    SizedBox(width: 8),
+                                    const SizedBox(width: 8),
                                     Text(
-                                      'Paso 3: Nueva contraseña',
-                                      style: TextStyle(
+                                      dialogL10n.loginRecoveryStep3NewPassword,
+                                      style: const TextStyle(
                                         color: Color(0xFF00897B),
                                         fontWeight: FontWeight.bold,
                                       ),
@@ -807,16 +848,16 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ],
                                 ),
                                 const SizedBox(height: 8),
-                                const Text(
-                                  'Introduce tu nueva contraseña.',
+                                Text(
+                                  dialogL10n.loginRecoveryStep3NewPasswordBody,
                                   style: TextStyle(fontSize: 13),
                                 ),
                                 const SizedBox(height: 12),
                                 TextField(
                                   controller: passwordController,
                                   obscureText: true,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Nueva contraseña',
+                                  decoration: InputDecoration(
+                                    labelText: dialogL10n.loginNewPasswordLabel,
                                     border: OutlineInputBorder(),
                                   ),
                                   onChanged: (value) {
@@ -832,8 +873,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                 TextField(
                                   controller: repeatController,
                                   obscureText: true,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Repetir nueva contraseña',
+                                  decoration: InputDecoration(
+                                    labelText:
+                                        dialogL10n.loginRepeatNewPasswordLabel,
                                     border: OutlineInputBorder(),
                                   ),
                                   onChanged: (_) {
@@ -887,15 +929,14 @@ class _LoginScreenState extends State<LoginScreen> {
                       final repeat = repeatController.text;
                       if (pwd.isEmpty || repeat.isEmpty) {
                         setDialogState(() {
-                          inlineMessage =
-                              'Completa ambos campos de contraseña.';
+                          inlineMessage = dialogL10n.loginBothPasswordsRequired;
                           inlineMessageColor = Colors.orange;
                         });
                         return;
                       }
                       if (pwd != repeat) {
                         setDialogState(() {
-                          inlineMessage = 'Las contraseñas no coinciden.';
+                          inlineMessage = dialogL10n.loginPasswordsMismatch;
                           inlineMessageColor = Colors.orange;
                         });
                         return;
@@ -931,7 +972,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         });
                       }
                     },
-                    child: const Text('Restablecer contraseña'),
+                    child: Text(dialogL10n.loginResetPassword),
                   ),
               ],
             );
@@ -946,8 +987,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (result == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Contraseña restablecida. Ya puedes iniciar sesión.'),
+        SnackBar(
+          content: Text(l10n.loginPasswordResetSuccess),
           backgroundColor: Colors.green,
         ),
       );
@@ -972,6 +1013,7 @@ class _LoginScreenState extends State<LoginScreen> {
         bool step2Complete = false;
         String? inlineMessage;
         Color inlineMessageColor = Colors.orange;
+        final dialogL10n = AppLocalizations.of(dialogContext)!;
 
         return StatefulBuilder(
           builder: (dialogCtx, setDialogState) {
@@ -979,15 +1021,15 @@ class _LoginScreenState extends State<LoginScreen> {
               titlePadding: const EdgeInsets.fromLTRB(20, 16, 12, 0),
               title: Row(
                 children: [
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'Recuperar acceso',
-                      style: TextStyle(fontSize: 18),
+                      dialogL10n.loginRecoveryTitle,
+                      style: const TextStyle(fontSize: 18),
                     ),
                   ),
                   IconButton(
                     onPressed: () => Navigator.of(dialogContext).pop(false),
-                    tooltip: 'Cancelar',
+                    tooltip: dialogL10n.commonCancel,
                     style: IconButton.styleFrom(
                       shape: const CircleBorder(),
                     ),
@@ -1014,9 +1056,12 @@ class _LoginScreenState extends State<LoginScreen> {
                             borderRadius: BorderRadius.circular(8),
                             border: Border.all(color: Colors.blue),
                           ),
-                          child: const Text(
-                            'Para restablecer tu contraseña con doble factor de autenticación, necesitas el código temporal de tu app.',
-                            style: TextStyle(color: Colors.blue, fontSize: 13),
+                          child: Text(
+                            dialogL10n.loginTwoFactorRecoveryIntro,
+                            style: const TextStyle(
+                              color: Colors.blue,
+                              fontSize: 13,
+                            ),
                           ),
                         ),
                         const SizedBox(height: 12),
@@ -1035,14 +1080,14 @@ class _LoginScreenState extends State<LoginScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Row(
-                                  children: const [
-                                    Icon(Icons.info,
+                                  children: [
+                                    const Icon(Icons.info,
                                         size: 16, color: Color(0xFF00897B)),
-                                    SizedBox(width: 8),
+                                    const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
-                                        'Paso 1: Abre tu app de autenticación',
-                                        style: TextStyle(
+                                        dialogL10n.loginTwoFactorRecoveryStep1,
+                                        style: const TextStyle(
                                           color: Color(0xFF00897B),
                                           fontWeight: FontWeight.bold,
                                           fontSize: 13,
@@ -1052,14 +1097,14 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ],
                                 ),
                                 const SizedBox(height: 8),
-                                const Text(
-                                  'Busca el código temporal de 6 dígitos en tu app de autenticación (Google Authenticator, Microsoft Authenticator, Authy, etc.)',
+                                Text(
+                                  dialogL10n.loginTwoFactorRecoveryStep1Body,
                                   style: TextStyle(fontSize: 12),
                                 ),
                                 const SizedBox(height: 8),
                                 ElevatedButton.icon(
                                   icon: const Icon(Icons.check, size: 16),
-                                  label: const Text('Ya lo tengo'),
+                                  label: Text(dialogL10n.loginIHaveIt),
                                   onPressed: () {
                                     setDialogState(() {
                                       step1Complete = true;
@@ -1085,14 +1130,14 @@ class _LoginScreenState extends State<LoginScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Row(
-                                  children: const [
-                                    Icon(Icons.info,
+                                  children: [
+                                    const Icon(Icons.info,
                                         size: 16, color: Color(0xFF00897B)),
-                                    SizedBox(width: 8),
+                                    const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
-                                        'Paso 2: Verifica tu código 2FA',
-                                        style: TextStyle(
+                                        dialogL10n.loginTwoFactorRecoveryStep2,
+                                        style: const TextStyle(
                                           color: Color(0xFF00897B),
                                           fontWeight: FontWeight.bold,
                                           fontSize: 13,
@@ -1102,8 +1147,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ],
                                 ),
                                 const SizedBox(height: 8),
-                                const Text(
-                                  'Introduce el código de 6 dígitos en el campo de abajo.',
+                                Text(
+                                  dialogL10n.loginTwoFactorRecoveryStep2Body,
                                   style: TextStyle(fontSize: 12),
                                 ),
                                 const SizedBox(height: 8),
@@ -1114,9 +1159,10 @@ class _LoginScreenState extends State<LoginScreen> {
                                   inputFormatters: [
                                     FilteringTextInputFormatter.digitsOnly,
                                   ],
-                                  decoration: const InputDecoration(
-                                    labelText: 'Código 2FA (6 dígitos)',
-                                    hintText: '000000',
+                                  decoration: InputDecoration(
+                                    labelText: dialogL10n
+                                        .loginTwoFactorCodeSixDigitsLabel,
+                                    hintText: dialogL10n.loginTwoFactorCodeHint,
                                     border: OutlineInputBorder(),
                                     counterText: '',
                                   ),
@@ -1134,8 +1180,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                     final code = codeController.text.trim();
                                     if (code.length != 6) {
                                       setDialogState(() {
-                                        inlineMessage =
-                                            'El código debe tener exactamente 6 dígitos.';
+                                        inlineMessage = dialogL10n
+                                            .loginCodeMustHaveExactly6Digits;
                                         inlineMessageColor = Colors.orange;
                                       });
                                       return;
@@ -1161,7 +1207,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                       });
                                     }
                                   },
-                                  child: const Text('Verificar código 2FA'),
+                                  child:
+                                      Text(dialogL10n.loginVerifyTwoFactorCode),
                                 ),
                               ],
                             ),
@@ -1182,14 +1229,15 @@ class _LoginScreenState extends State<LoginScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Row(
-                                  children: const [
-                                    Icon(Icons.info,
+                                  children: [
+                                    const Icon(Icons.info,
                                         size: 16, color: Color(0xFF00897B)),
-                                    SizedBox(width: 8),
+                                    const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
-                                        'Paso 3: Nueva contraseña',
-                                        style: TextStyle(
+                                        dialogL10n
+                                            .loginRecoveryStep3NewPassword,
+                                        style: const TextStyle(
                                           color: Color(0xFF00897B),
                                           fontWeight: FontWeight.bold,
                                           fontSize: 13,
@@ -1199,16 +1247,16 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ],
                                 ),
                                 const SizedBox(height: 8),
-                                const Text(
-                                  'Introduce tu nueva contraseña.',
+                                Text(
+                                  dialogL10n.loginRecoveryStep3NewPasswordBody,
                                   style: TextStyle(fontSize: 12),
                                 ),
                                 const SizedBox(height: 8),
                                 TextField(
                                   controller: passwordController,
                                   obscureText: true,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Nueva contraseña',
+                                  decoration: InputDecoration(
+                                    labelText: dialogL10n.loginNewPasswordLabel,
                                     border: OutlineInputBorder(),
                                   ),
                                   onChanged: (value) {
@@ -1224,8 +1272,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                 TextField(
                                   controller: repeatController,
                                   obscureText: true,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Repetir nueva contraseña',
+                                  decoration: InputDecoration(
+                                    labelText:
+                                        dialogL10n.loginRepeatNewPasswordLabel,
                                     border: OutlineInputBorder(),
                                   ),
                                   onChanged: (_) {
@@ -1279,15 +1328,14 @@ class _LoginScreenState extends State<LoginScreen> {
                       final repeat = repeatController.text;
                       if (pwd.isEmpty || repeat.isEmpty) {
                         setDialogState(() {
-                          inlineMessage =
-                              'Completa ambos campos de contraseña.';
+                          inlineMessage = dialogL10n.loginBothPasswordsRequired;
                           inlineMessageColor = Colors.orange;
                         });
                         return;
                       }
                       if (pwd != repeat) {
                         setDialogState(() {
-                          inlineMessage = 'Las contraseñas no coinciden.';
+                          inlineMessage = dialogL10n.loginPasswordsMismatch;
                           inlineMessageColor = Colors.orange;
                         });
                         return;
@@ -1323,7 +1371,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         });
                       }
                     },
-                    child: const Text('Restablecer contraseña'),
+                    child: Text(dialogL10n.loginResetPassword),
                   ),
               ],
             );
@@ -1338,8 +1386,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (result == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Contraseña actualizada. Ya puedes iniciar sesión.'),
+        SnackBar(
+          content: Text(l10n.loginPasswordUpdatedSuccess),
           backgroundColor: Colors.green,
         ),
       );
@@ -1384,17 +1432,18 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 20),
                 TextFormField(
                   controller: _nickController,
-                  decoration: const InputDecoration(
-                      labelText: 'Usuario', border: OutlineInputBorder()),
+                  decoration: InputDecoration(
+                      labelText: l10n.loginUsernameLabel,
+                      border: const OutlineInputBorder()),
                   validator: (value) =>
-                      value!.isEmpty ? 'Introduce tu usuario' : null,
+                      value!.isEmpty ? l10n.loginEnterUsername : null,
                 ),
                 const SizedBox(height: 16),
                 TextFormField(
                   controller: _passwordController,
                   obscureText: !_passwordVisible,
                   decoration: InputDecoration(
-                      labelText: 'Contraseña',
+                      labelText: l10n.loginPasswordLabel,
                       border: const OutlineInputBorder(),
                       suffixIcon: IconButton(
                         icon: Icon(_passwordVisible
@@ -1404,25 +1453,54 @@ class _LoginScreenState extends State<LoginScreen> {
                             () => _passwordVisible = !_passwordVisible),
                       )),
                   validator: (value) =>
-                      value!.isEmpty ? 'Introduce tu contraseña' : null,
+                      value!.isEmpty ? l10n.loginEnterPassword : null,
                 ),
                 const SizedBox(height: 16),
                 _isLoading
                     ? const CircularProgressIndicator()
                     : Column(
                         children: [
-                          ElevatedButton(
-                            onPressed: _submit,
-                            style: ElevatedButton.styleFrom(
-                              minimumSize: const Size(double.infinity, 50),
-                            ),
-                            child: const Text('Iniciar Sesión'),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              const SizedBox(
+                                width: 104,
+                                child: AppLanguageDropdown(
+                                  compact: true,
+                                  compactHeight: 50,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: _submit,
+                                  style: ElevatedButton.styleFrom(
+                                    minimumSize:
+                                        const Size(double.infinity, 50),
+                                    backgroundColor: Colors.lightGreen,
+                                    foregroundColor: Colors.white,
+                                    elevation: 3,
+                                  ),
+                                  child: Text(l10n.loginSignIn),
+                                ),
+                              ),
+                            ],
                           ),
+                          const SizedBox(height: 4),
                           Align(
                             alignment: Alignment.centerRight,
                             child: TextButton(
                               onPressed: _startRecoveryFlow,
-                              child: const Text('¿Olvidaste tu contraseña?'),
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                ),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: Text(
+                                l10n.loginForgotPassword,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           ),
                           const SizedBox(height: 2),
@@ -1440,7 +1518,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 color: Theme.of(context)
                                     .colorScheme
                                     .primary
-                                    .withOpacity(0.2),
+                                    .withValues(alpha: 0.2),
                               ),
                             ),
                             child: Row(
@@ -1453,7 +1531,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
-                                    'Accede a NutriFit gratis para consultar consejos de salud, de nutrición, vídeos de ejercicios, recetas de cocina, control de peso y mucho más.',
+                                    l10n.loginGuestInfo,
                                     style: Theme.of(context)
                                         .textTheme
                                         .bodySmall
@@ -1471,13 +1549,16 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
                           const SizedBox(height: 12),
-                          OutlinedButton.icon(
+                          ElevatedButton.icon(
                             onPressed: _submitAsGuest,
-                            style: OutlinedButton.styleFrom(
+                            style: ElevatedButton.styleFrom(
                               minimumSize: const Size(double.infinity, 50),
+                              backgroundColor: Colors.pink.shade300,
+                              foregroundColor: Colors.white,
+                              elevation: 2,
                             ),
                             icon: const Icon(Icons.visibility),
-                            label: const Text('Acceder sin credenciales'),
+                            label: Text(l10n.loginGuestAccess),
                           ),
                           const SizedBox(height: 12),
                           ElevatedButton(
@@ -1489,7 +1570,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               minimumSize: const Size(double.infinity, 50),
                               elevation: 3,
                             ),
-                            child: const Text('Regístrate gratis'),
+                            child: Text(l10n.loginRegisterFree),
                           ),
                           const SizedBox(height: 2),
                         ],
@@ -1497,9 +1578,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 10),
                 Align(
                   alignment: Alignment.center,
-                  child: Text(
-                    'NutriFit ${AppConstants.appVersion}. Todos los derechos reservados',
-                    textAlign: TextAlign.center,
+                  child: AppVersionLabel(
+                    prefix: '${AppConstants.appName} ',
+                    suffix: '. ${l10n.commonAllRightsReserved}',
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                           color: Colors.grey.shade600,
                         ),

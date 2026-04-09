@@ -68,6 +68,7 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
   List<Map<String, dynamic>> _categoriasCatalogo = [];
   List<int> _selectedCategoriaIds = [];
   List<String> _pendingPrefillCategoriaNames = [];
+  List<Uint8List> _pendingPrefillBodyImages = [];
   bool _categoriasExpanded = true;
   bool _ingredientesExpanded = true;
   bool _imagenPortadaExpanded = true;
@@ -122,6 +123,13 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
         _imagenPortadaBytes = maybeImage;
         _imagenPortadaNombre = 'clipboard';
         _imagenMiniaturaBytes = _generateThumbnail(maybeImage) ?? maybeImage;
+      }
+      final maybeBodyImages = args['prefill_body_images'];
+      if (maybeBodyImages is List) {
+        _pendingPrefillBodyImages = maybeBodyImages
+            .whereType<Uint8List>()
+            .where((bytes) => bytes.isNotEmpty)
+            .toList(growable: false);
       }
 
       _loadPacientes();
@@ -942,32 +950,62 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
       menuOptions.add(
         const PopupMenuItem(
           value: 'delete',
-          child: Text('Eliminar imagen'),
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, color: Colors.red),
+              SizedBox(width: 8),
+              Text('Eliminar imagen'),
+            ],
+          ),
         ),
       );
       menuOptions.add(
         const PopupMenuItem(
           value: 'change',
-          child: Text('Cambiar imagen'),
+          child: Row(
+            children: [
+              Icon(Icons.photo_library_outlined),
+              SizedBox(width: 8),
+              Text('Cambiar imagen'),
+            ],
+          ),
         ),
       );
       menuOptions.add(
         const PopupMenuItem(
           value: 'paste',
-          child: Text('Pegar imagen'),
+          child: Row(
+            children: [
+              Icon(Icons.content_paste_rounded),
+              SizedBox(width: 8),
+              Text('Pegar imagen'),
+            ],
+          ),
         ),
       );
     } else {
       menuOptions.add(
         const PopupMenuItem(
           value: 'add',
-          child: Text('Añadir imagen'),
+          child: Row(
+            children: [
+              Icon(Icons.add_photo_alternate_outlined),
+              SizedBox(width: 8),
+              Text('Añadir imagen'),
+            ],
+          ),
         ),
       );
       menuOptions.add(
         const PopupMenuItem(
           value: 'paste',
-          child: Text('Pegar imagen'),
+          child: Row(
+            children: [
+              Icon(Icons.content_paste_rounded),
+              SizedBox(width: 8),
+              Text('Pegar imagen'),
+            ],
+          ),
         ),
       );
     }
@@ -1476,6 +1514,8 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
 
           // Guardar documentos
           await _saveDocumentos(recetaId);
+          // Adjuntar imagenes del cuerpo prefijadas y reemplazar [[[IMG_N]]] por [[img:codigo]]
+          await _attachPrefillBodyImagesAndPatchText(recetaId);
 
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -1602,6 +1642,86 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
     }
   }
 
+  Future<int?> _createImageDocumentoAndReturnCode({
+    required int recetaId,
+    required Uint8List imageBytes,
+    required int orden,
+  }) async {
+    try {
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final apiService = Provider.of<ApiService>(context, listen: false);
+      final payload = <String, dynamic>{
+        'codigo_receta': recetaId,
+        'tipo': 'imagen',
+        'nombre': 'imagen_pega_${orden + 1}.png',
+        'documento': base64Encode(imageBytes),
+        'orden': orden,
+        'codusuarioa':
+            authService.userCode != null ? int.parse(authService.userCode!) : 1,
+      };
+
+      final response = await apiService.post(
+        'api/receta_documentos.php',
+        body: json.encode(payload),
+      );
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        return null;
+      }
+
+      final dynamic parsed = json.decode(response.body);
+      if (parsed is Map<String, dynamic>) {
+        final codigo = int.tryParse((parsed['codigo'] ?? '').toString());
+        return codigo;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _attachPrefillBodyImagesAndPatchText(int recetaId) async {
+    if (_pendingPrefillBodyImages.isEmpty) {
+      return;
+    }
+
+    var texto = _textoController.text;
+    var changed = false;
+    var baseOrden = _documentos.length;
+
+    for (int i = 0; i < _pendingPrefillBodyImages.length; i++) {
+      final marker = '[[[IMG_$i]]]';
+      final code = await _createImageDocumentoAndReturnCode(
+        recetaId: recetaId,
+        imageBytes: _pendingPrefillBodyImages[i],
+        orden: baseOrden + i,
+      );
+      if (code != null) {
+        texto = texto.replaceAll(marker, '[[img:$code]]');
+      } else {
+        texto = texto.replaceAll(marker, '');
+      }
+      changed = true;
+    }
+
+    if (!changed) {
+      return;
+    }
+
+    _textoController.text = texto;
+    _receta.texto = texto;
+    _receta.codigo = recetaId;
+    final authService = Provider.of<AuthService>(context, listen: false);
+    _receta.codusuariom =
+        authService.userCode != null ? int.parse(authService.userCode!) : 1;
+    final apiService = Provider.of<ApiService>(context, listen: false);
+    await apiService.put(
+      'api/recetas.php',
+      body: json.encode(_receta.toJson()),
+    );
+
+    _pendingPrefillBodyImages = [];
+  }
+
   String _formatDateLabel(DateTime? date, {String emptyLabel = 'Sin fecha'}) {
     if (date == null) {
       return emptyLabel;
@@ -1658,12 +1778,15 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
     );
   }
 
-  Widget _buildStatusTag(String label, bool active) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+  Widget _buildStatusTag(String label, bool active, {VoidCallback? onTap}) {
+    final tag = Container(
+      constraints: const BoxConstraints(minWidth: 24),
+      height: 22,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      alignment: Alignment.center,
       decoration: BoxDecoration(
         color: active ? Colors.green : Colors.grey,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(6),
       ),
       child: Text(
         label,
@@ -1674,6 +1797,15 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
         ),
       ),
     );
+    if (onTap == null) return tag;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: tag,
+      ),
+    );
   }
 
   Widget _buildCollapsibleCard({
@@ -1682,6 +1814,7 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
     required bool expanded,
     required VoidCallback onToggle,
     required Widget child,
+    List<Widget> titleBadges = const [],
     List<Widget> badges = const [],
     List<Widget> actions = const [],
   }) {
@@ -1699,12 +1832,23 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          title,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                title,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (titleBadges.isNotEmpty)
+                              const SizedBox(width: 6),
+                            ...titleBadges,
+                          ],
                         ),
                         if (subtitle != null) ...[
                           const SizedBox(height: 2),
@@ -1746,6 +1890,8 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+
     return WillPopScope(
       onWillPop: _confirmDiscardChanges,
       child: Scaffold(
@@ -1774,414 +1920,294 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
               ),
           ],
         ),
-        body: Form(
-          key: _formKey,
-          onChanged: _markDirty,
-          child: ListView(
-            padding: const EdgeInsets.all(16.0),
-            children: [
-              // Título
-              TextFormField(
-                controller: _tituloController,
-                decoration: const InputDecoration(
-                  labelText: 'Título de la receta *',
-                  hintText: 'Ej: Ensalada César, Pasta Carbonara',
-                  border: OutlineInputBorder(),
-                ),
-                minLines: 2,
-                maxLines: 2,
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'El título es obligatorio';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-
-              _buildCollapsibleCard(
-                title: 'Categorías',
-                expanded: _categoriasExpanded,
-                onToggle: () {
-                  setState(() {
-                    _categoriasExpanded = !_categoriasExpanded;
-                  });
-                  _saveCardsExpandedState();
-                },
-                badges: [
-                  _buildCountBadge(_selectedCategoriaIds.length),
-                ],
-                actions: [
-                  IconButton(
-                    onPressed: _showCategoriasDialog,
-                    icon: const Icon(Icons.category),
-                    tooltip: 'Seleccionar categorías',
+        body: SafeArea(
+          top: false,
+          child: Form(
+            key: _formKey,
+            onChanged: _markDirty,
+            child: ListView(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, bottomInset + 40),
+              children: [
+                // Título
+                TextFormField(
+                  controller: _tituloController,
+                  decoration: const InputDecoration(
+                    labelText: 'Título de la receta *',
+                    hintText: 'Ej: Ensalada César, Pasta Carbonara',
+                    border: OutlineInputBorder(),
                   ),
-                ],
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (_selectedCategoriaIds.isEmpty)
-                      Text(
-                        'Sin categorías seleccionadas',
-                        style: TextStyle(color: Colors.grey[600]),
-                      )
-                    else
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: _selectedCategoriaIds.map((id) {
-                          final match = _categoriasCatalogo.firstWhere(
-                            (cat) => int.parse(cat['codigo'].toString()) == id,
-                            orElse: () => {'nombre': 'Categoría $id'},
-                          );
-                          return Chip(
-                            label: Text(match['nombre'].toString()),
-                          );
-                        }).toList(),
-                      ),
+                  minLines: 2,
+                  maxLines: 2,
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'El título es obligatorio';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+
+                _buildCollapsibleCard(
+                  title: 'Categorías',
+                  expanded: _categoriasExpanded,
+                  onToggle: () {
+                    setState(() {
+                      _categoriasExpanded = !_categoriasExpanded;
+                    });
+                    _saveCardsExpandedState();
+                  },
+                  titleBadges: [
+                    _buildCountBadge(_selectedCategoriaIds.length),
                   ],
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              _buildCollapsibleCard(
-                title: 'Preparación',
-                expanded: _ingredientesExpanded,
-                onToggle: () {
-                  setState(() {
-                    _ingredientesExpanded = !_ingredientesExpanded;
-                  });
-                  _saveCardsExpandedState();
-                },
-                badges: [
-                  _buildCountBoxBadge(_textoController.text.length),
-                ],
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    TextFormField(
-                      controller: _textoController,
-                      decoration: const InputDecoration(
-                        labelText: 'Preparación',
-                        hintText:
-                            'Describe los ingredientes y pasos de preparación',
-                        border: OutlineInputBorder(),
-                        alignLabelWithHint: true,
-                      ),
-                      minLines: 12,
-                      maxLines: 16,
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Los ingredientes y preparación son obligatorios';
-                        }
-                        return null;
-                      },
-                      onChanged: (_) {
-                        setState(() {});
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.center,
-                      child: Wrap(
-                        alignment: WrapAlignment.center,
-                        spacing: 8,
-                        children: [
-                          OutlinedButton.icon(
-                            onPressed: _insertImageTokenAtCursor,
-                            icon: const Icon(Icons.image_outlined),
-                            label: const Text('Img'),
-                          ),
-                          OutlinedButton.icon(
-                            onPressed: _insertDocumentoTokenAtCursor,
-                            icon: const Icon(Icons.insert_drive_file_outlined),
-                            label: const Text('Doc'),
-                          ),
-                          OutlinedButton.icon(
-                            onPressed: _insertEnlaceTokenAtCursor,
-                            icon: const Icon(Icons.link_outlined),
-                            label: const Text('Enlace'),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Marcadores: [[img:id]], [[documento:id]] y [[enlace:id]].',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              _buildCollapsibleCard(
-                title: 'Portada',
-                subtitle: _imagenPortadaBytes != null
-                    ? (_imagenPortadaNombre ?? 'Imagen seleccionada')
-                    : 'Sin imagen',
-                expanded: _imagenPortadaExpanded,
-                onToggle: () {
-                  setState(() {
-                    _imagenPortadaExpanded = !_imagenPortadaExpanded;
-                  });
-                  _saveCardsExpandedState();
-                },
-                actions: [
-                  IconButton(
-                    onPressed: _pickPortada,
-                    icon: const Icon(Icons.add_photo_alternate_outlined),
-                    tooltip: 'Añadir imagen',
-                  ),
-                  IconButton(
-                    onPressed: _pastePortadaImage,
-                    icon: const Icon(Icons.content_paste_rounded),
-                    tooltip: 'Pegar imagen',
-                  ),
-                  if (_imagenPortadaBytes != null)
+                  actions: [
                     IconButton(
-                      onPressed: () {
-                        setState(() {
-                          _imagenPortadaBytes = null;
-                          _imagenPortadaNombre = null;
-                          _imagenMiniaturaBytes = null;
-                        });
-                        _markDirty();
-                      },
-                      icon: const Icon(Icons.delete_outline),
-                      tooltip: 'Eliminar imagen',
+                      onPressed: _showCategoriasDialog,
+                      icon: const Icon(Icons.category),
+                      tooltip: 'Seleccionar categorías',
                     ),
-                ],
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(
-                      child: Builder(
-                        builder: (BuildContext context) {
-                          return GestureDetector(
-                            onTap: () {
-                              if (_imagenPortadaBytes != null) {
-                                _viewImage();
-                              } else {
-                                _showMenuAtWidget(context);
-                              }
-                            },
-                            onLongPress: () {
-                              _showMenuAtWidget(context);
-                            },
-                            child: Container(
-                              width: 100,
-                              height: 100,
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: Colors.grey[300]!,
-                                  width: 2,
-                                ),
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: _imagenMiniaturaBytes != null
-                                    ? Image.memory(
-                                        _imagenMiniaturaBytes!,
-                                        fit: BoxFit.cover,
-                                      )
-                                    : _imagenPortadaBytes != null
-                                        ? Image.memory(
-                                            _imagenPortadaBytes!,
-                                            fit: BoxFit.cover,
-                                          )
-                                        : Container(
-                                            color: Colors.grey[200],
-                                            child: Column(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment.center,
-                                              children: [
-                                                Icon(
-                                                  Icons.restaurant_menu,
-                                                  size: 64,
-                                                  color: Colors.grey[400],
-                                                ),
-                                                const SizedBox(height: 8),
-                                                Text(
-                                                  'Sin imagen',
-                                                  style: TextStyle(
-                                                    color: Colors.grey[600],
-                                                    fontSize: 14,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                              ),
-                            ),
-                          );
+                  ],
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (_selectedCategoriaIds.isEmpty)
+                        Text(
+                          'Sin categorías seleccionadas',
+                          style: TextStyle(color: Colors.grey[600]),
+                        )
+                      else
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: _selectedCategoriaIds.map((id) {
+                            final match = _categoriasCatalogo.firstWhere(
+                              (cat) =>
+                                  int.parse(cat['codigo'].toString()) == id,
+                              orElse: () => {'nombre': 'Categoría $id'},
+                            );
+                            return Chip(
+                              label: Text(match['nombre'].toString()),
+                            );
+                          }).toList(),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                _buildCollapsibleCard(
+                  title: 'Preparación',
+                  expanded: _ingredientesExpanded,
+                  onToggle: () {
+                    setState(() {
+                      _ingredientesExpanded = !_ingredientesExpanded;
+                    });
+                    _saveCardsExpandedState();
+                  },
+                  titleBadges: [
+                    _buildCountBoxBadge(_textoController.text.length),
+                  ],
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TextFormField(
+                        controller: _textoController,
+                        decoration: const InputDecoration(
+                          labelText: 'Preparación',
+                          hintText:
+                              'Describe los ingredientes y pasos de preparación',
+                          border: OutlineInputBorder(),
+                          alignLabelWithHint: true,
+                        ),
+                        minLines: 12,
+                        maxLines: 16,
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Los ingredientes y preparación son obligatorios';
+                          }
+                          return null;
+                        },
+                        onChanged: (_) {
+                          setState(() {});
                         },
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    Center(
-                      child: Text(
-                        _imagenPortadaBytes != null
-                            ? 'Toca para ver • Mantén pulsado para opciones'
-                            : 'Toca para añadir imagen',
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.center,
+                        child: Wrap(
+                          alignment: WrapAlignment.center,
+                          spacing: 8,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: _insertImageTokenAtCursor,
+                              icon: const Icon(Icons.image_outlined),
+                              label: const Text('Img'),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: _insertDocumentoTokenAtCursor,
+                              icon:
+                                  const Icon(Icons.insert_drive_file_outlined),
+                              label: const Text('Doc'),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: _insertEnlaceTokenAtCursor,
+                              icon: const Icon(Icons.link_outlined),
+                              label: const Text('Enlace'),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Marcadores: [[img:id]], [[documento:id]] y [[enlace:id]].',
                         style: TextStyle(
                           fontSize: 12,
                           color: Colors.grey[600],
-                          fontStyle: FontStyle.italic,
                         ),
-                        textAlign: TextAlign.center,
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
+                const SizedBox(height: 16),
 
-              _buildCollapsibleCard(
-                title: 'Visualización',
-                subtitle:
-                    '${_formatDateLabel(_fechaInicio)} - ${_formatDateLabel(_fechaFin)}',
-                expanded: _periodoExpanded,
-                onToggle: () {
-                  setState(() {
-                    _periodoExpanded = !_periodoExpanded;
-                  });
-                  _saveCardsExpandedState();
-                },
-                child: Column(
-                  children: [
-                    ListTile(
-                      title: const Text('Fecha inicio'),
-                      subtitle: Text(_formatDateLabel(_fechaInicio)),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.calendar_today),
-                            onPressed: () async {
-                              final date = await showDatePicker(
-                                context: context,
-                                initialDate: _fechaInicio ?? DateTime.now(),
-                                firstDate: DateTime(2020),
-                                lastDate: DateTime(2030),
-                              );
-                              if (date != null) {
-                                setState(() {
-                                  _fechaInicio = date;
-                                });
-                              }
-                            },
-                          ),
-                          if (_fechaInicio != null)
-                            IconButton(
-                              icon: const Icon(Icons.clear),
-                              onPressed: () {
-                                setState(() {
-                                  _fechaInicio = null;
-                                });
-                              },
-                            ),
-                        ],
-                      ),
+                _buildCollapsibleCard(
+                  title: 'Portada',
+                  subtitle: _imagenPortadaBytes != null
+                      ? (_imagenPortadaNombre ?? 'Imagen seleccionada')
+                      : 'Sin imagen',
+                  expanded: _imagenPortadaExpanded,
+                  onToggle: () {
+                    setState(() {
+                      _imagenPortadaExpanded = !_imagenPortadaExpanded;
+                    });
+                    _saveCardsExpandedState();
+                  },
+                  actions: [
+                    IconButton(
+                      onPressed: _pickPortada,
+                      icon: const Icon(Icons.add_photo_alternate_outlined),
+                      tooltip: 'Añadir imagen',
                     ),
-                    ListTile(
-                      title: const Text('Fecha fin'),
-                      subtitle: Text(_formatDateLabel(_fechaFin)),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.calendar_today),
-                            onPressed: () async {
-                              final date = await showDatePicker(
-                                context: context,
-                                initialDate: _fechaFin ?? DateTime.now(),
-                                firstDate: DateTime(2020),
-                                lastDate: DateTime(2030),
-                              );
-                              if (date != null) {
-                                setState(() {
-                                  _fechaFin = date;
-                                });
-                              }
-                            },
-                          ),
-                          if (_fechaFin != null)
-                            IconButton(
-                              icon: const Icon(Icons.clear),
-                              onPressed: () {
-                                setState(() {
-                                  _fechaFin = null;
-                                });
-                              },
-                            ),
-                        ],
-                      ),
+                    IconButton(
+                      onPressed: _pastePortadaImage,
+                      icon: const Icon(Icons.content_paste_rounded),
+                      tooltip: 'Pegar imagen',
                     ),
+                    if (_imagenPortadaBytes != null)
+                      IconButton(
+                        onPressed: () {
+                          setState(() {
+                            _imagenPortadaBytes = null;
+                            _imagenPortadaNombre = null;
+                            _imagenMiniaturaBytes = null;
+                          });
+                          _markDirty();
+                        },
+                        icon: const Icon(Icons.delete_outline),
+                        tooltip: 'Eliminar imagen',
+                      ),
                   ],
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              _buildCollapsibleCard(
-                title: 'Activo, Portada',
-                expanded: _activoPortadaExpanded,
-                onToggle: () {
-                  setState(() {
-                    _activoPortadaExpanded = !_activoPortadaExpanded;
-                  });
-                  _saveCardsExpandedState();
-                },
-                badges: [
-                  _buildStatusTag('A', _receta.activo == 'S'),
-                  const SizedBox(width: 6),
-                  _buildStatusTag('P', _receta.mostrarPortada == 'S'),
-                ],
-                child: Column(
-                  children: [
-                    SwitchListTile(
-                      title: const Text('Activo'),
-                      value: _receta.activo == 'S',
-                      onChanged: (value) {
-                        setState(() {
-                          _receta.activo = value ? 'S' : 'N';
-                        });
-                      },
-                    ),
-                    SwitchListTile(
-                      title: const Text('Mostrar en portada'),
-                      subtitle: const Text('Aparecerá destacada en el inicio'),
-                      value: _receta.mostrarPortada == 'S',
-                      onChanged: (value) {
-                        setState(() {
-                          _receta.mostrarPortada = value ? 'S' : 'N';
-                        });
-                      },
-                    ),
-                    if (_receta.mostrarPortada == 'S') ...[
-                      const Divider(),
-                      const Padding(
-                        padding: EdgeInsets.symmetric(
-                            horizontal: 16.0, vertical: 8.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Builder(
+                          builder: (BuildContext context) {
+                            return GestureDetector(
+                              onTap: () {
+                                if (_imagenPortadaBytes != null) {
+                                  _viewImage();
+                                } else {
+                                  _showMenuAtWidget(context);
+                                }
+                              },
+                              onLongPress: () {
+                                _showMenuAtWidget(context);
+                              },
+                              child: Container(
+                                width: 100,
+                                height: 100,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: Colors.grey[300]!,
+                                    width: 2,
+                                  ),
+                                ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: _imagenMiniaturaBytes != null
+                                      ? Image.memory(
+                                          _imagenMiniaturaBytes!,
+                                          fit: BoxFit.cover,
+                                        )
+                                      : _imagenPortadaBytes != null
+                                          ? Image.memory(
+                                              _imagenPortadaBytes!,
+                                              fit: BoxFit.cover,
+                                            )
+                                          : Container(
+                                              color: Colors.grey[200],
+                                              child: Column(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment.center,
+                                                children: [
+                                                  Icon(
+                                                    Icons.restaurant_menu,
+                                                    size: 64,
+                                                    color: Colors.grey[400],
+                                                  ),
+                                                  const SizedBox(height: 8),
+                                                  Text(
+                                                    'Sin imagen',
+                                                    style: TextStyle(
+                                                      color: Colors.grey[600],
+                                                      fontSize: 14,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Center(
                         child: Text(
-                          'Período destacado en portada',
+                          _imagenPortadaBytes != null
+                              ? 'Toca para ver • Mantén pulsado para opciones'
+                              : 'Toca para añadir imagen',
                           style: TextStyle(
-                              fontSize: 14, fontWeight: FontWeight.w500),
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                            fontStyle: FontStyle.italic,
+                          ),
+                          textAlign: TextAlign.center,
                         ),
                       ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                _buildCollapsibleCard(
+                  title: 'Visualización',
+                  subtitle:
+                      '${_formatDateLabel(_fechaInicio)} - ${_formatDateLabel(_fechaFin)}',
+                  expanded: _periodoExpanded,
+                  onToggle: () {
+                    setState(() {
+                      _periodoExpanded = !_periodoExpanded;
+                    });
+                    _saveCardsExpandedState();
+                  },
+                  child: Column(
+                    children: [
                       ListTile(
-                        title: const Text('Fecha inicio portada'),
-                        subtitle: Text(
-                          _formatDateLabel(
-                            _fechaInicioPortada,
-                            emptyLabel: 'Sin fecha (siempre visible)',
-                          ),
-                        ),
+                        title: const Text('Fecha inicio'),
+                        subtitle: Text(_formatDateLabel(_fechaInicio)),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -2190,24 +2216,23 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
                               onPressed: () async {
                                 final date = await showDatePicker(
                                   context: context,
-                                  initialDate:
-                                      _fechaInicioPortada ?? DateTime.now(),
+                                  initialDate: _fechaInicio ?? DateTime.now(),
                                   firstDate: DateTime(2020),
-                                  lastDate: DateTime(2100),
+                                  lastDate: DateTime(2030),
                                 );
                                 if (date != null) {
                                   setState(() {
-                                    _fechaInicioPortada = date;
+                                    _fechaInicio = date;
                                   });
                                 }
                               },
                             ),
-                            if (_fechaInicioPortada != null)
+                            if (_fechaInicio != null)
                               IconButton(
                                 icon: const Icon(Icons.clear),
                                 onPressed: () {
                                   setState(() {
-                                    _fechaInicioPortada = null;
+                                    _fechaInicio = null;
                                   });
                                 },
                               ),
@@ -2215,13 +2240,8 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
                         ),
                       ),
                       ListTile(
-                        title: const Text('Fecha fin portada'),
-                        subtitle: Text(
-                          _formatDateLabel(
-                            _fechaFinPortada,
-                            emptyLabel: 'Sin fecha (indefinido)',
-                          ),
-                        ),
+                        title: const Text('Fecha fin'),
+                        subtitle: Text(_formatDateLabel(_fechaFin)),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -2230,24 +2250,23 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
                               onPressed: () async {
                                 final date = await showDatePicker(
                                   context: context,
-                                  initialDate:
-                                      _fechaFinPortada ?? DateTime.now(),
+                                  initialDate: _fechaFin ?? DateTime.now(),
                                   firstDate: DateTime(2020),
-                                  lastDate: DateTime(2100),
+                                  lastDate: DateTime(2030),
                                 );
                                 if (date != null) {
                                   setState(() {
-                                    _fechaFinPortada = date;
+                                    _fechaFin = date;
                                   });
                                 }
                               },
                             ),
-                            if (_fechaFinPortada != null)
+                            if (_fechaFin != null)
                               IconButton(
                                 icon: const Icon(Icons.clear),
                                 onPressed: () {
                                   setState(() {
-                                    _fechaFinPortada = null;
+                                    _fechaFin = null;
                                   });
                                 },
                               ),
@@ -2255,270 +2274,438 @@ class _RecetaEditScreenState extends State<RecetaEditScreen> {
                         ),
                       ),
                     ],
-                  ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
+                const SizedBox(height: 16),
 
-              _buildCollapsibleCard(
-                title: 'Pacientes',
-                expanded: _pacientesExpanded,
-                onToggle: () {
-                  setState(() {
-                    _pacientesExpanded = !_pacientesExpanded;
-                  });
-                  _saveCardsExpandedState();
-                },
-                badges: [
-                  _buildCountBadge(_selectedPacientes.length),
-                  const SizedBox(width: 6),
-                  _buildStatusTag('Todos', _visibleParaTodos),
-                ],
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    CheckboxListTile(
-                      title: const Text('Visible para todos los pacientes'),
-                      subtitle: const Text(
-                          'La receta aparecerá a todos sin necesidad de seleccionarlos'),
-                      value: _visibleParaTodos,
-                      onChanged: (value) {
+                _buildCollapsibleCard(
+                  title: 'Activo, Portada',
+                  expanded: _activoPortadaExpanded,
+                  onToggle: () {
+                    setState(() {
+                      _activoPortadaExpanded = !_activoPortadaExpanded;
+                    });
+                    _saveCardsExpandedState();
+                  },
+                  actions: [
+                    _buildStatusTag(
+                      'A',
+                      _receta.activo == 'S',
+                      onTap: () {
                         setState(() {
-                          _visibleParaTodos = value ?? true;
+                          _receta.activo = _receta.activo == 'S' ? 'N' : 'S';
+                        });
+                        _markDirty();
+                      },
+                    ),
+                    const SizedBox(width: 6),
+                    _buildStatusTag(
+                      'P',
+                      _receta.mostrarPortada == 'S',
+                      onTap: () {
+                        setState(() {
+                          _receta.mostrarPortada =
+                              _receta.mostrarPortada == 'S' ? 'N' : 'S';
+                        });
+                        _markDirty();
+                      },
+                    ),
+                  ],
+                  child: Column(
+                    children: [
+                      SwitchListTile(
+                        title: const Text('Activo'),
+                        value: _receta.activo == 'S',
+                        onChanged: (value) {
+                          setState(() {
+                            _receta.activo = value ? 'S' : 'N';
+                          });
+                        },
+                      ),
+                      SwitchListTile(
+                        title: const Text('Mostrar en portada'),
+                        subtitle:
+                            const Text('Aparecerá destacada en el inicio'),
+                        value: _receta.mostrarPortada == 'S',
+                        onChanged: (value) {
+                          setState(() {
+                            _receta.mostrarPortada = value ? 'S' : 'N';
+                          });
+                        },
+                      ),
+                      if (_receta.mostrarPortada == 'S') ...[
+                        const Divider(),
+                        const Padding(
+                          padding: EdgeInsets.symmetric(
+                              horizontal: 16.0, vertical: 8.0),
+                          child: Text(
+                            'Período destacado en portada',
+                            style: TextStyle(
+                                fontSize: 14, fontWeight: FontWeight.w500),
+                          ),
+                        ),
+                        ListTile(
+                          title: const Text('Fecha inicio portada'),
+                          subtitle: Text(
+                            _formatDateLabel(
+                              _fechaInicioPortada,
+                              emptyLabel: 'Sin fecha (siempre visible)',
+                            ),
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.calendar_today),
+                                onPressed: () async {
+                                  final date = await showDatePicker(
+                                    context: context,
+                                    initialDate:
+                                        _fechaInicioPortada ?? DateTime.now(),
+                                    firstDate: DateTime(2020),
+                                    lastDate: DateTime(2100),
+                                  );
+                                  if (date != null) {
+                                    setState(() {
+                                      _fechaInicioPortada = date;
+                                    });
+                                  }
+                                },
+                              ),
+                              if (_fechaInicioPortada != null)
+                                IconButton(
+                                  icon: const Icon(Icons.clear),
+                                  onPressed: () {
+                                    setState(() {
+                                      _fechaInicioPortada = null;
+                                    });
+                                  },
+                                ),
+                            ],
+                          ),
+                        ),
+                        ListTile(
+                          title: const Text('Fecha fin portada'),
+                          subtitle: Text(
+                            _formatDateLabel(
+                              _fechaFinPortada,
+                              emptyLabel: 'Sin fecha (indefinido)',
+                            ),
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.calendar_today),
+                                onPressed: () async {
+                                  final date = await showDatePicker(
+                                    context: context,
+                                    initialDate:
+                                        _fechaFinPortada ?? DateTime.now(),
+                                    firstDate: DateTime(2020),
+                                    lastDate: DateTime(2100),
+                                  );
+                                  if (date != null) {
+                                    setState(() {
+                                      _fechaFinPortada = date;
+                                    });
+                                  }
+                                },
+                              ),
+                              if (_fechaFinPortada != null)
+                                IconButton(
+                                  icon: const Icon(Icons.clear),
+                                  onPressed: () {
+                                    setState(() {
+                                      _fechaFinPortada = null;
+                                    });
+                                  },
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                _buildCollapsibleCard(
+                  title: 'Pacientes',
+                  expanded: _pacientesExpanded,
+                  onToggle: () {
+                    setState(() {
+                      _pacientesExpanded = !_pacientesExpanded;
+                    });
+                    _saveCardsExpandedState();
+                  },
+                  titleBadges: [
+                    _buildCountBadge(_selectedPacientes.length),
+                  ],
+                  badges: [
+                    _buildStatusTag(
+                      'Todos',
+                      _visibleParaTodos,
+                      onTap: () {
+                        setState(() {
+                          _visibleParaTodos = !_visibleParaTodos;
                           if (_visibleParaTodos) {
                             _selectedPacientes.clear();
                           }
                         });
+                        _markDirty();
                       },
                     ),
-                    const SizedBox(height: 8),
-                    OutlinedButton.icon(
-                      onPressed: _visibleParaTodos
-                          ? null
-                          : () async {
-                              final result = await showDialog<List<int>>(
-                                context: context,
-                                builder: (context) => _PacientesSelector(
-                                  allPacientes: _allPacientes,
-                                  selectedPacientes: _selectedPacientes,
-                                ),
-                              );
+                  ],
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      CheckboxListTile(
+                        title: const Text('Visible para todos los pacientes'),
+                        subtitle: const Text(
+                            'La receta aparecerá a todos sin necesidad de seleccionarlos'),
+                        value: _visibleParaTodos,
+                        onChanged: (value) {
+                          setState(() {
+                            _visibleParaTodos = value ?? true;
+                            if (_visibleParaTodos) {
+                              _selectedPacientes.clear();
+                            }
+                          });
+                          _markDirty();
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        onPressed: _visibleParaTodos
+                            ? null
+                            : () async {
+                                final result = await showDialog<List<int>>(
+                                  context: context,
+                                  builder: (context) => _PacientesSelector(
+                                    allPacientes: _allPacientes,
+                                    selectedPacientes: _selectedPacientes,
+                                  ),
+                                );
 
-                              if (result != null) {
-                                setState(() {
-                                  _selectedPacientes = result;
-                                });
-                              }
-                            },
-                      icon: const Icon(Icons.people),
-                      label: const Text('Seleccionar pacientes'),
+                                if (result != null) {
+                                  setState(() {
+                                    _selectedPacientes = result;
+                                  });
+                                }
+                              },
+                        icon: const Icon(Icons.people),
+                        label: const Text('Seleccionar pacientes'),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                _buildCollapsibleCard(
+                  title: 'Documentos, URL',
+                  expanded: _documentosExpanded,
+                  onToggle: () {
+                    setState(() {
+                      _documentosExpanded = !_documentosExpanded;
+                    });
+                    _saveCardsExpandedState();
+                  },
+                  titleBadges: [
+                    _buildCountBadge(_documentos.length),
+                  ],
+                  actions: [
+                    IconButton(
+                      icon: const Icon(Icons.add),
+                      onPressed: _addDocumento,
+                      tooltip: 'Añadir documento/url',
                     ),
                   ],
-                ),
-              ),
-              const SizedBox(height: 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (_documentos.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.all(16.0),
+                          child: Text('No hay documentos'),
+                        )
+                      else
+                        ..._documentos.map((doc) {
+                          // Acortar URL o nombre de archivo si tiene más de 20 caracteres
+                          String segundaLinea = '';
+                          if (doc.tipo == 'url') {
+                            segundaLinea = doc.url ?? '';
+                          } else {
+                            segundaLinea = doc.nombre ?? '';
+                          }
+                          if (segundaLinea.length > 20) {
+                            segundaLinea =
+                                '${segundaLinea.substring(0, 20)}...';
+                          }
 
-              _buildCollapsibleCard(
-                title: 'Documentos, URL',
-                expanded: _documentosExpanded,
-                onToggle: () {
-                  setState(() {
-                    _documentosExpanded = !_documentosExpanded;
-                  });
-                  _saveCardsExpandedState();
-                },
-                badges: [
-                  _buildCountBadge(_documentos.length),
-                ],
-                actions: [
-                  IconButton(
-                    icon: const Icon(Icons.add),
-                    onPressed: _addDocumento,
-                    tooltip: 'Añadir documento/url',
-                  ),
-                ],
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (_documentos.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.all(16.0),
-                        child: Text('No hay documentos'),
-                      )
-                    else
-                      ..._documentos.map((doc) {
-                        // Acortar URL o nombre de archivo si tiene más de 20 caracteres
-                        String segundaLinea = '';
-                        if (doc.tipo == 'url') {
-                          segundaLinea = doc.url ?? '';
-                        } else {
-                          segundaLinea = doc.nombre ?? '';
-                        }
-                        if (segundaLinea.length > 20) {
-                          segundaLinea = '${segundaLinea.substring(0, 20)}...';
-                        }
-
-                        return Card(
-                          margin: const EdgeInsets.symmetric(
-                            vertical: 4,
-                            horizontal: 0,
-                          ),
-                          child: ListTile(
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 8,
+                          return Card(
+                            margin: const EdgeInsets.symmetric(
                               vertical: 4,
+                              horizontal: 0,
                             ),
-                            leading: SizedBox(
-                              width: 50,
-                              height: 50,
-                              child: doc.tipo == 'imagen'
-                                  ? FutureBuilder<Uint8List?>(
-                                      future: _loadImageBytes(doc),
-                                      builder: (context, snapshot) {
-                                        if (snapshot.connectionState ==
-                                                ConnectionState.waiting ||
-                                            !snapshot.hasData) {
-                                          return Container(
-                                            decoration: BoxDecoration(
-                                              color: Colors.grey[300],
-                                              borderRadius:
-                                                  BorderRadius.circular(4),
-                                            ),
-                                            child: const Icon(
-                                              Icons.image,
-                                              size: 30,
-                                              color: Colors.grey,
+                            child: ListTile(
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              leading: SizedBox(
+                                width: 50,
+                                height: 50,
+                                child: doc.tipo == 'imagen'
+                                    ? FutureBuilder<Uint8List?>(
+                                        future: _loadImageBytes(doc),
+                                        builder: (context, snapshot) {
+                                          if (snapshot.connectionState ==
+                                                  ConnectionState.waiting ||
+                                              !snapshot.hasData) {
+                                            return Container(
+                                              decoration: BoxDecoration(
+                                                color: Colors.grey[300],
+                                                borderRadius:
+                                                    BorderRadius.circular(4),
+                                              ),
+                                              child: const Icon(
+                                                Icons.image,
+                                                size: 30,
+                                                color: Colors.grey,
+                                              ),
+                                            );
+                                          }
+                                          return ClipRRect(
+                                            borderRadius:
+                                                BorderRadius.circular(4),
+                                            child: Image.memory(
+                                              snapshot.data!,
+                                              fit: BoxFit.cover,
                                             ),
                                           );
-                                        }
-                                        return ClipRRect(
+                                        },
+                                      )
+                                    : Container(
+                                        decoration: BoxDecoration(
+                                          color: doc.tipo == 'documento'
+                                              ? Colors.blue.withOpacity(0.1)
+                                              : _isYouTubeUrl(doc.url)
+                                                  ? Colors.red.withOpacity(0.1)
+                                                  : Colors.purple
+                                                      .withOpacity(0.1),
                                           borderRadius:
                                               BorderRadius.circular(4),
-                                          child: Image.memory(
-                                            snapshot.data!,
-                                            fit: BoxFit.cover,
-                                          ),
-                                        );
-                                      },
-                                    )
-                                  : Container(
-                                      decoration: BoxDecoration(
-                                        color: doc.tipo == 'documento'
-                                            ? Colors.blue.withOpacity(0.1)
-                                            : _isYouTubeUrl(doc.url)
-                                                ? Colors.red.withOpacity(0.1)
-                                                : Colors.purple
-                                                    .withOpacity(0.1),
-                                        borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: Icon(
+                                          doc.tipo == 'documento'
+                                              ? Icons.file_present
+                                              : _isYouTubeUrl(doc.url)
+                                                  ? Icons.play_circle
+                                                  : Icons.link,
+                                          size: 30,
+                                          color: doc.tipo == 'documento'
+                                              ? Colors.blue
+                                              : _isYouTubeUrl(doc.url)
+                                                  ? Colors.red
+                                                  : Colors.purple,
+                                        ),
                                       ),
-                                      child: Icon(
-                                        doc.tipo == 'documento'
-                                            ? Icons.file_present
-                                            : _isYouTubeUrl(doc.url)
-                                                ? Icons.play_circle
-                                                : Icons.link,
-                                        size: 30,
-                                        color: doc.tipo == 'documento'
-                                            ? Colors.blue
-                                            : _isYouTubeUrl(doc.url)
-                                                ? Colors.red
-                                                : Colors.purple,
-                                      ),
-                                    ),
-                            ),
-                            title: Text(
-                              doc.nombre ?? 'Sin nombre',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
                               ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const SizedBox(height: 4),
-                                Text(
-                                  segundaLinea,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey[600],
+                              title: Text(
+                                doc.nombre ?? 'Sin nombre',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    segundaLinea,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey[600],
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                   ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                const SizedBox(height: 8),
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    if (doc.tipo == 'url')
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.open_in_browser,
-                                          size: 20,
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (doc.tipo == 'url')
+                                        IconButton(
+                                          icon: const Icon(
+                                            Icons.open_in_browser,
+                                            size: 20,
+                                          ),
+                                          color: Colors.blue,
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(),
+                                          onPressed: () => _openUrl(doc.url),
+                                          tooltip: 'Abrir URL',
+                                        )
+                                      else if (doc.tipo == 'imagen')
+                                        IconButton(
+                                          icon: const Icon(
+                                            Icons.visibility,
+                                            size: 20,
+                                          ),
+                                          color: Colors.teal,
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(),
+                                          onPressed: () => _openImagen(doc),
+                                          tooltip: 'Visualizar imagen',
+                                        )
+                                      else
+                                        IconButton(
+                                          icon: const Icon(
+                                            Icons.download,
+                                            size: 20,
+                                          ),
+                                          color: Colors.blue,
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(),
+                                          onPressed: () => _openDocumento(doc),
+                                          tooltip: 'Descargar',
                                         ),
+                                      const SizedBox(width: 12),
+                                      IconButton(
+                                        icon: const Icon(Icons.edit, size: 20),
                                         color: Colors.blue,
                                         padding: EdgeInsets.zero,
                                         constraints: const BoxConstraints(),
-                                        onPressed: () => _openUrl(doc.url),
-                                        tooltip: 'Abrir URL',
-                                      )
-                                    else if (doc.tipo == 'imagen')
+                                        onPressed: () => _editDocumento(doc),
+                                        tooltip: 'Editar',
+                                      ),
+                                      const SizedBox(width: 12),
                                       IconButton(
                                         icon: const Icon(
-                                          Icons.visibility,
+                                          Icons.delete,
                                           size: 20,
                                         ),
-                                        color: Colors.teal,
+                                        color: Colors.red,
                                         padding: EdgeInsets.zero,
                                         constraints: const BoxConstraints(),
-                                        onPressed: () => _openImagen(doc),
-                                        tooltip: 'Visualizar imagen',
-                                      )
-                                    else
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.download,
-                                          size: 20,
-                                        ),
-                                        color: Colors.blue,
-                                        padding: EdgeInsets.zero,
-                                        constraints: const BoxConstraints(),
-                                        onPressed: () => _openDocumento(doc),
-                                        tooltip: 'Descargar',
+                                        onPressed: () => _deleteDocumento(doc),
+                                        tooltip: 'Eliminar',
                                       ),
-                                    const SizedBox(width: 12),
-                                    IconButton(
-                                      icon: const Icon(Icons.edit, size: 20),
-                                      color: Colors.blue,
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(),
-                                      onPressed: () => _editDocumento(doc),
-                                      tooltip: 'Editar',
-                                    ),
-                                    const SizedBox(width: 12),
-                                    IconButton(
-                                      icon: const Icon(
-                                        Icons.delete,
-                                        size: 20,
-                                      ),
-                                      color: Colors.red,
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(),
-                                      onPressed: () => _deleteDocumento(doc),
-                                      tooltip: 'Eliminar',
-                                    ),
-                                  ],
-                                ),
-                              ],
+                                    ],
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                        );
-                      }),
-                  ],
+                          );
+                        }),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

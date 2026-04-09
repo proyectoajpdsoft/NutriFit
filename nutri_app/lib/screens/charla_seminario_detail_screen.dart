@@ -4,16 +4,33 @@ import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:nutri_app/models/charla_diapositiva.dart';
 import 'package:nutri_app/models/charla_seminario.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
+import 'package:nutri_app/widgets/premium_feature_dialog_helper.dart';
 import 'package:provider/provider.dart';
 
+class _PresentationItem {
+  _PresentationItem({
+    required this.slide,
+    required this.duracionSeg,
+  });
+
+  final CharlaDiapositiva slide;
+  final double duracionSeg;
+}
+
 class CharlaSeminarioDetailScreen extends StatefulWidget {
-  const CharlaSeminarioDetailScreen({super.key, required this.charla});
+  const CharlaSeminarioDetailScreen({
+    super.key,
+    required this.charla,
+    this.previewMode = false,
+  });
 
   final CharlaSeminario charla;
+  final bool previewMode;
 
   @override
   State<CharlaSeminarioDetailScreen> createState() =>
@@ -22,96 +39,217 @@ class CharlaSeminarioDetailScreen extends StatefulWidget {
 
 class _CharlaSeminarioDetailScreenState
     extends State<CharlaSeminarioDetailScreen> {
-  final PageController _pageController = PageController();
   final Map<int, MemoryImage> _slideCache = <int, MemoryImage>{};
   final AudioPlayer _audioPlayer = AudioPlayer();
 
-  StreamSubscription<void>? _playerCompleteSub;
   StreamSubscription<PlayerState>? _playerStateSub;
+  StreamSubscription<Duration>? _playerPositionSub;
+  StreamSubscription<Duration>? _playerDurationSub;
 
   List<CharlaDiapositiva> _slides = <CharlaDiapositiva>[];
+  List<_PresentationItem> _presentationItems = <_PresentationItem>[];
+
   bool _loading = true;
   bool _audioPlaying = false;
+  bool _isUserScrubbing = false;
+
   int _currentPage = 0;
+  Duration _audioPosition = Duration.zero;
+  Duration _audioDuration = Duration.zero;
 
   late CharlaSeminario _charla;
 
   String? get _userCode => context.read<AuthService>().userCode;
+  bool get _hasGlobalAudio => (_charla.audioGlobal ?? '').trim().isNotEmpty;
+
+  Future<void> _showPreviewPremiumDialog() {
+    final l10n = AppLocalizations.of(context)!;
+    return PremiumFeatureDialogHelper.show(
+      context,
+      message: l10n.charlasPremiumContentMessage,
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     _charla = widget.charla;
-    _currentPage = (_charla.ultimaDiapositivaVista > 0)
-        ? (_charla.ultimaDiapositivaVista - 1).clamp(0, 9999)
-        : 0;
+    _currentPage = widget.previewMode
+        ? 0
+        : (_charla.ultimaDiapositivaVista > 0)
+            ? (_charla.ultimaDiapositivaVista - 1).clamp(0, 9999)
+            : 0;
     _loadSlides();
   }
 
   @override
   void dispose() {
-    _playerCompleteSub?.cancel();
     _playerStateSub?.cancel();
+    _playerPositionSub?.cancel();
+    _playerDurationSub?.cancel();
     _audioPlayer.dispose();
-    _pageController.dispose();
     _slideCache.clear();
     super.dispose();
   }
 
   Future<void> _loadSlides() async {
     if (_charla.codigo == null) return;
+
+    final api = context.read<ApiService>();
     setState(() => _loading = true);
     try {
-      final response = await context.read<ApiService>().get(
-            'api/charlas_seminarios.php?diapositivas=${_charla.codigo}',
-          );
-      if (response.statusCode == 200 && mounted) {
-        final List<dynamic> data = jsonDecode(response.body) as List<dynamic>;
-        setState(() {
-          _slides = data
-              .map(
-                (e) => CharlaDiapositiva.fromJson(
-                  Map<String, dynamic>.from(e as Map),
-                ),
-              )
-              .toList(growable: false);
-        });
+      final charlaResponse = await api.get(
+        'api/charlas_seminarios.php?codigo=${_charla.codigo}',
+      );
+      if (charlaResponse.statusCode == 200 && mounted) {
+        _charla = CharlaSeminario.fromJson(
+          Map<String, dynamic>.from(
+            jsonDecode(charlaResponse.body) as Map,
+          ),
+        );
+      }
 
-        _playerCompleteSub?.cancel();
-        _playerStateSub?.cancel();
-        _playerCompleteSub = _audioPlayer.onPlayerComplete.listen((_) {
-          _goToNextSlide();
-        });
-        _playerStateSub = _audioPlayer.onPlayerStateChanged.listen((state) {
-          if (!mounted) return;
-          setState(() {
-            _audioPlaying = state == PlayerState.playing;
-          });
-        });
+      final response = await api.get(
+        'api/charlas_seminarios.php?diapositivas=${_charla.codigo}',
+      );
+      if (response.statusCode != 200 || !mounted) {
+        return;
+      }
 
-        // Saltar a la última diapositiva vista
-        if (_currentPage > 0 && _currentPage < _slides.length) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (_pageController.hasClients) {
-              _pageController.jumpToPage(_currentPage);
-            }
-          });
-        }
+      final data = jsonDecode(response.body) as List<dynamic>;
+      _slides = data
+          .map(
+            (e) => CharlaDiapositiva.fromJson(
+              Map<String, dynamic>.from(e as Map),
+            ),
+          )
+          .toList(growable: false);
+      _presentationItems = _buildPresentationItems(_slides, _charla);
 
-        await _playCurrentSlideAudio();
+      _bindAudioStreams();
+
+      final initialIndex = widget.previewMode ? 0 : _initialPresentationIndex();
+      _currentPage = initialIndex;
+
+      if (_hasGlobalAudio && !widget.previewMode) {
+        await _playGlobalAudio(fromCurrentIndex: true);
+      }
+
+      if (mounted) {
+        setState(() {});
       }
     } catch (_) {
+      // Ignorar error y mostrar estado actual
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 
-  CharlaDiapositiva? get _currentSlide {
-    if (_slides.isEmpty || _currentPage < 0 || _currentPage >= _slides.length) {
+  void _bindAudioStreams() {
+    _playerStateSub?.cancel();
+    _playerStateSub = _audioPlayer.onPlayerStateChanged.listen((state) {
+      if (!mounted) return;
+      setState(() {
+        _audioPlaying = state == PlayerState.playing;
+      });
+    });
+
+    _playerPositionSub?.cancel();
+    _playerPositionSub = _audioPlayer.onPositionChanged.listen((position) {
+      if (!mounted) return;
+      final newIndex = _presentationIndexForPosition(position);
+      setState(() {
+        if (!_isUserScrubbing) {
+          _audioPosition = position;
+        }
+        if (newIndex != null && newIndex != _currentPage) {
+          _currentPage = newIndex;
+        }
+      });
+    });
+
+    _playerDurationSub?.cancel();
+    _playerDurationSub = _audioPlayer.onDurationChanged.listen((duration) {
+      if (!mounted) return;
+      setState(() {
+        _audioDuration = duration;
+      });
+    });
+  }
+
+  List<_PresentationItem> _buildPresentationItems(
+    List<CharlaDiapositiva> slides,
+    CharlaSeminario charla,
+  ) {
+    if (slides.isEmpty) return <_PresentationItem>[];
+
+    final byCode = <int, CharlaDiapositiva>{
+      for (final slide in slides)
+        if (slide.codigo != null) slide.codigo!: slide,
+    };
+
+    final rawTimeline = (charla.timelinePresentacionJson ?? '').trim();
+    if (rawTimeline.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawTimeline);
+        if (decoded is List) {
+          final items = <_PresentationItem>[];
+          for (final entry in decoded) {
+            if (entry is! Map) continue;
+            final map = Map<String, dynamic>.from(entry);
+            final code = int.tryParse(
+              (map['codigo_diapositiva'] ?? '').toString(),
+            );
+            final dur =
+                double.tryParse((map['duracion_seg'] ?? '').toString()) ?? 8.0;
+            if (code == null) continue;
+            final slide = byCode[code];
+            if (slide == null) continue;
+            items.add(
+              _PresentationItem(
+                slide: slide,
+                duracionSeg: dur > 0 ? dur : 8.0,
+              ),
+            );
+          }
+          if (items.isNotEmpty) return items;
+        }
+      } catch (_) {
+        // Fallback al mapeo directo de diapositivas
+      }
+    }
+
+    return slides
+        .map(
+          (slide) => _PresentationItem(
+            slide: slide,
+            duracionSeg: slide.duracionPresentacionSeg ?? 8.0,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  int _initialPresentationIndex() {
+    final ultimaVista = _charla.ultimaDiapositivaVista;
+    if (ultimaVista <= 0 || _presentationItems.isEmpty) return 0;
+    final idx = _presentationItems.indexWhere(
+      (item) => item.slide.numeroDiapositiva == ultimaVista,
+    );
+    return idx < 0 ? 0 : idx;
+  }
+
+  _PresentationItem? get _currentItem {
+    if (_presentationItems.isEmpty ||
+        _currentPage < 0 ||
+        _currentPage >= _presentationItems.length) {
       return null;
     }
-    return _slides[_currentPage];
+    return _presentationItems[_currentPage];
   }
+
+  CharlaDiapositiva? get _currentSlide => _currentItem?.slide;
 
   bool get _currentSlideHasAudio {
     final slide = _currentSlide;
@@ -119,11 +257,96 @@ class _CharlaSeminarioDetailScreenState
     return (slide.audioDiapositiva ?? '').trim().isNotEmpty;
   }
 
-  Future<void> _playCurrentSlideAudio() async {
-    final slide = _currentSlide;
-    if (slide == null) return;
+  List<double> _effectiveDurationsSeg() {
+    if (_presentationItems.isEmpty) return const <double>[];
 
-    final raw = (slide.audioDiapositiva ?? '').trim();
+    final configuredTotal = _presentationItems.fold<double>(
+      0.0,
+      (sum, item) => sum + item.duracionSeg,
+    );
+
+    final globalTotal = _audioDuration.inMilliseconds / 1000.0;
+    if (!_hasGlobalAudio || configuredTotal <= 0 || globalTotal <= 0) {
+      return _presentationItems
+          .map((item) => item.duracionSeg)
+          .toList(growable: false);
+    }
+
+    final factor = globalTotal / configuredTotal;
+    return _presentationItems
+        .map((item) => (item.duracionSeg * factor).clamp(0.05, 999999.0))
+        .cast<double>()
+        .toList(growable: false);
+  }
+
+  Duration _presentationStartForIndex(int index) {
+    final durations = _effectiveDurationsSeg();
+    var acc = 0.0;
+    for (var i = 0; i < durations.length; i++) {
+      if (i == index) {
+        return Duration(milliseconds: (acc * 1000).round());
+      }
+      acc += durations[i];
+    }
+    return Duration.zero;
+  }
+
+  int? _presentationIndexForPosition(Duration position) {
+    if (_presentationItems.isEmpty) return null;
+
+    final durations = _effectiveDurationsSeg();
+    final seconds = position.inMilliseconds / 1000.0;
+    var acc = 0.0;
+
+    for (var i = 0; i < durations.length; i++) {
+      acc += durations[i];
+      if (seconds < acc) {
+        return i;
+      }
+    }
+
+    return _presentationItems.length - 1;
+  }
+
+  Future<void> _playGlobalAudio({bool fromCurrentIndex = false}) async {
+    if (!_hasGlobalAudio) return;
+
+    try {
+      final bytes = base64Decode((_charla.audioGlobal ?? '').trim());
+      final source = BytesSource(
+        Uint8List.fromList(bytes),
+        mimeType: (_charla.audioGlobalMime ?? '').trim().isEmpty
+            ? null
+            : _charla.audioGlobalMime!.trim(),
+      );
+
+      await _audioPlayer.stop();
+      await _audioPlayer.play(source);
+
+      if (fromCurrentIndex) {
+        final target = _presentationStartForIndex(_currentPage);
+        if (target > Duration.zero) {
+          await _audioPlayer.seek(target);
+          if (mounted) {
+            setState(() => _audioPosition = target);
+          }
+        }
+      }
+    } catch (_) {
+      if (mounted) setState(() => _audioPlaying = false);
+    }
+  }
+
+  Future<void> _playCurrentSlideAudio() async {
+    final item = _currentItem;
+    if (item == null) return;
+
+    if (_hasGlobalAudio) {
+      await _playGlobalAudio(fromCurrentIndex: true);
+      return;
+    }
+
+    final raw = (item.slide.audioDiapositiva ?? '').trim();
     if (raw.isEmpty) {
       await _audioPlayer.stop();
       if (mounted) setState(() => _audioPlaying = false);
@@ -132,8 +355,8 @@ class _CharlaSeminarioDetailScreenState
 
     try {
       final bytes = base64Decode(raw);
-      final mimeType = (slide.audioDiapositivaMime ?? '').trim().isNotEmpty
-          ? slide.audioDiapositivaMime!.trim()
+      final mimeType = (item.slide.audioDiapositivaMime ?? '').trim().isNotEmpty
+          ? item.slide.audioDiapositivaMime!.trim()
           : null;
       await _audioPlayer.stop();
       await _audioPlayer.play(
@@ -145,7 +368,8 @@ class _CharlaSeminarioDetailScreenState
   }
 
   Future<void> _pauseOrResumeAudio() async {
-    if (!_currentSlideHasAudio) return;
+    if (!_hasGlobalAudio && !_currentSlideHasAudio) return;
+
     if (_audioPlaying) {
       await _audioPlayer.pause();
       return;
@@ -159,27 +383,50 @@ class _CharlaSeminarioDetailScreenState
     }
   }
 
+  Future<void> _seekToPresentationIndex(int index) async {
+    if (!_hasGlobalAudio) return;
+    final target = _presentationStartForIndex(index);
+    await _audioPlayer.seek(target);
+    if (mounted) {
+      setState(() {
+        _audioPosition = target;
+      });
+    }
+  }
+
   Future<void> _goToNextSlide() async {
-    if (_currentPage >= _slides.length - 1) return;
-    await _pageController.nextPage(
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeInOut,
-    );
+    if (_currentPage >= _presentationItems.length - 1) return;
+    final next = _currentPage + 1;
+    setState(() => _currentPage = next);
+    _saveProgreso(next);
+
+    if (_hasGlobalAudio) {
+      await _seekToPresentationIndex(next);
+    } else {
+      await _playCurrentSlideAudio();
+    }
   }
 
   Future<void> _goToPreviousSlide() async {
     if (_currentPage <= 0) return;
-    await _pageController.previousPage(
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeInOut,
-    );
+    final prev = _currentPage - 1;
+    setState(() => _currentPage = prev);
+    _saveProgreso(prev);
+
+    if (_hasGlobalAudio) {
+      await _seekToPresentationIndex(prev);
+    } else {
+      await _playCurrentSlideAudio();
+    }
   }
 
   ImageProvider? _slideProvider(CharlaDiapositiva slide) {
     final raw = (slide.imagenDiapositiva ?? '').trim();
     if (raw.isEmpty) return null;
+
     final cached = _slideCache[slide.numeroDiapositiva];
     if (cached != null) return cached;
+
     try {
       final img = MemoryImage(base64Decode(raw));
       _slideCache[slide.numeroDiapositiva] = img;
@@ -190,9 +437,12 @@ class _CharlaSeminarioDetailScreenState
   }
 
   void _saveProgreso(int pageIndex) {
+    if (widget.previewMode) return;
     final userCode = _userCode;
     if (userCode == null || userCode.isEmpty || _charla.codigo == null) return;
-    final slideNum = pageIndex + 1;
+    if (pageIndex < 0 || pageIndex >= _presentationItems.length) return;
+
+    final slideNum = _presentationItems[pageIndex].slide.numeroDiapositiva;
     context.read<ApiService>().post(
           'api/charlas_seminarios.php?progreso=1',
           body: jsonEncode(<String, dynamic>{
@@ -204,6 +454,10 @@ class _CharlaSeminarioDetailScreenState
   }
 
   Future<void> _toggleLike() async {
+    if (widget.previewMode) {
+      await _showPreviewPremiumDialog();
+      return;
+    }
     final userCode = _userCode;
     if (userCode == null || userCode.isEmpty || _charla.codigo == null) return;
 
@@ -229,10 +483,16 @@ class _CharlaSeminarioDetailScreenState
           }
         });
       }
-    } catch (_) {}
+    } catch (_) {
+      // Ignore
+    }
   }
 
   Future<void> _toggleFavorito() async {
+    if (widget.previewMode) {
+      await _showPreviewPremiumDialog();
+      return;
+    }
     final userCode = _userCode;
     if (userCode == null || userCode.isEmpty || _charla.codigo == null) return;
 
@@ -250,7 +510,9 @@ class _CharlaSeminarioDetailScreenState
           _charla.favorito = (data['favorito'] ?? 'N').toString();
         });
       }
-    } catch (_) {}
+    } catch (_) {
+      // Ignore
+    }
   }
 
   @override
@@ -268,7 +530,6 @@ class _CharlaSeminarioDetailScreenState
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
-          // Like
           IconButton(
             tooltip: meGusta ? 'Quitar me gusta' : 'Me gusta',
             icon: Row(
@@ -290,9 +551,8 @@ class _CharlaSeminarioDetailScreenState
             ),
             onPressed: _toggleLike,
           ),
-          // Favorito
           IconButton(
-            tooltip: esFavorito ? 'Quitar de favoritos' : 'Añadir a favoritos',
+            tooltip: esFavorito ? 'Quitar de favoritos' : 'Anadir a favoritos',
             icon: Icon(
               esFavorito ? Icons.bookmark : Icons.bookmark_border,
               color: esFavorito ? Colors.amber.shade300 : Colors.white70,
@@ -303,11 +563,12 @@ class _CharlaSeminarioDetailScreenState
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: Colors.white))
-          : _slides.isEmpty
+          : _presentationItems.isEmpty
               ? _buildNoSlides()
-              : _buildCarousel(),
-      bottomNavigationBar:
-          !_loading && _slides.isNotEmpty ? _buildSlideIndicator() : null,
+              : _buildSingleSlide(),
+      bottomNavigationBar: !_loading && _presentationItems.isNotEmpty
+          ? _buildBottomControls()
+          : null,
     );
   }
 
@@ -319,7 +580,7 @@ class _CharlaSeminarioDetailScreenState
           Icon(Icons.hourglass_empty, size: 56, color: Colors.white38),
           SizedBox(height: 16),
           Text(
-            'Esta charla aún no tiene diapositivas disponibles.',
+            'Esta charla aun no tiene diapositivas disponibles.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.white60, fontSize: 14),
           ),
@@ -328,129 +589,128 @@ class _CharlaSeminarioDetailScreenState
     );
   }
 
-  Widget _buildCarousel() {
-    return GestureDetector(
-      // Tap en los lados izq/der para avanzar o retroceder
-      onTapUp: (details) {
-        final width = MediaQuery.of(context).size.width;
-        if (details.globalPosition.dx < width / 3) {
-          if (_currentPage > 0) {
-            _goToPreviousSlide();
-          }
-        } else if (details.globalPosition.dx > width * 2 / 3) {
-          if (_currentPage < _slides.length - 1) {
-            _goToNextSlide();
-          }
-        }
-      },
-      child: PageView.builder(
-        controller: _pageController,
-        itemCount: _slides.length,
-        onPageChanged: (index) {
-          setState(() => _currentPage = index);
-          _saveProgreso(index);
-          _playCurrentSlideAudio();
-        },
-        itemBuilder: (context, index) {
-          final slide = _slides[index];
-          final provider = _slideProvider(slide);
+  Widget _buildSingleSlide() {
+    final safeIndex = _currentPage.clamp(0, _presentationItems.length - 1);
+    final slide = _presentationItems[safeIndex].slide;
+    final provider = _slideProvider(slide);
 
-          return InteractiveViewer(
-            minScale: 0.8,
-            maxScale: 4.0,
-            child: Center(
-              child: provider != null
-                  ? Image(image: provider, fit: BoxFit.contain)
-                  : Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.image_not_supported,
-                          color: Colors.white30,
-                          size: 48,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Diapositiva ${slide.numeroDiapositiva}',
-                          style: const TextStyle(color: Colors.white38),
-                        ),
-                      ],
-                    ),
-            ),
-          );
-        },
+    return InteractiveViewer(
+      minScale: 0.8,
+      maxScale: 4.0,
+      child: Center(
+        child: provider != null
+            ? Image(image: provider, fit: BoxFit.contain)
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.image_not_supported,
+                    color: Colors.white30,
+                    size: 48,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Diapositiva ${slide.numeroDiapositiva}',
+                    style: const TextStyle(color: Colors.white38),
+                  ),
+                ],
+              ),
       ),
     );
   }
 
-  Widget _buildSlideIndicator() {
+  Widget _buildBottomControls() {
     return Container(
       color: Colors.black87,
-      padding: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                IconButton(
-                  tooltip: 'Anterior',
-                  onPressed: _currentPage > 0 ? _goToPreviousSlide : null,
-                  icon: const Icon(Icons.skip_previous, color: Colors.white),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              IconButton(
+                tooltip: 'Anterior',
+                onPressed: widget.previewMode
+                    ? _showPreviewPremiumDialog
+                    : _currentPage > 0
+                        ? _goToPreviousSlide
+                        : null,
+                icon: const Icon(Icons.skip_previous, color: Colors.white),
+              ),
+              IconButton(
+                tooltip: _audioPlaying ? 'Pausar audio' : 'Reproducir audio',
+                onPressed: widget.previewMode
+                    ? _showPreviewPremiumDialog
+                    : (_hasGlobalAudio || _currentSlideHasAudio)
+                        ? _pauseOrResumeAudio
+                        : null,
+                icon: Icon(
+                  _audioPlaying
+                      ? Icons.pause_circle_filled
+                      : Icons.play_circle_fill,
+                  color: (_hasGlobalAudio || _currentSlideHasAudio)
+                      ? Colors.white
+                      : Colors.white24,
+                  size: 30,
                 ),
-                IconButton(
-                  tooltip: _audioPlaying ? 'Pausar audio' : 'Reproducir audio',
-                  onPressed: _currentSlideHasAudio ? _pauseOrResumeAudio : null,
-                  icon: Icon(
-                    _audioPlaying
-                        ? Icons.pause_circle_filled
-                        : Icons.play_circle_fill,
-                    color:
-                        _currentSlideHasAudio ? Colors.white : Colors.white24,
-                    size: 30,
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Siguiente',
-                  onPressed:
-                      _currentPage < _slides.length - 1 ? _goToNextSlide : null,
-                  icon: const Icon(Icons.skip_next, color: Colors.white),
-                ),
-              ],
-            ),
+              ),
+              IconButton(
+                tooltip: 'Siguiente',
+                onPressed: widget.previewMode
+                    ? _showPreviewPremiumDialog
+                    : _currentPage < _presentationItems.length - 1
+                        ? _goToNextSlide
+                        : null,
+                icon: const Icon(Icons.skip_next, color: Colors.white),
+              ),
+            ],
           ),
-          // Puntos indicadores (máx 15 visibles)
-          if (_slides.length <= 20)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(_slides.length, (i) {
-                return AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  margin: const EdgeInsets.symmetric(horizontal: 3),
-                  width: i == _currentPage ? 10 : 6,
-                  height: i == _currentPage ? 10 : 6,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: i == _currentPage
-                        ? Colors.deepPurple.shade300
-                        : Colors.white30,
-                  ),
+          if (_hasGlobalAudio && !widget.previewMode)
+            Slider(
+              value: _audioDuration.inMilliseconds > 0
+                  ? (_audioPosition.inMilliseconds /
+                          _audioDuration.inMilliseconds)
+                      .clamp(0.0, 1.0)
+                  : 0.0,
+              onChanged: (value) {
+                if (_audioDuration.inMilliseconds <= 0) return;
+                final target = Duration(
+                  milliseconds: (_audioDuration.inMilliseconds * value).round(),
                 );
-              }),
-            )
-          else
-            // Para muchas diapositivas: solo número
-            Text(
-              '${_currentPage + 1} / ${_slides.length}',
-              style: const TextStyle(color: Colors.white60, fontSize: 13),
-            ),
-          const SizedBox(height: 4),
-          if (_slides.length <= 20)
-            Text(
-              '${_currentPage + 1} / ${_slides.length}',
-              style: const TextStyle(color: Colors.white38, fontSize: 11),
+                setState(() {
+                  _isUserScrubbing = true;
+                  _audioPosition = target;
+                  final idx = _presentationIndexForPosition(target);
+                  if (idx != null) {
+                    _currentPage = idx;
+                  }
+                });
+              },
+              onChangeEnd: (value) async {
+                if (_audioDuration.inMilliseconds <= 0) {
+                  if (mounted) {
+                    setState(() => _isUserScrubbing = false);
+                  }
+                  return;
+                }
+
+                final target = Duration(
+                  milliseconds: (_audioDuration.inMilliseconds * value).round(),
+                );
+                await _audioPlayer.seek(target);
+                if (!mounted) return;
+                setState(() {
+                  _audioPosition = target;
+                  final idx = _presentationIndexForPosition(target);
+                  if (idx != null) {
+                    _currentPage = idx;
+                  }
+                  _isUserScrubbing = false;
+                });
+              },
+              activeColor: Colors.deepOrange.shade300,
+              inactiveColor: Colors.white24,
             ),
         ],
       ),

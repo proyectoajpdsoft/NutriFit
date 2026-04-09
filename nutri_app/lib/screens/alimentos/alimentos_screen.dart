@@ -1098,21 +1098,33 @@ class _AlimentosScreenState extends State<AlimentosScreen> {
   Widget _activeOptionTag({
     required String label,
     required bool active,
+    VoidCallback? onTap,
   }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+    final tag = Container(
+      width: 24,
+      height: 22,
       decoration: BoxDecoration(
-        color: active ? Colors.green.shade700 : Colors.grey.shade300,
-        borderRadius: BorderRadius.circular(8),
+        color: active ? Colors.green : Colors.grey,
+        borderRadius: BorderRadius.circular(6),
       ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: active ? Colors.white : Colors.black,
-          fontSize: 10,
-          fontWeight: active ? FontWeight.w700 : FontWeight.w400,
-          height: 1.0,
+      child: Center(
+        child: Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
         ),
+      ),
+    );
+    if (onTap == null) return tag;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: tag,
       ),
     );
   }
@@ -2319,7 +2331,6 @@ class _AlimentosScreenState extends State<AlimentosScreen> {
   }
 
   Future<void> _openEditor({Alimento? alimento}) async {
-    // Ensure grupos are available before opening the dialog
     List<AlimentoGrupo> grupos = List.of(_grupos);
     if (grupos.isEmpty) {
       try {
@@ -2327,423 +2338,37 @@ class _AlimentosScreenState extends State<AlimentosScreen> {
         if (mounted) setState(() => _grupos = grupos);
       } catch (_) {}
     }
+    List<HarvardCategoria> harvardCategorias = List.of(_harvardCategorias);
+    if (harvardCategorias.isEmpty) {
+      try {
+        harvardCategorias = await _apiService.getHarvardCategorias();
+        if (mounted) setState(() => _harvardCategorias = harvardCategorias);
+      } catch (_) {}
+    }
     if (!mounted) return;
-
-    final nombreCtrl = TextEditingController(text: alimento?.nombre ?? '');
-    final obsCtrl = TextEditingController(text: alimento?.observacion ?? '');
-    // Ensure the initial grupo value exists in the list; reset to null if not
-    final selectedGrupos = (alimento?.codigoGrupos ?? const <int>[])
-        .where((id) => grupos.any((g) => g.codigo == id))
-        .toSet();
-    if (selectedGrupos.isEmpty && alimento?.codigoGrupo != null) {
-      final legacy = alimento!.codigoGrupo!;
-      if (grupos.any((g) => g.codigo == legacy)) {
-        selectedGrupos.add(legacy);
-      }
-    }
-    bool activo = (alimento?.activo ?? 1) == 1;
-    bool opcion = (alimento?.opcion ?? '') == 'S';
-    const alimCardPfx = 'alimento_card_';
-    final alimPrefs = await SharedPreferences.getInstance();
-    bool observacionExpanded =
-        alimPrefs.getBool('${alimCardPfx}observacion') ?? false;
-    bool categoriasAlimExpanded =
-        alimPrefs.getBool('${alimCardPfx}categorias') ?? false;
-    bool activoOpcionExpanded =
-        alimPrefs.getBool('${alimCardPfx}activo_opcion') ?? false;
-    bool harvardExpanded = alimPrefs.getBool('${alimCardPfx}harvard') ?? false;
-    final selectedHarvardCategorias = Set<String>.from(
-      alimento?.harvardCategorias.isNotEmpty == true
-          ? alimento!.harvardCategorias
-          : (alimento?.harvardCategoria != null
-              ? <String>[alimento!.harvardCategoria!]
-              : const <String>[]),
-    );
-
-    final initialNombre = (alimento?.nombre ?? '').trim();
-    final initialObs = (alimento?.observacion ?? '').trim();
-    final initialActivo = (alimento?.activo ?? 1) == 1;
-    final initialOpcion = (alimento?.opcion ?? '') == 'S';
-    final initialGrupos = Set<int>.from(selectedGrupos);
-    final initialHarvard = Set<String>.from(selectedHarvardCategorias);
-
-    bool sameIntSet(Set<int> a, Set<int> b) =>
-        a.length == b.length && a.containsAll(b) && b.containsAll(a);
-    bool sameStringSet(Set<String> a, Set<String> b) =>
-        a.length == b.length && a.containsAll(b) && b.containsAll(a);
-
-    bool hasPendingChanges() {
-      return nombreCtrl.text.trim() != initialNombre ||
-          obsCtrl.text.trim() != initialObs ||
-          activo != initialActivo ||
-          opcion != initialOpcion ||
-          !sameIntSet(selectedGrupos, initialGrupos) ||
-          !sameStringSet(selectedHarvardCategorias, initialHarvard);
-    }
-
-    Future<bool> confirmCloseIfDirty(BuildContext dialogContext) async {
-      if (!hasPendingChanges()) return true;
-      return showUnsavedChangesDialog(dialogContext);
-    }
-
-    final dialogPlatform = Theme.of(context).platform;
-    final isDesktopDialog = dialogPlatform == TargetPlatform.windows ||
-        dialogPlatform == TargetPlatform.macOS ||
-        dialogPlatform == TargetPlatform.linux;
-
-    final ok = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setLocal) => WillPopScope(
-          onWillPop: () => confirmCloseIfDirty(context),
-          child: AlertDialog(
-            titlePadding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
-            title: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    alimento == null ? 'Nuevo alimento' : 'Editar alimento',
-                    style: const TextStyle(fontSize: 15),
-                  ),
-                ),
-                IconButton(
-                  onPressed: () async {
-                    final canClose = await confirmCloseIfDirty(context);
-                    if (!canClose || !context.mounted) return;
-                    Navigator.pop(context, false);
-                  },
-                  tooltip: 'Cerrar',
-                  icon: const Icon(Icons.close, size: 16),
-                  style: IconButton.styleFrom(
-                    shape: const CircleBorder(),
-                    backgroundColor: Colors.grey.shade200,
-                    foregroundColor: Colors.black87,
-                    minimumSize: const Size(28, 28),
-                    padding: const EdgeInsets.all(4),
-                  ),
-                ),
-              ],
-            ),
-            content: SingleChildScrollView(
-              child: SizedBox(
-                width: isDesktopDialog ? 760 : null,
-                height: isDesktopDialog ? 720 : null,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: nombreCtrl,
-                      minLines: 3,
-                      maxLines: 3,
-                      decoration: const InputDecoration(
-                        labelText: 'Nombre',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Card(
-                      margin: EdgeInsets.zero,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        side: BorderSide(color: Colors.grey.shade400),
-                      ),
-                      child: ExpansionTile(
-                        initiallyExpanded: categoriasAlimExpanded,
-                        onExpansionChanged: (expanded) {
-                          setLocal(() => categoriasAlimExpanded = expanded);
-                          alimPrefs.setBool(
-                              '${alimCardPfx}categorias', expanded);
-                        },
-                        shape: const Border(),
-                        collapsedShape: const Border(),
-                        tilePadding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 0),
-                        title: Row(
-                          children: [
-                            const Text(
-                              'Categorías',
-                              style: TextStyle(
-                                  fontWeight: FontWeight.w600, fontSize: 14),
-                            ),
-                            const SizedBox(width: 6),
-                            _countBadge(
-                              selectedGrupos.length,
-                              activeColor: Colors.green.shade600,
-                            ),
-                            const Spacer(),
-                            IconButton(
-                              onPressed: () async {
-                                final temp = Set<int>.from(selectedGrupos);
-                                final picked =
-                                    await _showSelectCategoriasDialog(temp);
-                                if (picked == null) return;
-                                setLocal(() {
-                                  selectedGrupos
-                                    ..clear()
-                                    ..addAll(picked);
-                                });
-                              },
-                              tooltip: 'Seleccionar categorías',
-                              icon:
-                                  const Icon(Icons.category_outlined, size: 18),
-                              visualDensity: VisualDensity.compact,
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(
-                                  minWidth: 24, minHeight: 24),
-                            ),
-                          ],
-                        ),
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                            child: SizedBox(
-                              height: 104,
-                              width: double.infinity,
-                              child: selectedGrupos.isEmpty
-                                  ? const Align(
-                                      alignment: Alignment.centerLeft,
-                                      child: Text('Sin categorías'),
-                                    )
-                                  : Scrollbar(
-                                      thumbVisibility: true,
-                                      child: SingleChildScrollView(
-                                        child: Wrap(
-                                          spacing: 6,
-                                          runSpacing: 6,
-                                          children: grupos
-                                              .where(
-                                                (g) =>
-                                                    g.codigo != null &&
-                                                    selectedGrupos
-                                                        .contains(g.codigo),
-                                              )
-                                              .map(
-                                                (g) => Chip(
-                                                  label: Text(g.nombre),
-                                                  visualDensity:
-                                                      VisualDensity.compact,
-                                                ),
-                                              )
-                                              .toList(),
-                                        ),
-                                      ),
-                                    ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (_harvardCategorias.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      _buildHarvardSelector(
-                        selectedHarvardCategorias,
-                        harvardExpanded,
-                        (expanded) {
-                          setLocal(() => harvardExpanded = expanded);
-                          alimPrefs.setBool('${alimCardPfx}harvard', expanded);
-                        },
-                        (vals) => setLocal(() {
-                          selectedHarvardCategorias
-                            ..clear()
-                            ..addAll(vals);
-                        }),
-                        () async {
-                          final catalogFoods =
-                              await _getHarvardLearningAlimentos();
-                          final inferred = {
-                            ..._inferHarvardCategoriasFromName(nombreCtrl.text),
-                            ..._inferHarvardCategoriasFromLearning(
-                              nombreCtrl.text,
-                              catalogFoods.where((food) {
-                                if (alimento?.codigo == null ||
-                                    food.codigo == null) {
-                                  return true;
-                                }
-                                return food.codigo != alimento!.codigo;
-                              }).toList(),
-                            ),
-                          }
-                              .where(
-                                (code) => _harvardCategorias
-                                    .any((c) => c.codigo == code),
-                              )
-                              .toSet();
-
-                          if (!mounted) return;
-                          setLocal(() {
-                            selectedHarvardCategorias
-                              ..clear()
-                              ..addAll(inferred);
-                          });
-
-                          _showOverlayToast(
-                            context,
-                            inferred.isEmpty
-                                ? 'No se detectaron categorías Harvard automáticamente'
-                                : '${inferred.length} categoría(s) Harvard sugerida(s) automáticamente',
-                            bgColor: inferred.isEmpty
-                                ? Colors.grey.shade700
-                                : Colors.green.shade700,
-                            duration: const Duration(seconds: 3),
-                          );
-                        },
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                    Card(
-                      margin: EdgeInsets.zero,
-                      child: ExpansionTile(
-                        initiallyExpanded: activoOpcionExpanded,
-                        onExpansionChanged: (expanded) {
-                          setLocal(() => activoOpcionExpanded = expanded);
-                          alimPrefs.setBool(
-                            '${alimCardPfx}activo_opcion',
-                            expanded,
-                          );
-                        },
-                        tilePadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 0,
-                        ),
-                        title: Row(
-                          children: [
-                            const Expanded(
-                              child: Text(
-                                'Activo/Opción',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 14,
-                                ),
-                              ),
-                            ),
-                            _activeOptionTag(label: 'A', active: activo),
-                            const SizedBox(width: 6),
-                            _activeOptionTag(label: 'O', active: opcion),
-                          ],
-                        ),
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                            child: Column(
-                              children: [
-                                SwitchListTile(
-                                  value: activo,
-                                  onChanged: (v) => setLocal(() => activo = v),
-                                  title: const Text('Activo'),
-                                  contentPadding: EdgeInsets.zero,
-                                ),
-                                SwitchListTile(
-                                  value: opcion,
-                                  onChanged: (v) => setLocal(() => opcion = v),
-                                  title: const Text('Opción'),
-                                  contentPadding: EdgeInsets.zero,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Card(
-                      margin: EdgeInsets.zero,
-                      child: ExpansionTile(
-                        initiallyExpanded: observacionExpanded,
-                        onExpansionChanged: (expanded) {
-                          setLocal(() => observacionExpanded = expanded);
-                          alimPrefs.setBool(
-                              '${alimCardPfx}observacion', expanded);
-                        },
-                        tilePadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 0,
-                        ),
-                        title: Row(
-                          children: [
-                            const Text(
-                              'Observación',
-                              style: TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                            const SizedBox(width: 8),
-                            _countBadge(
-                              obsCtrl.text.trim().length,
-                              activeColor: Colors.green.shade600,
-                            ),
-                          ],
-                        ),
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                            child: TextField(
-                              controller: obsCtrl,
-                              maxLines: 4,
-                              onChanged: (_) => setLocal(() {}),
-                              decoration: const InputDecoration(
-                                border: OutlineInputBorder(),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            actions: [
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Guardar'),
-              ),
-            ],
-          ),
+    final ok = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => _AlimentoEditScreen(
+          alimento: alimento,
+          grupos: grupos,
+          harvardCategorias: harvardCategorias,
         ),
       ),
     );
 
-    if (ok != true) return;
-    final nombre = nombreCtrl.text.trim();
-    if (nombre.isEmpty) return;
-
-    final payload = Alimento(
-      codigo: alimento?.codigo,
-      nombre: nombre,
-      codigoGrupo: selectedGrupos.isNotEmpty ? selectedGrupos.first : null,
-      codigoGrupos: selectedGrupos.toList(),
-      activo: activo ? 1 : 0,
-      observacion: obsCtrl.text.trim().isEmpty ? null : obsCtrl.text.trim(),
-      opcion: opcion ? 'S' : 'N',
-      harvardCategoria: selectedHarvardCategorias.isNotEmpty
-          ? selectedHarvardCategorias.first
-          : null,
-      harvardCategorias: selectedHarvardCategorias.toList(),
+    if (ok != true || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Alimento guardado'),
+        backgroundColor: Colors.green,
+        behavior: SnackBarBehavior.floating,
+      ),
     );
-
-    try {
-      await _apiService.saveAlimento(payload);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Alimento guardado'),
-          backgroundColor: Colors.green,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-      _harvardLearningAlimentos = [];
-      _reload();
-      _loadGrupos();
-    } catch (e) {
-      if (!mounted) return;
-      final msg = e.toString().replaceFirst('Exception: ', '');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(msg),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
+    _harvardLearningAlimentos = [];
+    _reload();
+    _loadGrupos();
+    _loadHarvardCategorias();
   }
 
   Future<void> _delete(Alimento alimento) async {
@@ -3477,6 +3102,1503 @@ class _AlimentosScreenState extends State<AlimentosScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _AlimentoEditScreen extends StatefulWidget {
+  const _AlimentoEditScreen({
+    required this.alimento,
+    required this.grupos,
+    required this.harvardCategorias,
+  });
+
+  final Alimento? alimento;
+  final List<AlimentoGrupo> grupos;
+  final List<HarvardCategoria> harvardCategorias;
+
+  @override
+  State<_AlimentoEditScreen> createState() => _AlimentoEditScreenState();
+}
+
+class _AlimentoEditScreenState extends State<_AlimentoEditScreen> {
+  static const String _cardPrefsPrefix = 'alimento_card_';
+
+  final ApiService _apiService = ApiService();
+  late final TextEditingController _nombreCtrl;
+  late final TextEditingController _obsCtrl;
+
+  late final String _initialNombre;
+  late final String _initialObs;
+  late final bool _initialActivo;
+  late final bool _initialOpcion;
+  late final Set<int> _initialGrupos;
+  late final Set<String> _initialHarvard;
+
+  final List<Alimento> _harvardLearningAlimentos = <Alimento>[];
+  late Set<int> _selectedGrupos;
+  late Set<String> _selectedHarvardCategorias;
+  late bool _activo;
+  late bool _opcion;
+
+  bool _saving = false;
+  bool _categoriasExpanded = false;
+  bool _harvardExpanded = false;
+  bool _activoOpcionExpanded = false;
+  bool _observacionExpanded = false;
+
+  bool get _isEditing => widget.alimento != null;
+
+  @override
+  void initState() {
+    super.initState();
+    _nombreCtrl = TextEditingController(text: widget.alimento?.nombre ?? '');
+    _obsCtrl = TextEditingController(text: widget.alimento?.observacion ?? '');
+
+    _selectedGrupos = (widget.alimento?.codigoGrupos ?? const <int>[])
+        .where((id) => widget.grupos.any((g) => g.codigo == id))
+        .toSet();
+    if (_selectedGrupos.isEmpty && widget.alimento?.codigoGrupo != null) {
+      final legacy = widget.alimento!.codigoGrupo!;
+      if (widget.grupos.any((g) => g.codigo == legacy)) {
+        _selectedGrupos.add(legacy);
+      }
+    }
+
+    _selectedHarvardCategorias = Set<String>.from(
+      widget.alimento?.harvardCategorias.isNotEmpty == true
+          ? widget.alimento!.harvardCategorias
+          : (widget.alimento?.harvardCategoria != null
+              ? <String>[widget.alimento!.harvardCategoria!]
+              : const <String>[]),
+    );
+
+    _activo = (widget.alimento?.activo ?? 1) == 1;
+    _opcion = (widget.alimento?.opcion ?? '') == 'S';
+
+    _initialNombre = (widget.alimento?.nombre ?? '').trim();
+    _initialObs = (widget.alimento?.observacion ?? '').trim();
+    _initialActivo = _activo;
+    _initialOpcion = _opcion;
+    _initialGrupos = Set<int>.from(_selectedGrupos);
+    _initialHarvard = Set<String>.from(_selectedHarvardCategorias);
+
+    _loadExpansionPrefs();
+  }
+
+  @override
+  void dispose() {
+    _nombreCtrl.dispose();
+    _obsCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadExpansionPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _observacionExpanded =
+          prefs.getBool('${_cardPrefsPrefix}observacion') ?? false;
+      _categoriasExpanded =
+          prefs.getBool('${_cardPrefsPrefix}categorias') ?? false;
+      _activoOpcionExpanded =
+          prefs.getBool('${_cardPrefsPrefix}activo_opcion') ?? false;
+      _harvardExpanded = prefs.getBool('${_cardPrefsPrefix}harvard') ?? false;
+    });
+  }
+
+  Future<void> _saveExpandedPref(String key, bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('${_cardPrefsPrefix}$key', value);
+  }
+
+  bool _sameIntSet(Set<int> a, Set<int> b) =>
+      a.length == b.length && a.containsAll(b) && b.containsAll(a);
+
+  bool _sameStringSet(Set<String> a, Set<String> b) =>
+      a.length == b.length && a.containsAll(b) && b.containsAll(a);
+
+  bool _hasPendingChanges() {
+    return _nombreCtrl.text.trim() != _initialNombre ||
+        _obsCtrl.text.trim() != _initialObs ||
+        _activo != _initialActivo ||
+        _opcion != _initialOpcion ||
+        !_sameIntSet(_selectedGrupos, _initialGrupos) ||
+        !_sameStringSet(_selectedHarvardCategorias, _initialHarvard);
+  }
+
+  Future<void> _handleClose() async {
+    if (_hasPendingChanges()) {
+      final canClose = await showUnsavedChangesDialog(context);
+      if (!canClose || !mounted) return;
+    }
+    Navigator.pop(context, false);
+  }
+
+  Future<void> _save() async {
+    final nombre = _nombreCtrl.text.trim();
+    if (nombre.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('El nombre es obligatorio.'),
+          backgroundColor: Colors.orange,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _saving = true;
+    });
+
+    final payload = Alimento(
+      codigo: widget.alimento?.codigo,
+      nombre: nombre,
+      codigoGrupo: _selectedGrupos.isNotEmpty ? _selectedGrupos.first : null,
+      codigoGrupos: _selectedGrupos.toList(),
+      activo: _activo ? 1 : 0,
+      observacion: _obsCtrl.text.trim().isEmpty ? null : _obsCtrl.text.trim(),
+      opcion: _opcion ? 'S' : 'N',
+      harvardCategoria: _selectedHarvardCategorias.isNotEmpty
+          ? _selectedHarvardCategorias.first
+          : null,
+      harvardCategorias: _selectedHarvardCategorias.toList(),
+    );
+
+    try {
+      await _apiService.saveAlimento(payload);
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(msg),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      setState(() {
+        _saving = false;
+      });
+    }
+  }
+
+  String _normalizeForHarvardMatch(String text) {
+    var value = text.toLowerCase().trim();
+    const replacements = {
+      'á': 'a',
+      'é': 'e',
+      'í': 'i',
+      'ó': 'o',
+      'ú': 'u',
+      'ü': 'u',
+      'ñ': 'n',
+    };
+    replacements.forEach((from, to) {
+      value = value.replaceAll(from, to);
+    });
+    value = value
+        .replaceAll(RegExp(r'[^a-z0-9\s\+]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    return value;
+  }
+
+  Set<String> _harvardMeaningfulTokens(String rawName) {
+    final normalized = _normalizeForHarvardMatch(rawName);
+    if (normalized.isEmpty) return <String>{};
+
+    const stopwords = {
+      'de',
+      'del',
+      'la',
+      'el',
+      'los',
+      'las',
+      'y',
+      'o',
+      'con',
+      'sin',
+      'al',
+      'a',
+      'en',
+      'para',
+      'por',
+      'un',
+      'una',
+      'unos',
+      'unas',
+      'tipo',
+      'fuente',
+      'varios',
+      'varias',
+      'mas',
+      'menos',
+    };
+
+    return normalized
+        .split(RegExp(r'\s+|\+'))
+        .map((e) => e.trim())
+        .where((e) => e.length >= 3 && !stopwords.contains(e))
+        .toSet();
+  }
+
+  List<String> _harvardAssignedCodes(Alimento alimento) {
+    if (alimento.harvardCategorias.isNotEmpty) {
+      return alimento.harvardCategorias;
+    }
+    if ((alimento.harvardCategoria ?? '').trim().isNotEmpty) {
+      return [alimento.harvardCategoria!.trim()];
+    }
+    return const <String>[];
+  }
+
+  Future<List<Alimento>> _getHarvardLearningAlimentos() async {
+    if (_harvardLearningAlimentos.isNotEmpty) {
+      return _harvardLearningAlimentos;
+    }
+    final items = await _apiService.getAlimentos();
+    _harvardLearningAlimentos
+      ..clear()
+      ..addAll(items);
+    return _harvardLearningAlimentos;
+  }
+
+  Set<String> _inferHarvardCategoriasFromLearning(
+    String rawName,
+    List<Alimento> knownFoods,
+  ) {
+    final targetTokens = _harvardMeaningfulTokens(rawName);
+    if (targetTokens.isEmpty) return <String>{};
+
+    final scores = <String, int>{};
+    final normalizedTarget = _normalizeForHarvardMatch(rawName);
+
+    for (final food in knownFoods) {
+      final categories = _harvardAssignedCodes(food);
+      if (categories.isEmpty) continue;
+
+      final knownTokens = _harvardMeaningfulTokens(food.nombre);
+      if (knownTokens.isEmpty) continue;
+
+      final overlap = targetTokens.intersection(knownTokens).length;
+      if (overlap == 0) continue;
+
+      var weight = overlap;
+      final normalizedKnown = _normalizeForHarvardMatch(food.nombre);
+      if (normalizedKnown == normalizedTarget) {
+        weight += 4;
+      } else if (normalizedKnown.contains(normalizedTarget) ||
+          normalizedTarget.contains(normalizedKnown)) {
+        weight += 2;
+      }
+
+      for (final category in categories) {
+        scores[category] = (scores[category] ?? 0) + weight;
+      }
+    }
+
+    if (scores.isEmpty) return <String>{};
+    final maxScore = scores.values.reduce((a, b) => a > b ? a : b);
+    final minScore = maxScore >= 4 ? maxScore - 2 : 1;
+
+    return scores.entries
+        .where((entry) => entry.value >= minScore)
+        .map((entry) => entry.key)
+        .toSet();
+  }
+
+  Set<String> _inferHarvardCategoriasFromName(String rawName) {
+    final text = _normalizeForHarvardMatch(rawName);
+    if (text.isEmpty) return <String>{};
+
+    final isPlainTortilla = text == 'tortilla' || text.startsWith('tortilla ');
+    final isGrainTortilla = isPlainTortilla &&
+        (text.contains('trigo') ||
+            text.contains('wrap') ||
+            text.contains('mexicana') ||
+            text.contains('integral') ||
+            text.contains('maiz'));
+
+    bool hasAny(List<String> keywords) {
+      return keywords.any((k) => text.contains(k));
+    }
+
+    final isBocadillo = text == 'bocadillo' || text.startsWith('bocadillo ');
+    final isIntegralBocadillo =
+        isBocadillo && (text.contains('integral') || text.contains('centeno'));
+    final isVegetableBurger = text.contains('hamburguesa') &&
+        hasAny([
+          'vegetal',
+          'vegana',
+          'vegano',
+          'lenteja',
+          'garbanzo',
+          'alubia',
+          'judia',
+          'soja',
+          'tofu',
+          'tempeh',
+        ]);
+    final isWhiteFilete = text.contains('filete') &&
+        hasAny([
+          'pollo',
+          'pavo',
+          'conejo',
+          'pescado',
+          'atun',
+          'salmon',
+          'merluza',
+          'bacalao',
+          'lenguado',
+          'rape',
+          'dorada',
+          'lubina',
+        ]);
+    final isRedFilete = text.contains('filete') &&
+        !isWhiteFilete &&
+        !hasAny(['tofu', 'tempeh', 'soja', 'vegetal', 'vegano', 'vegana']);
+    final isSavoryCrema = (text == 'crema' || text.startsWith('crema ')) &&
+        !hasAny([
+          'cacao',
+          'chocolate',
+          'cacahuete',
+          'avellana',
+          'almendra',
+          'nata',
+          'pastelera',
+          'dulce',
+        ]);
+
+    final inferred = <String>{};
+
+    if (hasAny([
+          'verdura',
+          'verduras',
+          'hortaliza',
+          'hortalizas',
+          'ensalada',
+          'brocoli',
+          'espinaca',
+          'calabacin',
+          'calabaza',
+          'zanahoria',
+          'tomate',
+          'pimiento',
+          'cebolla',
+          'coliflor',
+          'berenjena',
+          'berengena',
+          'judia verde',
+          'judias verdes',
+          'guisante',
+          'guisantes',
+          'pepino',
+          'seta',
+          'champinon',
+          'champiñon',
+          'champiñones',
+          'esparrago',
+          'acelga',
+          'col',
+          'kale',
+          'lechuga',
+        ]) ||
+        isSavoryCrema) {
+      inferred.add('verdura');
+    }
+
+    if (hasAny([
+      'fruta',
+      'frutas',
+      'manzana',
+      'platano',
+      'banana',
+      'pera',
+      'naranja',
+      'mandarina',
+      'uva',
+      'melon',
+      'sandia',
+      'kiwi',
+      'fresa',
+      'frambuesa',
+      'mango',
+      'papaya',
+      'pina',
+      'cereza',
+      'ciruela',
+      'albaricoque',
+      'melocoton',
+      'nectarina',
+      'higo',
+      'granada',
+      'arandano',
+    ])) {
+      inferred.add('fruta');
+    }
+
+    if (hasAny([
+          'integral',
+          'cereal integral',
+          'cereales integrales',
+          'pasta integral',
+          'arroz integral',
+          'pan integral',
+          'avena',
+          'quinoa',
+          'centeno',
+          'espelta',
+          'bulgur',
+          'mijo',
+          'trigo sarraceno',
+        ]) ||
+        (isGrainTortilla &&
+            (text.contains('integral') || text.contains('maiz'))) ||
+        isIntegralBocadillo) {
+      inferred.add('cereal_integral');
+    }
+
+    if (hasAny([
+          'pan blanco',
+          'pasta blanca',
+          'arroz blanco',
+          'paella',
+          'cereal refinado',
+          'cereales refinados',
+          'harina refinada',
+          'galleta',
+          'bolleria',
+          'croissant',
+          'donut',
+        ]) ||
+        (isGrainTortilla &&
+            (text.contains('trigo') ||
+                text.contains('wrap') ||
+                text.contains('mexicana'))) ||
+        (isBocadillo && !isIntegralBocadillo)) {
+      inferred.add('cereal_refinado');
+    }
+
+    if (hasAny([
+      'legumbre',
+      'legumbres',
+      'lenteja',
+      'garbanzo',
+      'alubia',
+      'judia',
+      'soja',
+      'tofu',
+      'tempeh',
+      'hummus',
+      'proteina vegetal',
+      'proteina',
+    ])) {
+      inferred.add('proteina_vegetal');
+    }
+
+    if (hasAny([
+          'pescado',
+          'atun',
+          'salmon',
+          'merluza',
+          'bacalao',
+          'sardina',
+          'boqueron',
+          'caballa',
+          'trucha',
+          'dorada',
+          'lubina',
+          'rape',
+          'rodaballo',
+          'lenguado',
+          'pulpo',
+          'calamar',
+          'sepia',
+          'marisco',
+          'mariscos',
+          'molusco',
+          'moluscos',
+          'gamba',
+          'gambas',
+          'camaron',
+          'camarones',
+          'langostino',
+          'langostinos',
+          'cigala',
+          'cigalas',
+          'navaja',
+          'navajas',
+          'vieira',
+          'vieiras',
+          'mejillon',
+          'mejillones',
+          'almeja',
+          'almejas',
+          'ostra',
+          'ostras',
+          'pollo',
+          'pavo',
+          'conejo',
+          'huevo',
+          'huevos',
+          'carne',
+          'tortilla',
+        ]) &&
+        !isGrainTortilla) {
+      inferred.add('proteina_blanca');
+    }
+
+    if (hasAny([
+              'ternera',
+              'vacuno',
+              'buey',
+              'cordero',
+              'cerdo',
+              'carne roja',
+              'hamburguesa',
+              'chuleta',
+              'entrecot',
+              'solomillo',
+            ]) &&
+            !isVegetableBurger ||
+        isRedFilete) {
+      inferred.add('proteina_roja');
+    }
+
+    if (hasAny([
+      'embutido',
+      'salchicha',
+      'fiambre',
+      'chorizo',
+      'salami',
+      'mortadela',
+      'bacon',
+      'beicon',
+      'jamon cocido',
+      'jamon york',
+      'carne procesada',
+      'nugget',
+    ])) {
+      inferred.add('proteina_procesada');
+    }
+
+    if (hasAny([
+      'leche',
+      'yogur',
+      'yogurt',
+      'queso',
+      'kefir',
+      'cuajada',
+      'requeson',
+      'lacteo',
+      'lacteos',
+    ])) {
+      inferred.add('lacteo');
+    }
+
+    if (hasAny([
+      'aceite',
+      'aceite de oliva',
+      'oliva',
+      'aguacate',
+      'nuez',
+      'almendra',
+      'avellana',
+      'pistacho',
+      'cacahuete',
+      'semilla',
+      'chia',
+      'linaza',
+      'sesamo',
+    ])) {
+      inferred.add('grasa_saludable');
+    }
+
+    if (hasAny([
+      'mantequilla',
+      'margarina',
+      'grasa trans',
+      'palma',
+      'frito',
+      'fritura',
+      'mayonesa',
+    ])) {
+      inferred.add('grasa_no_saludable');
+    }
+
+    if (hasAny([
+      'agua',
+      'infusion',
+      'te',
+      'cafe',
+      'cafe solo',
+      'cafe americano',
+    ])) {
+      inferred.add('agua');
+    }
+
+    if (hasAny([
+      'refresco',
+      'cola',
+      'bebida azucarada',
+      'zumo industrial',
+      'energy drink',
+      'energetica',
+      'batido azucarado',
+    ])) {
+      inferred.add('bebida_azucarada');
+    }
+
+    return inferred;
+  }
+
+  Widget _countBadge(int count, {required Color activeColor}) {
+    final color = count == 0 ? Colors.grey.shade400 : activeColor;
+    return Container(
+      constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        '$count',
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: Colors.white,
+        ),
+      ),
+    );
+  }
+
+  Widget _activeOptionTag({
+    required String label,
+    required bool active,
+    VoidCallback? onTap,
+  }) {
+    final tag = Container(
+      width: 24,
+      height: 22,
+      decoration: BoxDecoration(
+        color: active ? Colors.green : Colors.grey,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Center(
+        child: Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+    if (onTap == null) return tag;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: tag,
+      ),
+    );
+  }
+
+  Future<Set<int>?> _showSelectCategoriasDialog(
+      Set<int> initialSelected) async {
+    final temp = Set<int>.from(initialSelected);
+    String searchQuery = '';
+    bool showSearch = false;
+
+    return showDialog<Set<int>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialog) {
+          final filtered = widget.grupos
+              .where(
+                (g) =>
+                    g.codigo != null &&
+                    (searchQuery.isEmpty ||
+                        g.nombre
+                            .toLowerCase()
+                            .contains(searchQuery.toLowerCase())),
+              )
+              .toList();
+
+          return AlertDialog(
+            title: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Seleccionar categorías',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 16),
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(showSearch ? Icons.search_off : Icons.search),
+                  tooltip: showSearch ? 'Ocultar buscar' : 'Mostrar buscar',
+                  onPressed: () {
+                    setDialog(() {
+                      showSearch = !showSearch;
+                      if (!showSearch) {
+                        searchQuery = '';
+                      }
+                    });
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+            content: SizedBox(
+              width: 360,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (showSearch) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      onChanged: (value) {
+                        setDialog(() {
+                          searchQuery = value;
+                        });
+                      },
+                      decoration: InputDecoration(
+                        hintText: 'Buscar categoría...',
+                        prefixIcon: const Icon(Icons.search, size: 20),
+                        suffixIcon: searchQuery.isNotEmpty
+                            ? GestureDetector(
+                                onTap: () {
+                                  setDialog(() {
+                                    searchQuery = '';
+                                  });
+                                },
+                                child: const Icon(Icons.clear, size: 20),
+                              )
+                            : null,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        isDense: true,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: filtered
+                            .map(
+                              (g) => CheckboxListTile(
+                                dense: true,
+                                value: temp.contains(g.codigo),
+                                title: Text(g.nombre),
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                                onChanged: (checked) {
+                                  setDialog(() {
+                                    if (checked == true && g.codigo != null) {
+                                      temp.add(g.codigo!);
+                                    } else {
+                                      temp.remove(g.codigo);
+                                    }
+                                  });
+                                },
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  setDialog(() {
+                    temp.clear();
+                  });
+                },
+                child: const Text('Limpiar'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, temp),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Aplicar'),
+                    const SizedBox(width: 6),
+                    _countBadge(temp.length,
+                        activeColor: Colors.green.shade600),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<Set<String>?> _showSelectHarvardDialog(Set<String> initial) async {
+    final selected = Set<String>.from(initial);
+    return showDialog<Set<String>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          titlePadding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+          title: Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Categorías Harvard',
+                  style: TextStyle(fontSize: 15),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Cancelar',
+                onPressed: () => Navigator.pop(ctx),
+                icon: const Icon(Icons.close, size: 18),
+                style: IconButton.styleFrom(
+                  shape: const CircleBorder(),
+                  minimumSize: const Size(32, 32),
+                  padding: EdgeInsets.zero,
+                ),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: 380,
+            height: 360,
+            child: ListView(
+              children: [
+                CheckboxListTile(
+                  dense: true,
+                  title: const Text('Sin clasificar'),
+                  value: selected.isEmpty,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  onChanged: (_) => setLocal(() => selected.clear()),
+                ),
+                const Divider(height: 1),
+                ...widget.harvardCategorias.map((cat) {
+                  return CheckboxListTile(
+                    dense: true,
+                    value: selected.contains(cat.codigo),
+                    controlAffinity: ListTileControlAffinity.leading,
+                    title: Row(
+                      children: [
+                        Container(
+                          width: 10,
+                          height: 10,
+                          margin: const EdgeInsets.only(right: 8),
+                          decoration: BoxDecoration(
+                            color: cat.color,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            cat.iconoEmoji.isNotEmpty
+                                ? '${cat.iconoEmoji} ${cat.nombre}'
+                                : cat.nombre,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (!cat.esRecomendado)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 4),
+                            child: Text('⚠️', style: TextStyle(fontSize: 11)),
+                          ),
+                      ],
+                    ),
+                    onChanged: (checked) {
+                      setLocal(() {
+                        if (checked == true) {
+                          selected.add(cat.codigo);
+                        } else {
+                          selected.remove(cat.codigo);
+                        }
+                      });
+                    },
+                  );
+                }),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => setLocal(() => selected.clear()),
+              child: const Text('Limpiar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, selected),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Aplicar'),
+                  const SizedBox(width: 8),
+                  _countBadge(selected.length,
+                      activeColor: Colors.green.shade600),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHarvardSelector() {
+    final selected = _selectedHarvardCategorias;
+    final cats = widget.harvardCategorias;
+    final Color harvardBadgeColor;
+    if (selected.isEmpty) {
+      harvardBadgeColor = Colors.grey.shade400;
+    } else {
+      final selectedCats =
+          cats.where((c) => selected.contains(c.codigo)).toList();
+      harvardBadgeColor = selectedCats.any((c) => !c.esRecomendado)
+          ? Colors.red.shade600
+          : Colors.green.shade600;
+    }
+
+    return Card(
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: Colors.green.shade300),
+      ),
+      child: ExpansionTile(
+        initiallyExpanded: _harvardExpanded,
+        onExpansionChanged: (expanded) {
+          setState(() {
+            _harvardExpanded = expanded;
+          });
+          _saveExpandedPref('harvard', expanded);
+        },
+        shape: const Border(),
+        collapsedShape: const Border(),
+        tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+        title: Row(
+          children: [
+            Text(
+              'Harvard',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+                color: Colors.green.shade800,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Tooltip(
+              message: 'Ver información sobre el Plato de Harvard',
+              child: InkWell(
+                onTap: () => _showHarvardInfoDialog(context),
+                borderRadius: BorderRadius.circular(999),
+                child: _countBadge(selected.length,
+                    activeColor: harvardBadgeColor),
+              ),
+            ),
+            const Spacer(),
+            IconButton(
+              onPressed: () async {
+                final catalogFoods = await _getHarvardLearningAlimentos();
+                final inferred = {
+                  ..._inferHarvardCategoriasFromName(_nombreCtrl.text),
+                  ..._inferHarvardCategoriasFromLearning(
+                    _nombreCtrl.text,
+                    catalogFoods.where((food) {
+                      if (widget.alimento?.codigo == null ||
+                          food.codigo == null) {
+                        return true;
+                      }
+                      return food.codigo != widget.alimento!.codigo;
+                    }).toList(),
+                  ),
+                }
+                    .where((code) =>
+                        widget.harvardCategorias.any((c) => c.codigo == code))
+                    .toSet();
+
+                if (!mounted) return;
+                setState(() {
+                  _selectedHarvardCategorias
+                    ..clear()
+                    ..addAll(inferred);
+                });
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      inferred.isEmpty
+                          ? 'No se detectaron categorías Harvard automáticamente'
+                          : '${inferred.length} categoría(s) Harvard sugerida(s) automáticamente',
+                    ),
+                    backgroundColor: inferred.isEmpty
+                        ? Colors.grey.shade700
+                        : Colors.green.shade700,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              },
+              tooltip: 'Autodescubrir categorías Harvard por nombre',
+              icon: Icon(Icons.auto_awesome,
+                  size: 16, color: Colors.amber.shade700),
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              onPressed: () async {
+                final picked = await _showSelectHarvardDialog(selected);
+                if (picked == null) return;
+                setState(() {
+                  _selectedHarvardCategorias
+                    ..clear()
+                    ..addAll(picked);
+                });
+              },
+              tooltip: 'Seleccionar categorías Harvard',
+              icon: Icon(Icons.restaurant_menu_outlined,
+                  size: 16, color: Colors.green.shade700),
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+            ),
+          ],
+        ),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: SizedBox(
+              height: 110,
+              width: double.infinity,
+              child: selected.isEmpty
+                  ? Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Sin categorías Harvard',
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontSize: 12,
+                        ),
+                      ),
+                    )
+                  : Scrollbar(
+                      thumbVisibility: true,
+                      child: SingleChildScrollView(
+                        child: Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: cats
+                              .where((c) => selected.contains(c.codigo))
+                              .map(
+                                (c) => Chip(
+                                  visualDensity: VisualDensity.compact,
+                                  backgroundColor: c.color.withOpacity(0.14),
+                                  side: BorderSide(
+                                      color: c.color.withOpacity(0.4)),
+                                  label: Text(
+                                    c.iconoEmoji.isNotEmpty
+                                        ? '${c.iconoEmoji} ${c.nombre}'
+                                        : c.nombre,
+                                    style: TextStyle(
+                                      color: c.color.withOpacity(0.95),
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      ),
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showHarvardInfoDialog(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Text('🥗', style: TextStyle(fontSize: 22)),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'El Plato de Harvard',
+                style: TextStyle(fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+        content: const SizedBox(
+          width: 420,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'El Plato de Harvard, desarrollado por la Escuela de Salud Pública de Harvard, es una guía visual para construir comidas equilibradas y saludables.',
+                  style: TextStyle(fontSize: 13),
+                ),
+                SizedBox(height: 12),
+                Text(
+                  'Proporciones recomendadas:',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                SizedBox(height: 6),
+                _HarvardInfoRow(
+                  emoji: '🥗',
+                  seccion: '½ plato',
+                  desc:
+                      'Verduras y frutas variadas. Cuanto más variedad y color, mejor.',
+                ),
+                _HarvardInfoRow(
+                  emoji: '🌾',
+                  seccion: '¼ plato',
+                  desc:
+                      'Cereales integrales: avena, arroz integral, pasta integral, pan integral.',
+                ),
+                _HarvardInfoRow(
+                  emoji: '🫘',
+                  seccion: '¼ plato',
+                  desc:
+                      'Proteínas saludables: legumbres, pescado, pollo, huevos, frutos secos.',
+                ),
+                _HarvardInfoRow(
+                  emoji: '🫒',
+                  seccion: 'Aceites',
+                  desc:
+                      'Grasas saludables como el aceite de oliva virgen extra. Evitar trans.',
+                ),
+                _HarvardInfoRow(
+                  emoji: '💧',
+                  seccion: 'Bebidas',
+                  desc:
+                      'Agua como bebida principal. Infusiones y café sin azúcar.',
+                ),
+                SizedBox(height: 12),
+                Text(
+                  'Lo que el plato recomienda limitar:',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                SizedBox(height: 6),
+                _HarvardInfoRow(
+                  emoji: '🥩',
+                  seccion: 'Limitar',
+                  desc: 'Carne roja: máximo 1-2 veces por semana.',
+                ),
+                _HarvardInfoRow(
+                  emoji: '🌭',
+                  seccion: 'Evitar',
+                  desc: 'Carnes procesadas: embutidos, fiambres, salchichas.',
+                ),
+                _HarvardInfoRow(
+                  emoji: '🥤',
+                  seccion: 'Evitar',
+                  desc:
+                      'Bebidas azucaradas: refrescos, zumos industriales, bebidas energéticas.',
+                ),
+                _HarvardInfoRow(
+                  emoji: '🍞',
+                  seccion: 'Limitar',
+                  desc:
+                      'Cereales refinados: pan blanco, pasta blanca, arroz blanco.',
+                ),
+                SizedBox(height: 10),
+                Text(
+                  'Nota: esta evaluación es orientativa y basada en el recuento de alimentos clasificados. No tiene en cuenta cantidades ni gramajes.',
+                  style: TextStyle(fontSize: 11, color: Colors.black45),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Entendido'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return WillPopScope(
+      onWillPop: () async {
+        await _handleClose();
+        return false;
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: _handleClose,
+          ),
+          title: Text(_isEditing ? 'Editar alimento' : 'Nuevo alimento'),
+          actions: [
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: FilledButton.icon(
+                onPressed: _saving ? null : _save,
+                icon: _saving
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save),
+                label: const Text('Guardar'),
+              ),
+            ),
+          ],
+        ),
+        body: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 920),
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  TextField(
+                    controller: _nombreCtrl,
+                    minLines: 3,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      labelText: 'Nombre',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Card(
+                    margin: EdgeInsets.zero,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      side: BorderSide(color: Colors.grey.shade400),
+                    ),
+                    child: ExpansionTile(
+                      initiallyExpanded: _categoriasExpanded,
+                      onExpansionChanged: (expanded) {
+                        setState(() {
+                          _categoriasExpanded = expanded;
+                        });
+                        _saveExpandedPref('categorias', expanded);
+                      },
+                      shape: const Border(),
+                      collapsedShape: const Border(),
+                      tilePadding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 0),
+                      title: Row(
+                        children: [
+                          const Text(
+                            'Categorías',
+                            style: TextStyle(
+                                fontWeight: FontWeight.w600, fontSize: 14),
+                          ),
+                          const SizedBox(width: 6),
+                          _countBadge(
+                            _selectedGrupos.length,
+                            activeColor: Colors.green.shade600,
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            onPressed: () async {
+                              final picked = await _showSelectCategoriasDialog(
+                                Set<int>.from(_selectedGrupos),
+                              );
+                              if (picked == null) return;
+                              setState(() {
+                                _selectedGrupos
+                                  ..clear()
+                                  ..addAll(picked);
+                              });
+                            },
+                            tooltip: 'Seleccionar categorías',
+                            icon: const Icon(Icons.category_outlined, size: 18),
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                                minWidth: 24, minHeight: 24),
+                          ),
+                        ],
+                      ),
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                          child: SizedBox(
+                            height: 104,
+                            width: double.infinity,
+                            child: _selectedGrupos.isEmpty
+                                ? const Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Text('Sin categorías'),
+                                  )
+                                : Scrollbar(
+                                    thumbVisibility: true,
+                                    child: SingleChildScrollView(
+                                      child: Wrap(
+                                        spacing: 6,
+                                        runSpacing: 6,
+                                        children: widget.grupos
+                                            .where(
+                                              (g) =>
+                                                  g.codigo != null &&
+                                                  _selectedGrupos
+                                                      .contains(g.codigo),
+                                            )
+                                            .map(
+                                              (g) => Chip(
+                                                label: Text(g.nombre),
+                                                visualDensity:
+                                                    VisualDensity.compact,
+                                              ),
+                                            )
+                                            .toList(),
+                                      ),
+                                    ),
+                                  ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (widget.harvardCategorias.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    _buildHarvardSelector(),
+                  ],
+                  const SizedBox(height: 12),
+                  Card(
+                    margin: EdgeInsets.zero,
+                    child: ExpansionTile(
+                      initiallyExpanded: _activoOpcionExpanded,
+                      onExpansionChanged: (expanded) {
+                        setState(() {
+                          _activoOpcionExpanded = expanded;
+                        });
+                        _saveExpandedPref('activo_opcion', expanded);
+                      },
+                      tilePadding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 0),
+                      title: Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              'Activo/Opción',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                          _activeOptionTag(
+                            label: 'A',
+                            active: _activo,
+                            onTap: () => setState(() => _activo = !_activo),
+                          ),
+                          const SizedBox(width: 6),
+                          _activeOptionTag(
+                            label: 'O',
+                            active: _opcion,
+                            onTap: () => setState(() => _opcion = !_opcion),
+                          ),
+                        ],
+                      ),
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                          child: Column(
+                            children: [
+                              SwitchListTile(
+                                value: _activo,
+                                onChanged: (v) => setState(() => _activo = v),
+                                title: const Text('Activo'),
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                              SwitchListTile(
+                                value: _opcion,
+                                onChanged: (v) => setState(() => _opcion = v),
+                                title: const Text('Opción'),
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Card(
+                    margin: EdgeInsets.zero,
+                    child: ExpansionTile(
+                      initiallyExpanded: _observacionExpanded,
+                      onExpansionChanged: (expanded) {
+                        setState(() {
+                          _observacionExpanded = expanded;
+                        });
+                        _saveExpandedPref('observacion', expanded);
+                      },
+                      tilePadding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 0),
+                      title: Row(
+                        children: [
+                          const Text(
+                            'Observación',
+                            style: TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(width: 8),
+                          _countBadge(
+                            _obsCtrl.text.trim().length,
+                            activeColor: Colors.green.shade600,
+                          ),
+                        ],
+                      ),
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                          child: TextField(
+                            controller: _obsCtrl,
+                            maxLines: 4,
+                            onChanged: (_) => setState(() {}),
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 80),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

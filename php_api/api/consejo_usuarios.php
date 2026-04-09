@@ -24,6 +24,29 @@ $validator = new AutoValidator($db);
 $user = $validator->validate();
 PermissionManager::checkPermission($user, 'consejos');
 
+function should_include_full_cover_images() {
+    if (!isset($_GET['include_images'])) {
+        return true;
+    }
+
+    $value = strtolower(trim((string)$_GET['include_images']));
+    return !in_array($value, array('0', 'false', 'no', 'n'), true);
+}
+
+function encode_consejo_images(&$consejos, $include_full_cover_images = true) {
+    foreach ($consejos as &$consejo) {
+        if ($include_full_cover_images && !empty($consejo['imagen_portada'])) {
+            $consejo['imagen_portada'] = base64_encode($consejo['imagen_portada']);
+        } else {
+            $consejo['imagen_portada'] = null;
+        }
+
+        if (!empty($consejo['imagen_miniatura'])) {
+            $consejo['imagen_miniatura'] = base64_encode($consejo['imagen_miniatura']);
+        }
+    }
+}
+
 switch($request_method) {
     case 'GET':
         $limit = isset($_GET["limit"]) ? max(1, min(100, intval($_GET["limit"]))) : null;
@@ -283,6 +306,7 @@ function toggle_favorito() {
 
 function get_favoritos($usuario_codigo, $limit = null, $offset = 0) {
     global $db;
+    $include_full_cover_images = should_include_full_cover_images();
     
     $query = "SELECT c.codigo, c.titulo, c.texto, c.activo, c.fecha_inicio, c.fecha_fin,
               c.mostrar_portada, c.fecha_inicio_portada, c.fecha_fin_portada,
@@ -313,14 +337,7 @@ function get_favoritos($usuario_codigo, $limit = null, $offset = 0) {
     $consejos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
     // Convertir imágenes a base64
-    foreach($consejos as &$consejo) {
-        if($consejo['imagen_portada']) {
-            $consejo['imagen_portada'] = base64_encode($consejo['imagen_portada']);
-        }
-        if($consejo['imagen_miniatura']) {
-            $consejo['imagen_miniatura'] = base64_encode($consejo['imagen_miniatura']);
-        }
-    }
+    encode_consejo_images($consejos, $include_full_cover_images);
     
     ob_clean();
     echo json_encode($consejos);

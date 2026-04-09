@@ -6,6 +6,7 @@ import 'dart:io';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:image/image.dart' as img;
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/services/config_service.dart';
@@ -133,6 +134,7 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
   }
 
   Future<void> _pickAndCropImage(ImageSource source) async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       // Paso 1: Seleccionar imagen
       XFile? pickedFile;
@@ -168,7 +170,9 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Imagen guardada correctamente (${(fileSize / 1024).toStringAsFixed(1)}KB)',
+              l10n.profileImagePickerSaved(
+                (fileSize / 1024).toStringAsFixed(1),
+              ),
             ),
             backgroundColor: Colors.green,
             duration: const Duration(seconds: 2),
@@ -178,7 +182,7 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
     } catch (e) {
       if (mounted) {
         _showUserFriendlyError(
-          'Error al procesar la imagen',
+          l10n.profileImagePickerProcessError,
           technicalDetails: e.toString(),
         );
       }
@@ -293,6 +297,7 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
     String? technicalDetails,
     bool showDetail = false,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     final authService = Provider.of<AuthService>(context, listen: false);
     final configService = Provider.of<ConfigService>(context, listen: false);
     final isAdmin = authService.userType == 'Nutricionista' ||
@@ -306,11 +311,11 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
     if (configService.appMode == AppMode.debug &&
         isAdmin &&
         technicalDetails != null) {
-      displayMessage += '\n\nDetalles técnicos: $technicalDetails';
+      displayMessage +=
+          '\n\n${l10n.profileImagePickerTechnicalDetails}: $technicalDetails';
     } else if (!showDetail && technicalDetails != null) {
       // Para usuarios no admin o en producción, mensaje genérico
-      displayMessage = 'No se ha podido completar la operación. '
-          'Por favor, inténtalo de nuevo o contacta con soporte.';
+      displayMessage = l10n.profileImagePickerOperationFailed;
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -323,6 +328,7 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
   }
 
   void _showImageSourceDialog() {
+    final l10n = AppLocalizations.of(context)!;
     // En Windows, la cámara no está soportada por image_picker
     final bool isCameraAvailable =
         !kIsWeb && (Platform.isAndroid || Platform.isIOS);
@@ -330,14 +336,14 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Seleccionar imagen de perfil'),
+        title: Text(l10n.profileImagePickerDialogTitle),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             if (isCameraAvailable)
               ListTile(
                 leading: const Icon(Icons.camera_alt),
-                title: const Text('Tomar foto'),
+                title: Text(l10n.profileImagePickerTakePhoto),
                 onTap: () {
                   Navigator.pop(context);
                   _pickAndCropImage(ImageSource.camera);
@@ -346,7 +352,9 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
             ListTile(
               leading: const Icon(Icons.photo_library),
               title: Text(
-                isCameraAvailable ? 'Elegir de galería' : 'Seleccionar imagen',
+                isCameraAvailable
+                    ? l10n.profileImagePickerChooseFromGallery
+                    : l10n.profileImagePickerSelectImage,
               ),
               onTap: () {
                 Navigator.pop(context);
@@ -356,8 +364,8 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
             if (_imageBase64 != null)
               ListTile(
                 leading: const Icon(Icons.delete, color: Colors.red),
-                title: const Text(
-                  'Eliminar foto',
+                title: Text(
+                  l10n.profileImagePickerRemovePhoto,
                   style: TextStyle(color: Colors.red),
                 ),
                 onTap: () {
@@ -372,7 +380,7 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
         ),
         actions: [
           TextButton(
-            child: const Text('Cancelar'),
+            child: Text(l10n.commonCancel),
             onPressed: () => Navigator.pop(context),
           ),
         ],
@@ -382,6 +390,7 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Column(
       children: [
         Center(
@@ -437,13 +446,16 @@ class _ProfileImagePickerState extends State<ProfileImagePicker> {
         const SizedBox(height: 8),
         Center(
           child: Text(
-            'Selecciona tu imagen de perfil',
+            l10n.profileImagePickerPrompt,
             style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
           ),
         ),
         Center(
           child: Text(
-            'Máx. ${_maxImageWidth}x${_maxImageHeight}px',
+            l10n.profileImagePickerMaxDimensions(
+              _maxImageWidth,
+              _maxImageHeight,
+            ),
             style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
           ),
         ),

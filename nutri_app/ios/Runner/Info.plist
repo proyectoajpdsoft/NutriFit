@@ -22,6 +22,8 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>GADApplicationIdentifier</key>
+	<string>$(GAD_APPLICATION_IDENTIFIER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
@@ -72,5 +74,10 @@
 	<string>Esta aplicación necesita guardar fotos en la galería</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Esta aplicación necesita acceso al micrófono para grabar audio de las diapositivas</string>
+	<!-- Permiso para añadir eventos al calendario -->
+	<key>NSCalendarsUsageDescription</key>
+	<string>Esta aplicación necesita acceso al calendario para añadir citas</string>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+	<string>Esta aplicación necesita acceso al calendario para añadir citas</string>
 </dict>
 </plist>

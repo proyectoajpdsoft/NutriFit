@@ -11,7 +11,9 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:nutri_app/models/plan_fit.dart';
 import 'package:nutri_app/models/plan_fit_categoria.dart';
 import 'package:nutri_app/models/plan_fit_ejercicio.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:nutri_app/screens/contacto_nutricionista_screen.dart';
+import 'package:nutri_app/screens/planes_fit/plan_fit_ejercicio_catalog_edit_screen.dart';
 import 'package:nutri_app/screens/planes_fit/plan_fit_edit_screen.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
@@ -28,7 +30,28 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:super_clipboard/super_clipboard.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
+import '../../widgets/premium_feature_dialog_helper.dart';
+import '../../widgets/premium_upsell_card.dart';
+
 enum _OrdenCatalogo { usos, nombre, fechaAlta, categoria }
+
+enum _CatalogSearchField { all, title, instructions, hashtags }
+
+Future<void> _showPremiumRequiredForEjerciciosTools(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
+  return PremiumFeatureDialogHelper.show(
+    context,
+    message: l10n.exerciseCatalogPremiumToolsMessage,
+  );
+}
+
+Future<void> _showPremiumRequiredForEjerciciosVideo(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
+  return PremiumFeatureDialogHelper.show(
+    context,
+    message: l10n.exerciseCatalogPremiumVideoMessage,
+  );
+}
 
 class PlanFitEjerciciosCatalogScreen extends StatefulWidget {
   final bool openCreateDialog;
@@ -133,6 +156,8 @@ class _ImportAssistantStepCard extends StatelessWidget {
 
 class _PlanFitEjerciciosCatalogScreenState
     extends State<PlanFitEjerciciosCatalogScreen> {
+  static const String _paramNonPremiumPreviewCodes =
+      'codigos_ejercicios_no_premium';
   static const MethodChannel _externalUrlChannel =
       MethodChannel('nutri_app/external_url');
 
@@ -298,7 +323,7 @@ class _PlanFitEjerciciosCatalogScreenState
   final ApiService _apiService = ApiService();
   final TextEditingController _searchController = TextEditingController();
   late final ScrollController _listScrollController;
-  bool _loading = false;
+  bool _loading = true;
   List<PlanFitEjercicio> _items = [];
   List<PlanFitEjercicio> _displayedItems = [];
   List<PlanFitCategoria> _categorias = [];
@@ -308,11 +333,13 @@ class _PlanFitEjerciciosCatalogScreenState
   Set<int> _selectedCategoriaIds = {};
   bool? _filtroPremium; // null=todos, true=solo premium, false=no premium
   _OrdenCatalogo _ordenCatalogo = _OrdenCatalogo.usos;
+  _CatalogSearchField _searchField = _CatalogSearchField.all;
   bool _ordenAscendente = false;
   bool _loadingMore = false;
   bool _hasMore = true;
   int _currentPage = 1;
   String _aiPrompt = defaultPlanFitEjerciciosAIPrompt;
+  List<int>? _nonPremiumPreviewCodes;
 
   static const int _pageSize = 20;
 
@@ -320,6 +347,7 @@ class _PlanFitEjerciciosCatalogScreenState
   static const String _ordenCatalogoKey = 'plan_fit_catalog_orden';
   static const String _ordenCatalogoAscKey = 'plan_fit_catalog_orden_asc';
   static const String _searchKey = 'plan_fit_catalog_search';
+  static const String _searchFieldKey = 'plan_fit_catalog_search_field';
 
   @override
   void initState() {
@@ -333,6 +361,65 @@ class _PlanFitEjerciciosCatalogScreenState
     _listScrollController.dispose();
     _searchController.dispose();
     super.dispose();
+  }
+
+  bool get _canAccessFullCatalog {
+    final auth = context.read<AuthService>();
+    final userType = (auth.userType ?? '').toLowerCase().trim();
+    return auth.isPremium ||
+        userType == 'nutricionista' ||
+        userType == 'administrador';
+  }
+
+  bool get _isNonPremiumPreviewMode {
+    return widget.readOnly &&
+        widget.premiumVisibleOnly &&
+        !_canAccessFullCatalog;
+  }
+
+  List<int>? _parsePreviewCodes(String? rawValue) {
+    final raw =
+        (rawValue ?? '').trim().replaceAll(';', ',').replaceAll('|', ',');
+    if (raw.isEmpty) return null;
+
+    final codes = raw
+        .split(',')
+        .map((item) => int.tryParse(item.trim()))
+        .whereType<int>()
+        .where((value) => value > 0)
+        .toList(growable: false);
+
+    if (codes.isEmpty) return null;
+    return codes;
+  }
+
+  List<PlanFitEjercicio> _buildPreviewEjercicios(
+    List<PlanFitEjercicio> source,
+    List<int>? configuredCodes,
+  ) {
+    if (configuredCodes != null && configuredCodes.isNotEmpty) {
+      final byCode = <int, PlanFitEjercicio>{
+        for (final item in source)
+          if (item.codigo > 0) item.codigo: item,
+      };
+      final configuredItems = configuredCodes
+          .map((code) => byCode[code])
+          .whereType<PlanFitEjercicio>()
+          .toList(growable: false);
+      if (configuredItems.isNotEmpty) {
+        return configuredItems;
+      }
+    }
+
+    final preview = List<PlanFitEjercicio>.from(source);
+    preview.sort((a, b) => b.codigo.compareTo(a.codigo));
+    return preview.take(3).toList(growable: false);
+  }
+
+  String _catalogHighlightCount(int total) {
+    if (total <= 0) return '0';
+    if (total < 10) return '$total';
+    return '${total - (total % 10)}';
   }
 
   void _onScroll() {
@@ -369,6 +456,7 @@ class _PlanFitEjerciciosCatalogScreenState
     final storedPremium = prefs.getInt(_filtroPremiumKey);
     final storedOrden = prefs.getInt(_ordenCatalogoKey);
     final storedOrdenAsc = prefs.getBool(_ordenCatalogoAscKey);
+    final storedSearchField = prefs.getInt(_searchFieldKey);
     final filtroPremium = storedPremium == null || storedPremium == -1
         ? null
         : storedPremium == 1;
@@ -377,6 +465,11 @@ class _PlanFitEjerciciosCatalogScreenState
             storedOrden < _OrdenCatalogo.values.length
         ? _OrdenCatalogo.values[storedOrden]
         : _OrdenCatalogo.usos;
+    final searchField = storedSearchField != null &&
+            storedSearchField >= 0 &&
+            storedSearchField < _CatalogSearchField.values.length
+        ? _CatalogSearchField.values[storedSearchField]
+        : _CatalogSearchField.all;
     final ordenAscendente = storedOrdenAsc ?? false;
     if (mounted) {
       setState(() {
@@ -388,6 +481,7 @@ class _PlanFitEjerciciosCatalogScreenState
             .toSet();
         _filtroPremium = filtroPremium;
         _ordenCatalogo = ordenCatalogo;
+        _searchField = searchField;
         _ordenAscendente = ordenAscendente;
       });
     }
@@ -405,6 +499,7 @@ class _PlanFitEjerciciosCatalogScreenState
       _filtroPremiumKey,
       _filtroPremium == null ? -1 : (_filtroPremium! ? 1 : 0),
     );
+    await prefs.setInt(_searchFieldKey, _searchField.index);
     await prefs.setInt(_ordenCatalogoKey, _ordenCatalogo.index);
     await prefs.setBool(_ordenCatalogoAscKey, _ordenAscendente);
   }
@@ -1401,6 +1496,7 @@ class _PlanFitEjerciciosCatalogScreenState
   }
 
   void _loadMore() {
+    if (_isNonPremiumPreviewMode) return;
     if (_loadingMore || !_hasMore) return;
     setState(() => _loadingMore = true);
 
@@ -1426,6 +1522,11 @@ class _PlanFitEjerciciosCatalogScreenState
   }
 
   Future<void> _toggleSearchVisibility() async {
+    if (_isNonPremiumPreviewMode) {
+      await _showPremiumRequiredForEjerciciosTools(context);
+      return;
+    }
+
     setState(() {
       _showFilters = !_showFilters;
       if (!_showFilters) {
@@ -1437,6 +1538,11 @@ class _PlanFitEjerciciosCatalogScreenState
   }
 
   Future<void> _toggleFilters({required bool isNutricionista}) async {
+    if (_isNonPremiumPreviewMode) {
+      await _showPremiumRequiredForEjerciciosTools(context);
+      return;
+    }
+
     await _showFiltrarEjerciciosDialog(isNutricionista: isNutricionista);
   }
 
@@ -1510,11 +1616,12 @@ class _PlanFitEjerciciosCatalogScreenState
   Future<void> _loadData() async {
     setState(() => _loading = true);
     try {
-      final userType =
-          (context.read<AuthService>().userType ?? '').toLowerCase().trim();
+      final authService = context.read<AuthService>();
+      final userType = (authService.userType ?? '').toLowerCase().trim();
       final isNutricionista =
           userType == 'nutricionista' || userType == 'administrador';
-      final isPremium = userType == 'premium';
+      final isPremium = authService.isPremium;
+      final isPreviewMode = _isNonPremiumPreviewMode;
       List<PlanFitCategoria> categorias = <PlanFitCategoria>[];
       var counts = <int, int>{};
 
@@ -1547,7 +1654,15 @@ class _PlanFitEjerciciosCatalogScreenState
       }
 
       List<PlanFitEjercicio> ejercicios;
+      final previewCodesFuture = isPreviewMode
+          ? _apiService
+              .getParametroValor(_paramNonPremiumPreviewCodes)
+              .then(_parsePreviewCodes)
+              .catchError((_) => null)
+          : Future<List<int>?>.value(null);
       final search = _searchController.text.trim();
+      final backendSearch =
+          _searchField == _CatalogSearchField.title ? search : '';
       // widget.premiumVisibleOnly overrides the filter (guest/public view)
       final premiumOnly = widget.premiumVisibleOnly || _filtroPremium == true;
       final filterNonPremium =
@@ -1560,7 +1675,7 @@ class _PlanFitEjerciciosCatalogScreenState
           effectiveSelectedCategoriaIds.map(
             (id) => _apiService.getCatalogByCategoria(
               id,
-              search: search,
+              search: backendSearch,
               premiumVisibleOnly: premiumOnly,
             ),
           ),
@@ -1574,7 +1689,7 @@ class _PlanFitEjerciciosCatalogScreenState
         ejercicios = merged.values.toList();
       } else {
         ejercicios = await _apiService.getPlanFitEjerciciosCatalog(
-          search: search,
+          search: backendSearch,
           premiumVisibleOnly: premiumOnly,
         );
       }
@@ -1589,25 +1704,31 @@ class _PlanFitEjerciciosCatalogScreenState
       if (search.isNotEmpty) {
         final query = search.toLowerCase();
         ejercicios = ejercicios
-            .where((ejercicio) => _buildSearchText(ejercicio).contains(query))
+            .where((ejercicio) => _matchesSearch(ejercicio, query))
             .toList();
       }
 
       final sortedEjercicios = await _sortEjercicios(ejercicios);
+      final previewCodes = await previewCodesFuture;
       setState(() {
         _categorias = categorias;
         _ejerciciosPorCategoria = counts;
         if (!isNutricionista && !isPremium) {
           _selectedCategoriaIds = <int>{};
         }
+        _nonPremiumPreviewCodes = previewCodes;
         _items = sortedEjercicios;
-        _displayedItems = [];
+        _displayedItems = isPreviewMode
+            ? _buildPreviewEjercicios(sortedEjercicios, previewCodes)
+            : <PlanFitEjercicio>[];
         _currentPage = 1;
-        _hasMore = sortedEjercicios.isNotEmpty;
+        _hasMore = isPreviewMode ? false : sortedEjercicios.isNotEmpty;
         _loadingMore = false;
         _loading = false;
       });
-      _loadMore();
+      if (!isPreviewMode) {
+        _loadMore();
+      }
     } catch (e) {
       setState(() => _loading = false);
       if (mounted) {
@@ -1623,13 +1744,36 @@ class _PlanFitEjerciciosCatalogScreenState
     }
   }
 
-  String _buildSearchText(PlanFitEjercicio ejercicio) {
-    return [
-      ejercicio.nombre,
-      ejercicio.instrucciones ?? '',
-      ejercicio.instruccionesDetalladas ?? '',
-      ejercicio.hashtag ?? '',
-    ].join(' ').toLowerCase();
+  bool _matchesSearch(PlanFitEjercicio ejercicio, String query) {
+    if (query.trim().isEmpty) {
+      return true;
+    }
+
+    return _buildSearchText(ejercicio, _searchField).contains(query);
+  }
+
+  String _buildSearchText(
+    PlanFitEjercicio ejercicio,
+    _CatalogSearchField field,
+  ) {
+    switch (field) {
+      case _CatalogSearchField.all:
+        return [
+          ejercicio.nombre,
+          ejercicio.instrucciones ?? '',
+          ejercicio.instruccionesDetalladas ?? '',
+          ejercicio.hashtag ?? '',
+        ].join(' ').toLowerCase();
+      case _CatalogSearchField.title:
+        return ejercicio.nombre.toLowerCase();
+      case _CatalogSearchField.instructions:
+        return [
+          ejercicio.instrucciones ?? '',
+          ejercicio.instruccionesDetalladas ?? '',
+        ].join(' ').toLowerCase();
+      case _CatalogSearchField.hashtags:
+        return (ejercicio.hashtag ?? '').toLowerCase();
+    }
   }
 
   List<String> _extractHashtags(String rawText) {
@@ -1653,6 +1797,7 @@ class _PlanFitEjerciciosCatalogScreenState
     _searchController.text = normalized;
     setState(() {
       _showFilters = true;
+      _searchField = _CatalogSearchField.hashtags;
     });
     await _saveFilterState();
     await _loadData();
@@ -2006,20 +2151,65 @@ class _PlanFitEjerciciosCatalogScreenState
   Widget _buildFiltersPanel() {
     if (!_showFilters) return const SizedBox.shrink();
 
+    final l10n = AppLocalizations.of(context)!;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(0, 0, 0, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          Text(
+            l10n.exerciseCatalogSearchFieldLabel,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              (_CatalogSearchField.all, l10n.exerciseCatalogSearchFieldAll),
+              (
+                _CatalogSearchField.title,
+                l10n.exerciseCatalogSearchFieldTitle,
+              ),
+              (
+                _CatalogSearchField.instructions,
+                l10n.exerciseCatalogSearchFieldInstructions,
+              ),
+              (
+                _CatalogSearchField.hashtags,
+                l10n.exerciseCatalogSearchFieldHashtags,
+              ),
+            ].map((entry) {
+              final field = entry.$1;
+              final label = entry.$2;
+              return ChoiceChip(
+                label: Text(label),
+                selected: _searchField == field,
+                onSelected: (selected) {
+                  if (!selected) return;
+                  setState(() {
+                    _searchField = field;
+                  });
+                  _saveFilterState();
+                  _loadData();
+                },
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 8),
           // Search
           TextField(
             controller: _searchController,
             decoration: InputDecoration(
-              labelText: 'Buscar',
+              labelText: l10n.exerciseCatalogSearchLabel,
+              hintText: l10n.exerciseCatalogSearchHint,
               border: const OutlineInputBorder(),
               isDense: true,
               prefixIcon: IconButton(
-                tooltip: 'Borrar búsqueda',
+                tooltip: l10n.exerciseCatalogClearSearch,
                 icon: Icon(
                   _searchController.text.trim().isEmpty
                       ? Icons.search
@@ -2034,7 +2224,7 @@ class _PlanFitEjerciciosCatalogScreenState
                       },
               ),
               suffixIcon: IconButton(
-                tooltip: 'Ocultar búsqueda',
+                tooltip: l10n.exerciseCatalogHideSearch,
                 icon: const Icon(Icons.visibility_off_outlined),
                 onPressed: () async {
                   await _toggleSearchVisibility();
@@ -2982,985 +3172,18 @@ class _PlanFitEjerciciosCatalogScreenState
   }
 
   Future<void> _openEjercicioDialog({PlanFitEjercicio? ejercicio}) async {
-    final isEditing = ejercicio != null;
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (context) => PlanFitEjercicioCatalogEditScreen(
+          ejercicio: ejercicio,
+          categorias: _categorias,
+        ),
+      ),
+    );
 
-    // Si estamos editando y no tiene foto completa, cargarla del servidor
-    if (isEditing &&
-        (ejercicio.fotoBase64 == null || ejercicio.fotoBase64!.isEmpty)) {
-      try {
-        final ejercicioConFoto = await _apiService
-            .getPlanFitEjercicioCatalogWithFoto(ejercicio.codigo);
-        if (ejercicioConFoto != null) {
-          ejercicio = ejercicioConFoto;
-        }
-      } catch (e) {
-        // debugPrint('Error al cargar foto completa: $e');
-        // Continuar con el ejercicio sin foto
-      }
+    if (saved == true) {
+      await _loadData();
     }
-
-    final nombreController = TextEditingController(
-      text: ejercicio?.nombre ?? '',
-    );
-    final instruccionesController = TextEditingController(
-      text: ejercicio?.instrucciones ?? '',
-    );
-    final instruccionesDetalladasController = TextEditingController(
-      text: ejercicio?.instruccionesDetalladas ?? '',
-    );
-    final hashtagController = TextEditingController(
-      text: ejercicio?.hashtag ?? '',
-    );
-    final urlController = TextEditingController(
-      text: ejercicio?.urlVideo ?? '',
-    );
-    final tiempoController = TextEditingController(
-      text: (ejercicio?.tiempo ?? 0).toString(),
-    );
-    final descansoController = TextEditingController(
-      text: (ejercicio?.descanso ?? 0).toString(),
-    );
-    final repeticionesController = TextEditingController(
-      text: (ejercicio?.repeticiones ?? 0).toString(),
-    );
-    final kilosController = TextEditingController(
-      text: (ejercicio?.kilos ?? 0).toString(),
-    );
-    bool visiblePremium = (ejercicio?.visiblePremium ?? 'N') == 'S';
-
-    bool hasChanges = false;
-    PlatformFile? pickedFoto;
-    bool removeFoto = false;
-    var showNombreError = false;
-    const catalogCardPfx = 'ejercicio_catalog_card_';
-    final catalogPrefs = await SharedPreferences.getInstance();
-    final isDesktopDefault = _isDesktopPlatform(defaultTargetPlatform);
-    bool categoriasExpanded =
-        catalogPrefs.getBool('${catalogCardPfx}categorias') ?? isDesktopDefault;
-    bool instruccionesExpanded =
-        catalogPrefs.getBool('${catalogCardPfx}instrucciones') ??
-            isDesktopDefault;
-    bool instruccionesDetalladasExpanded =
-        catalogPrefs.getBool('${catalogCardPfx}instrucciones_detalladas') ??
-            false;
-    bool urlExpanded =
-        catalogPrefs.getBool('${catalogCardPfx}url') ?? isDesktopDefault;
-
-    final selectedCategorias = <int>{};
-
-    if (isEditing) {
-      try {
-        final categorias = await _apiService.getEjercicioCategorias(
-          ejercicio!.codigo,
-        );
-        selectedCategorias.addAll(categorias.map((cat) => cat.codigo));
-      } catch (e) {
-        if (mounted) {
-          final errorMessage = e.toString().replaceFirst('Exception: ', '');
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error al cargar categorías. $errorMessage'),
-              backgroundColor: Colors.red,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-      }
-    }
-
-    await showDialog(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setStateDialog) {
-            Future<Set<int>?> showSelectCategoriasDialog(
-              Set<int> initialSelected,
-            ) async {
-              final temp = Set<int>.from(initialSelected);
-              String searchQuery = '';
-              bool showSearch = false;
-
-              return showDialog<Set<int>>(
-                context: context,
-                builder: (dialogContext) => StatefulBuilder(
-                  builder: (dialogContext, setDialog) {
-                    final filtered = _categorias
-                        .where((categoria) =>
-                            searchQuery.isEmpty ||
-                            categoria.nombre
-                                .toLowerCase()
-                                .contains(searchQuery.toLowerCase()))
-                        .toList();
-
-                    return AlertDialog(
-                      title: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Expanded(
-                            child: Text(
-                              'Seleccionar categorías',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: 16),
-                            ),
-                          ),
-                          IconButton(
-                            icon: Icon(
-                                showSearch ? Icons.search_off : Icons.search),
-                            tooltip: showSearch
-                                ? 'Ocultar buscar'
-                                : 'Mostrar buscar',
-                            onPressed: () {
-                              setDialog(() {
-                                showSearch = !showSearch;
-                                if (!showSearch) {
-                                  searchQuery = '';
-                                }
-                              });
-                            },
-                            style: IconButton.styleFrom(
-                              shape: const CircleBorder(),
-                              backgroundColor: showSearch
-                                  ? Colors.blue.shade50
-                                  : Colors.grey.shade200,
-                              foregroundColor: showSearch
-                                  ? Colors.blue.shade700
-                                  : Colors.black87,
-                              padding: const EdgeInsets.all(8),
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.close),
-                            onPressed: () => Navigator.pop(dialogContext),
-                            style: IconButton.styleFrom(
-                              shape: const CircleBorder(),
-                              backgroundColor: Colors.grey.shade200,
-                              foregroundColor: Colors.black87,
-                              padding: const EdgeInsets.all(8),
-                            ),
-                          ),
-                        ],
-                      ),
-                      content: SizedBox(
-                        width: 360,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (showSearch) ...[
-                              const SizedBox(height: 12),
-                              TextField(
-                                onChanged: (value) {
-                                  setDialog(() {
-                                    searchQuery = value;
-                                  });
-                                },
-                                decoration: InputDecoration(
-                                  hintText: 'Buscar categoría...',
-                                  prefixIcon:
-                                      const Icon(Icons.search, size: 20),
-                                  suffixIcon: searchQuery.isNotEmpty
-                                      ? GestureDetector(
-                                          onTap: () {
-                                            setDialog(() {
-                                              searchQuery = '';
-                                            });
-                                          },
-                                          child:
-                                              const Icon(Icons.clear, size: 20),
-                                        )
-                                      : null,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 8),
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  isDense: true,
-                                ),
-                              ),
-                            ],
-                            const SizedBox(height: 12),
-                            Flexible(
-                              child: SingleChildScrollView(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: filtered
-                                      .map(
-                                        (categoria) => CheckboxListTile(
-                                          dense: true,
-                                          value:
-                                              temp.contains(categoria.codigo),
-                                          title: Text(categoria.nombre),
-                                          controlAffinity:
-                                              ListTileControlAffinity.leading,
-                                          onChanged: (checked) {
-                                            setDialog(() {
-                                              if (checked == true) {
-                                                temp.add(categoria.codigo);
-                                              } else {
-                                                temp.remove(categoria.codigo);
-                                              }
-                                            });
-                                          },
-                                        ),
-                                      )
-                                      .toList(),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () {
-                            setDialog(() {
-                              temp.clear();
-                            });
-                          },
-                          child: const Text('Limpiar'),
-                        ),
-                        FilledButton(
-                          onPressed: () => Navigator.pop(dialogContext, temp),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Text('Aplicar'),
-                              const SizedBox(width: 6),
-                              _buildCountCircleBadge(temp.length),
-                            ],
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-              );
-            }
-
-            Future<bool> saveDialog({required bool closeOnSuccess}) async {
-              final nombre = nombreController.text.trim();
-              if (nombre.isEmpty) {
-                setStateDialog(() {
-                  showNombreError = true;
-                });
-                return false;
-              }
-              final instruccionesText = instruccionesController.text.trim();
-              final instruccionesDetalladasText =
-                  instruccionesDetalladasController.text.trim();
-              final hashtagText = hashtagController.text.trim();
-
-              final nuevo = PlanFitEjercicio(
-                codigo: ejercicio?.codigo ?? 0,
-                codigoPlanFit: 0,
-                nombre: nombre,
-                instrucciones:
-                    instruccionesText.isNotEmpty ? instruccionesText : null,
-                instruccionesDetalladas: instruccionesDetalladasText.isNotEmpty
-                    ? instruccionesDetalladasText
-                    : null,
-                hashtag: hashtagText.isNotEmpty ? hashtagText : null,
-                urlVideo: urlController.text.trim(),
-                tiempo: _parseInt(tiempoController.text, 0),
-                descanso: _parseInt(descansoController.text, 0),
-                repeticiones: _parseInt(repeticionesController.text, 0),
-                kilos: _parseInt(kilosController.text, 0),
-                orden: 0,
-                visiblePremium: visiblePremium ? 'S' : 'N',
-              );
-
-              try {
-                Uint8List? fotoBytes;
-                String? fotoName;
-                Uint8List? miniaturaBytes;
-
-                if (pickedFoto != null) {
-                  fotoName = pickedFoto!.name;
-                  if (pickedFoto!.bytes != null) {
-                    fotoBytes = pickedFoto!.bytes;
-                  } else if (pickedFoto!.path != null) {
-                    fotoBytes = await File(pickedFoto!.path!).readAsBytes();
-                  }
-                } else if (isEditing &&
-                    !removeFoto &&
-                    (ejercicio?.fotoMiniatura == null ||
-                        ejercicio!.fotoMiniatura!.isEmpty) &&
-                    ejercicio?.fotoBase64 != null &&
-                    ejercicio!.fotoBase64!.isNotEmpty) {
-                  try {
-                    final fotoExistente = base64Decode(ejercicio.fotoBase64!);
-                    miniaturaBytes = ThumbnailGenerator.generateThumbnail(
-                      fotoExistente,
-                    );
-                  } catch (e) {}
-                }
-
-                if (isEditing) {
-                  await _apiService.updateCatalogEjercicio(
-                    nuevo,
-                    fotoBytes: fotoBytes,
-                    fotoName: fotoName,
-                    removeFoto: removeFoto,
-                    categorias: selectedCategorias.toList(),
-                    miniaturaBytes: miniaturaBytes,
-                  );
-                } else {
-                  final codigoCreado = await _apiService.createCatalogEjercicio(
-                    nuevo,
-                    fotoBytes: fotoBytes,
-                    fotoName: fotoName,
-                    categorias: selectedCategorias.toList(),
-                  );
-                  if (codigoCreado == 0) {
-                    throw Exception(
-                      'No se pudo crear el ejercicio en el catálogo',
-                    );
-                  }
-                }
-
-                hasChanges = false;
-                if (closeOnSuccess && context.mounted) {
-                  Navigator.pop(context);
-                }
-                await _loadData();
-                return true;
-              } catch (e) {
-                if (context.mounted) {
-                  final errorText = e.toString().toLowerCase();
-                  String title = 'Error al guardar';
-                  String message =
-                      'No se pudo guardar el ejercicio. Intentalo de nuevo.';
-
-                  if (errorText.contains('ya existe') ||
-                      errorText.contains('duplicate') ||
-                      errorText.contains('duplicad') ||
-                      errorText.contains('unique')) {
-                    title = 'Ejercicio duplicado';
-                    message = 'Ya existe un ejercicio con ese nombre.';
-                  } else if (errorText.contains('403') ||
-                      errorText.contains('forbidden')) {
-                    if (!isEditing && pickedFoto != null) {
-                      title = 'Error al subir imagen';
-                      message =
-                          'No se pudo subir la imagen del ejercicio. Prueba con otra imagen o guarda sin imagen. Si el ejercicio ya se creo, puedes editarlo para adjuntar la imagen.';
-                    } else {
-                      title = 'Permisos insuficientes';
-                      message =
-                          'No tienes permisos para modificar este ejercicio del catalogo. Si eres nutricionista, solicita a un administrador que habilite estos permisos.';
-                    }
-                  }
-
-                  showDialog(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      title: Text(title),
-                      content: Text(message),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('Aceptar'),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-                return false;
-              }
-            }
-
-            Future<bool> confirmDiscardChanges() async {
-              if (!hasChanges) return true;
-              return showUnsavedChangesDialog(
-                context,
-                onSave: () => saveDialog(closeOnSuccess: false),
-              );
-            }
-
-            Widget buildExpandableCard({
-              required String title,
-              required int count,
-              required bool expanded,
-              required VoidCallback onToggle,
-              required Widget child,
-            }) {
-              return Card(
-                margin: EdgeInsets.zero,
-                clipBehavior: Clip.antiAlias,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        onTap: onToggle,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 14,
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  title,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                              _buildCountCircleBadge(count),
-                              const SizedBox(width: 8),
-                              Icon(
-                                expanded
-                                    ? Icons.expand_less
-                                    : Icons.expand_more,
-                                size: 20,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    AnimatedCrossFade(
-                      firstChild: const SizedBox.shrink(),
-                      secondChild: Padding(
-                        padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-                        child: child,
-                      ),
-                      crossFadeState: expanded
-                          ? CrossFadeState.showSecond
-                          : CrossFadeState.showFirst,
-                      duration: const Duration(milliseconds: 180),
-                      sizeCurve: Curves.easeInOut,
-                    ),
-                  ],
-                ),
-              );
-            }
-
-            return PopScope(
-              canPop: false,
-              onPopInvoked: (didPop) async {
-                if (didPop) return;
-
-                if (hasChanges) {
-                  final shouldPop = await confirmDiscardChanges();
-                  if (shouldPop && context.mounted) {
-                    Navigator.pop(context);
-                  }
-                } else {
-                  if (context.mounted) {
-                    Navigator.pop(context);
-                  }
-                }
-              },
-              child: AlertDialog(
-                insetPadding: EdgeInsets.symmetric(
-                  horizontal:
-                      _isDesktopPlatform(Theme.of(context).platform) ? 56 : 10,
-                  vertical: 16,
-                ),
-                titlePadding: const EdgeInsets.fromLTRB(16, 10, 8, 0),
-                title: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        isEditing ? 'Editar ejercicio' : 'Nuevo ejercicio',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Cerrar',
-                      onPressed: () async {
-                        if (hasChanges) {
-                          if (await confirmDiscardChanges()) {
-                            if (context.mounted) {
-                              Navigator.pop(context);
-                            }
-                          }
-                        } else {
-                          if (context.mounted) {
-                            Navigator.pop(context);
-                          }
-                        }
-                      },
-                      icon: const Icon(Icons.close, size: 18),
-                      style: IconButton.styleFrom(
-                        shape: const CircleBorder(),
-                        minimumSize: const Size(34, 34),
-                        padding: EdgeInsets.zero,
-                      ),
-                    ),
-                  ],
-                ),
-                content: SingleChildScrollView(
-                  child: Builder(builder: (context) {
-                    final platform = Theme.of(context).platform;
-                    final isDesktopForm = _isDesktopPlatform(platform);
-
-                    final numericFields = [
-                      _buildLongPressNumberField(
-                        label: 'Tiempo',
-                        controller: tiempoController,
-                        setStateDialog: setStateDialog,
-                        hasChangesSetter: () => hasChanges = true,
-                        min: 0,
-                        max: 3600,
-                        labelIcon: Icons.schedule,
-                      ),
-                      _buildLongPressNumberField(
-                        label: 'Descanso',
-                        controller: descansoController,
-                        setStateDialog: setStateDialog,
-                        hasChangesSetter: () => hasChanges = true,
-                        min: 0,
-                        max: 3600,
-                        labelIcon: Icons.bedtime_outlined,
-                      ),
-                      _buildLongPressNumberField(
-                        label: 'Repeticiones',
-                        controller: repeticionesController,
-                        setStateDialog: setStateDialog,
-                        hasChangesSetter: () => hasChanges = true,
-                        min: 0,
-                        max: 999,
-                        labelIcon: Icons.repeat,
-                      ),
-                      _buildLongPressNumberField(
-                        label: 'Peso',
-                        controller: kilosController,
-                        setStateDialog: setStateDialog,
-                        hasChangesSetter: () => hasChanges = true,
-                        min: 0,
-                        max: 999,
-                        labelIcon: Icons.fitness_center_outlined,
-                      ),
-                    ];
-
-                    return Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        TextField(
-                          controller: nombreController,
-                          minLines: 2,
-                          maxLines: 2,
-                          decoration: const InputDecoration(
-                            labelText: 'Nombre',
-                            border: OutlineInputBorder(),
-                            contentPadding: EdgeInsets.fromLTRB(12, 16, 12, 12),
-                          ).copyWith(
-                            errorText: showNombreError
-                                ? 'Por favor, introduzca el nombre'
-                                : null,
-                          ),
-                          onChanged: (_) => setStateDialog(() {
-                            hasChanges = true;
-                            if (showNombreError) {
-                              showNombreError =
-                                  nombreController.text.trim().isEmpty;
-                            }
-                          }),
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: hashtagController,
-                          maxLength: 300,
-                          decoration: const InputDecoration(
-                            labelText: 'Hashtag',
-                            hintText: '#fuerza #core #movilidad',
-                            border: OutlineInputBorder(),
-                            contentPadding: EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 12),
-                          ),
-                          onChanged: (_) => setStateDialog(() {
-                            hasChanges = true;
-                          }),
-                        ),
-                        const SizedBox(height: 12),
-                        if (isDesktopForm)
-                          Column(
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(child: numericFields[0]),
-                                  const SizedBox(width: 12),
-                                  Expanded(child: numericFields[1]),
-                                ],
-                              ),
-                              const SizedBox(height: 12),
-                              Row(
-                                children: [
-                                  Expanded(child: numericFields[2]),
-                                  const SizedBox(width: 12),
-                                  Expanded(child: numericFields[3]),
-                                ],
-                              ),
-                            ],
-                          )
-                        else
-                          Column(
-                            children: [
-                              numericFields[0],
-                              const SizedBox(height: 12),
-                              numericFields[1],
-                              const SizedBox(height: 12),
-                              numericFields[2],
-                              const SizedBox(height: 12),
-                              numericFields[3],
-                            ],
-                          ),
-                        const SizedBox(height: 12),
-                        Card(
-                          margin: EdgeInsets.zero,
-                          child: SwitchListTile.adaptive(
-                            value: visiblePremium,
-                            onChanged: (value) {
-                              setStateDialog(() {
-                                visiblePremium = value;
-                                hasChanges = true;
-                              });
-                            },
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 2,
-                            ),
-                            title: const Text(
-                              'Visible Premium',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Card(
-                          margin: EdgeInsets.zero,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            side: BorderSide(color: Colors.grey.shade400),
-                          ),
-                          child: ExpansionTile(
-                            initiallyExpanded: categoriasExpanded,
-                            onExpansionChanged: (expanded) {
-                              setStateDialog(() {
-                                categoriasExpanded = expanded;
-                              });
-                              catalogPrefs.setBool(
-                                  '${catalogCardPfx}categorias', expanded);
-                            },
-                            shape: const Border(),
-                            collapsedShape: const Border(),
-                            tilePadding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 0),
-                            title: Row(
-                              children: [
-                                const Text(
-                                  'Categorías',
-                                  style: TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 14),
-                                ),
-                                const SizedBox(width: 6),
-                                _buildCountCircleBadge(
-                                  selectedCategorias.length,
-                                ),
-                                const Spacer(),
-                                IconButton(
-                                  onPressed: () async {
-                                    final temp =
-                                        Set<int>.from(selectedCategorias);
-                                    final picked =
-                                        await showSelectCategoriasDialog(temp);
-                                    if (picked == null) return;
-                                    setStateDialog(() {
-                                      hasChanges = true;
-                                      selectedCategorias
-                                        ..clear()
-                                        ..addAll(picked);
-                                    });
-                                  },
-                                  tooltip: 'Seleccionar categorías',
-                                  icon: const Icon(Icons.category_outlined,
-                                      size: 18),
-                                  visualDensity: VisualDensity.compact,
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(
-                                      minWidth: 24, minHeight: 24),
-                                ),
-                              ],
-                            ),
-                            children: [
-                              Padding(
-                                padding:
-                                    const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                                child: SizedBox(
-                                  height: 56,
-                                  width: double.infinity,
-                                  child: selectedCategorias.isEmpty
-                                      ? const Align(
-                                          alignment: Alignment.centerLeft,
-                                          child: Text('Sin categorías'),
-                                        )
-                                      : Scrollbar(
-                                          thumbVisibility: true,
-                                          child: SingleChildScrollView(
-                                            child: Wrap(
-                                              spacing: 6,
-                                              runSpacing: 6,
-                                              children: _categorias
-                                                  .where((cat) =>
-                                                      selectedCategorias
-                                                          .contains(cat.codigo))
-                                                  .map(
-                                                    (cat) => Chip(
-                                                      label: Text(cat.nombre),
-                                                      visualDensity:
-                                                          VisualDensity.compact,
-                                                    ),
-                                                  )
-                                                  .toList(),
-                                            ),
-                                          ),
-                                        ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        buildExpandableCard(
-                          title: 'Instrucciones',
-                          count: instruccionesController.text.length,
-                          expanded: instruccionesExpanded,
-                          onToggle: () {
-                            setStateDialog(() {
-                              instruccionesExpanded = !instruccionesExpanded;
-                            });
-                            catalogPrefs.setBool(
-                                '${catalogCardPfx}instrucciones',
-                                instruccionesExpanded);
-                          },
-                          child: TextField(
-                            controller: instruccionesController,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              hintText: 'Escribe las instrucciones',
-                            ),
-                            maxLines: 4,
-                            onChanged: (_) => setStateDialog(() {
-                              hasChanges = true;
-                            }),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        buildExpandableCard(
-                          title: 'Cómo se hace',
-                          count: instruccionesDetalladasController.text.length,
-                          expanded: instruccionesDetalladasExpanded,
-                          onToggle: () {
-                            setStateDialog(() {
-                              instruccionesDetalladasExpanded =
-                                  !instruccionesDetalladasExpanded;
-                            });
-                            catalogPrefs.setBool(
-                                '${catalogCardPfx}instrucciones_detalladas',
-                                instruccionesDetalladasExpanded);
-                          },
-                          child: TextField(
-                            controller: instruccionesDetalladasController,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              hintText:
-                                  'Escribe instrucciones detalladas (pasos, técnica, consejos, etc)',
-                            ),
-                            maxLines: 8,
-                            onChanged: (_) => setStateDialog(() {
-                              hasChanges = true;
-                            }),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Card(
-                          margin: EdgeInsets.zero,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            side: BorderSide(color: Colors.grey.shade400),
-                          ),
-                          child: ExpansionTile(
-                            initiallyExpanded: urlExpanded,
-                            onExpansionChanged: (expanded) {
-                              setStateDialog(() {
-                                urlExpanded = expanded;
-                              });
-                              catalogPrefs.setBool(
-                                  '${catalogCardPfx}url', expanded);
-                            },
-                            shape: const Border(),
-                            collapsedShape: const Border(),
-                            tilePadding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 0),
-                            title: Row(
-                              children: [
-                                const Expanded(
-                                  child: Text(
-                                    'URL del video',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                ),
-                                IconButton(
-                                  onPressed: urlController.text.trim().isEmpty
-                                      ? null
-                                      : () async {
-                                          await _launchUrlExternal(
-                                            urlController.text.trim(),
-                                          );
-                                        },
-                                  tooltip: 'Ir a la URL',
-                                  icon: const Icon(
-                                    Icons.open_in_new,
-                                    size: 18,
-                                  ),
-                                  visualDensity: VisualDensity.compact,
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(
-                                    minWidth: 24,
-                                    minHeight: 24,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            children: [
-                              Padding(
-                                padding:
-                                    const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                                child: TextField(
-                                  controller: urlController,
-                                  decoration: const InputDecoration(
-                                    border: OutlineInputBorder(),
-                                    hintText: 'https://... ',
-                                  ),
-                                  onChanged: (_) => setStateDialog(() {
-                                    hasChanges = true;
-                                  }),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        _buildPhotoThumbnailCatalog(
-                          hasFoto: (ejercicio?.fotoMiniatura ??
-                                      ejercicio?.fotoBase64 ??
-                                      '')
-                                  .isNotEmpty ||
-                              pickedFoto != null,
-                          fotoBytes: pickedFoto?.bytes,
-                          fotoPath: pickedFoto?.path,
-                          fotoMiniatura: ejercicio?.fotoMiniatura ?? '',
-                          fotoBase64: ejercicio?.fotoBase64 ?? '',
-                          isFotoCatalog: pickedFoto == null &&
-                              ((ejercicio?.fotoMiniatura ??
-                                      ejercicio?.fotoBase64 ??
-                                      '')
-                                  .isNotEmpty),
-                          removeFoto: removeFoto,
-                          onAddOrChange: () async {
-                            final result = await FilePicker.platform.pickFiles(
-                              type: FileType.image,
-                              withData: true,
-                            );
-                            if (result != null && result.files.isNotEmpty) {
-                              setStateDialog(() {
-                                hasChanges = true;
-                                pickedFoto = result.files.first;
-                                removeFoto = false;
-                              });
-                            }
-                          },
-                          onDelete: () {
-                            setStateDialog(() {
-                              hasChanges = true;
-                              pickedFoto = null;
-                              removeFoto = true;
-                            });
-                          },
-                          onView: () async {
-                            if (pickedFoto != null) {
-                              if (pickedFoto!.bytes != null) {
-                                await _showImagePreviewBytes(
-                                    pickedFoto!.bytes!);
-                              } else if (pickedFoto!.path != null) {
-                                final bytes = await File(
-                                  pickedFoto!.path!,
-                                ).readAsBytes();
-                                await _showImagePreviewBytes(bytes);
-                              }
-                            } else if ((ejercicio?.fotoBase64 ?? '')
-                                .isNotEmpty) {
-                              await _showImagePreviewBase64(
-                                ejercicio!.fotoBase64!,
-                              );
-                            } else if (isEditing && ejercicio != null) {
-                              try {
-                                final ejercicioConFoto = await _apiService
-                                    .getPlanFitEjercicioCatalogWithFoto(
-                                        ejercicio!.codigo);
-                                if (ejercicioConFoto != null &&
-                                    (ejercicioConFoto.fotoBase64 ?? '')
-                                        .isNotEmpty) {
-                                  await _showImagePreviewBase64(
-                                    ejercicioConFoto.fotoBase64!,
-                                  );
-                                } else if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text(
-                                          'No se pudo cargar la imagen completa.'),
-                                      behavior: SnackBarBehavior.floating,
-                                    ),
-                                  );
-                                }
-                              } catch (_) {
-                                if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text(
-                                          'No se pudo cargar la imagen completa.'),
-                                      behavior: SnackBarBehavior.floating,
-                                    ),
-                                  );
-                                }
-                              }
-                            }
-                          },
-                        ),
-                      ],
-                    );
-                  }),
-                ),
-                actions: [
-                  ElevatedButton(
-                    onPressed: () async {
-                      await saveDialog(closeOnSuccess: true);
-                    },
-                    child: const Text('Guardar'),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
   }
 
   Future<void> _deleteEjercicio(PlanFitEjercicio ejercicio) async {
@@ -4205,12 +3428,14 @@ class _PlanFitEjerciciosCatalogScreenState
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final platform = Theme.of(context).platform;
     final isMobilePlatform =
         platform == TargetPlatform.android || platform == TargetPlatform.iOS;
     final isNutricionista =
         context.read<AuthService>().userType == 'Nutricionista';
     final isPremiumCatalogUser = !isNutricionista;
+    final isPreviewMode = _isNonPremiumPreviewMode;
     final count = _items.length;
     final maxUsos =
         _items.fold<int>(0, (m, e) => e.totalUsos > m ? e.totalUsos : m);
@@ -4274,7 +3499,9 @@ class _PlanFitEjerciciosCatalogScreenState
           IconButton(
             icon: Icon(_showFilters ? Icons.search_off : Icons.search),
             tooltip: _showFilters ? 'Ocultar buscar' : 'Buscar',
-            onPressed: _toggleSearchVisibility,
+            onPressed: isPreviewMode
+                ? () => _showPremiumRequiredForEjerciciosTools(context)
+                : _toggleSearchVisibility,
           ),
           Stack(
             alignment: Alignment.center,
@@ -4282,8 +3509,9 @@ class _PlanFitEjerciciosCatalogScreenState
               IconButton(
                 icon: const Icon(Icons.filter_alt),
                 tooltip: 'Filtrar ejercicios',
-                onPressed: () =>
-                    _toggleFilters(isNutricionista: isNutricionista),
+                onPressed: () => isPreviewMode
+                    ? _showPremiumRequiredForEjerciciosTools(context)
+                    : _toggleFilters(isNutricionista: isNutricionista),
               ),
               if (_selectedCategoriaIds.isNotEmpty)
                 Positioned(
@@ -4529,6 +3757,10 @@ class _PlanFitEjerciciosCatalogScreenState
             PopupMenuButton<String>(
               tooltip: 'Opciones',
               onSelected: (value) {
+                if (isPreviewMode) {
+                  _showPremiumRequiredForEjerciciosTools(context);
+                  return;
+                }
                 switch (value) {
                   case 'buscar':
                     _toggleSearchVisibility();
@@ -4688,12 +3920,32 @@ class _PlanFitEjerciciosCatalogScreenState
                     padding: EdgeInsets.only(
                       bottom: 96 + MediaQuery.of(context).padding.bottom,
                     ),
-                    itemCount: _displayedItems.length + (_hasMore ? 1 : 0),
+                    itemCount: _displayedItems.length +
+                        (_hasMore ? 1 : 0) +
+                        (isPreviewMode ? 1 : 0),
                     separatorBuilder: (_, index) =>
                         index >= (_displayedItems.length - 1)
                             ? const SizedBox.shrink()
                             : const Divider(height: 1),
                     itemBuilder: (context, index) {
+                      if (isPreviewMode && index == _displayedItems.length) {
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: PremiumUpsellCard(
+                            title: l10n.exerciseCatalogPremiumTitle,
+                            subtitle: l10n.exerciseCatalogPremiumSubtitle,
+                            subtitleHighlight:
+                                l10n.exerciseCatalogPremiumPreviewHighlight(
+                              _catalogHighlightCount(_items.length),
+                            ),
+                            subtitleHighlightColor: Colors.pink.shade700,
+                            onPressed: () => Navigator.pushNamed(
+                              context,
+                              '/premium_info',
+                            ),
+                          ),
+                        );
+                      }
                       if (index >= _displayedItems.length) {
                         return const Padding(
                           padding: EdgeInsets.symmetric(vertical: 16),
@@ -4741,7 +3993,10 @@ class _PlanFitEjerciciosCatalogScreenState
                           margin: const EdgeInsets.symmetric(vertical: 4),
                           child: InkWell(
                             onTap: widget.readOnly
-                                ? () => _showPremiumEjercicioDetalle(ejercicio)
+                                ? () => _showPremiumEjercicioDetalle(
+                                      ejercicio,
+                                      allowVideoPlayback: !isPreviewMode,
+                                    )
                                 : () =>
                                     _openEjercicioDialog(ejercicio: ejercicio),
                             onLongPress: widget.readOnly
@@ -4757,6 +4012,8 @@ class _PlanFitEjerciciosCatalogScreenState
                                     onTap: widget.readOnly
                                         ? () => _showPremiumEjercicioDetalle(
                                               ejercicio,
+                                              allowVideoPlayback:
+                                                  !isPreviewMode,
                                             )
                                         : (hasFoto
                                             ? () =>
@@ -4890,13 +4147,28 @@ class _PlanFitEjerciciosCatalogScreenState
                                               ),
                                               _instructionCountChip(
                                                 prefix: 'CH',
-                                                tooltip:
-                                                    'Cómo se hace (nº caracteres)',
+                                                tooltip: (ejercicio
+                                                                .instruccionesDetalladas ??
+                                                            '')
+                                                        .trim()
+                                                        .isNotEmpty
+                                                    ? 'Cómo se hace (nº caracteres). Pulsa para ver el detalle'
+                                                    : 'Cómo se hace (nº caracteres)',
                                                 count: (ejercicio
                                                             .instruccionesDetalladas ??
                                                         '')
                                                     .trim()
                                                     .length,
+                                                onTap: (ejercicio
+                                                                .instruccionesDetalladas ??
+                                                            '')
+                                                        .trim()
+                                                        .isNotEmpty
+                                                    ? () =>
+                                                        _showInstruccionesDetalladas(
+                                                          ejercicio,
+                                                        )
+                                                    : null,
                                               ),
                                             ],
                                           ),
@@ -5115,28 +4387,48 @@ class _PlanFitEjerciciosCatalogScreenState
         .replaceAll('•', '\n')
         .replaceAll('·', '\n');
 
+    bool isLeadingInstructionDecorator(int rune) {
+      return rune == 0xFE0F ||
+          rune == 0x200D ||
+          rune == 0x00A9 ||
+          rune == 0x00AE ||
+          (rune >= 0x2000 && rune <= 0x3300) ||
+          (rune >= 0x2600 && rune <= 0x27BF) ||
+          (rune >= 0x1F000 && rune <= 0x1FAFF);
+    }
+
+    String cleanInstructionStep(String part) {
+      var cleaned =
+          part.trim().replaceFirst(RegExp(r'^[-*\d\s.)]+'), '').trimLeft();
+
+      while (cleaned.isNotEmpty) {
+        final runes = cleaned.runes.toList(growable: false);
+        if (runes.isEmpty || !isLeadingInstructionDecorator(runes.first)) {
+          break;
+        }
+        cleaned = String.fromCharCodes(runes.skip(1)).trimLeft();
+      }
+
+      return cleaned.trim();
+    }
+
     List<String> parts = normalized
         .split(RegExp(r'\n|;'))
-        .map(
-          (part) =>
-              part.trim().replaceFirst(RegExp(r'^[-*\d\s.)]+'), '').trim(),
-        )
+        .map(cleanInstructionStep)
         .where((part) => part.isNotEmpty)
         .toList(growable: false);
 
     if (parts.length <= 1) {
       parts = normalized
           .split(RegExp(r'(?<=[.!?])\s+'))
-          .map(
-            (part) =>
-                part.trim().replaceFirst(RegExp(r'^[-*\d\s.)]+'), '').trim(),
-          )
+          .map(cleanInstructionStep)
           .where((part) => part.isNotEmpty)
           .toList(growable: false);
     }
 
     if (parts.isEmpty && normalized.trim().isNotEmpty) {
-      return <String>[normalized.trim()];
+      final fallback = cleanInstructionStep(normalized);
+      return fallback.isEmpty ? <String>[] : <String>[fallback];
     }
 
     return parts;
@@ -5194,43 +4486,118 @@ class _PlanFitEjerciciosCatalogScreenState
     );
   }
 
-  Widget _buildInstructionTag(String text) {
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 260),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF6F7FB),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFFE0E5F2)),
-      ),
-      child: Text(
-        text,
-        style: const TextStyle(
-          fontSize: 12,
-          height: 1.25,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildShortInstructionCard(String text) {
+  Widget _buildInstructionTag(String text, int stepNumber) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF4DE),
+        color: const Color(0xFFF6F7FB),
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const Color(0xFFF5D8A6)),
+        border: Border.all(color: const Color(0xFFE0E5F2)),
       ),
-      child: Text(
-        text,
-        style: const TextStyle(
-          fontSize: 12,
-          height: 1.25,
-          fontWeight: FontWeight.w600,
-          color: Color(0xFF5F4A24),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 22,
+            height: 22,
+            alignment: Alignment.center,
+            margin: const EdgeInsets.only(top: 1),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE8EEFF),
+              borderRadius: BorderRadius.circular(5),
+              border: Border.all(color: const Color(0xFFD5DDF2)),
+            ),
+            child: Text(
+              '$stepNumber',
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF5D6C8F),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(
+                fontSize: 12,
+                height: 1.25,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildShortInstructionCard(
+    String text, {
+    bool highlighted = false,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: highlighted ? const Color(0xFFFFE4A8) : const Color(0xFFFFF4DE),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color:
+              highlighted ? const Color(0xFFFFC84E) : const Color(0xFFF5D8A6),
+          width: highlighted ? 1.5 : 1,
         ),
+        boxShadow: highlighted
+            ? const <BoxShadow>[
+                BoxShadow(
+                  color: Color(0x33FFB300),
+                  blurRadius: 14,
+                  offset: Offset(0, 4),
+                ),
+              ]
+            : const <BoxShadow>[],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: highlighted
+                  ? const Color(0xFF2F5FE5)
+                  : const Color(0xFFFFE8B8),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: highlighted
+                    ? const Color(0xFF1F4BD4)
+                    : const Color(0xFFF5D08A),
+              ),
+            ),
+            child: AnimatedDefaultTextStyle(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOut,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                color: highlighted ? Colors.white : const Color(0xFF7A5608),
+              ),
+              child: const Text('Instrucciones'),
+            ),
+          ),
+          Text(
+            text,
+            style: const TextStyle(
+              fontSize: 12,
+              height: 1.25,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF5F4A24),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -5253,7 +4620,10 @@ class _PlanFitEjerciciosCatalogScreenState
     return '${rawText.trim()}\n\n$warningText\n\nApp NutriFit - $nutricionistaNombre';
   }
 
-  Future<void> _showPremiumEjercicioDetalle(PlanFitEjercicio ejercicio) async {
+  Future<void> _showPremiumEjercicioDetalle(
+    PlanFitEjercicio ejercicio, {
+    bool allowVideoPlayback = true,
+  }) async {
     final shortInstructions = (ejercicio.instrucciones ?? '').trim();
     final detailedInstructions =
         (ejercicio.instruccionesDetalladas ?? '').trim();
@@ -5271,6 +4641,15 @@ class _PlanFitEjerciciosCatalogScreenState
         ? ejercicio.fotoBase64!.trim()
         : (ejercicio.fotoMiniatura ?? '').trim();
     final hasImage = imageBase64.isNotEmpty;
+    final ImageProvider? coverImageProvider = hasImage
+        ? (() {
+            try {
+              return MemoryImage(base64Decode(imageBase64));
+            } catch (_) {
+              return null;
+            }
+          })()
+        : null;
     final effectiveVideoUrl = (ejercicio.urlVideo ?? '').trim();
     final hasVideo = effectiveVideoUrl.isNotEmpty;
     final metricCards = <Widget>[
@@ -5308,8 +4687,28 @@ class _PlanFitEjerciciosCatalogScreenState
       context: context,
       builder: (context) {
         bool expandHowTo = false;
+        bool highlightHowToShortInstructions = false;
+        int howToHighlightVersion = 0;
         return StatefulBuilder(
           builder: (context, setStateDialog) {
+            void triggerHowToFeedback() {
+              final currentVersion = ++howToHighlightVersion;
+              setStateDialog(() {
+                expandHowTo = true;
+                highlightHowToShortInstructions = true;
+              });
+
+              Future<void>.delayed(const Duration(milliseconds: 950), () {
+                if (!context.mounted ||
+                    currentVersion != howToHighlightVersion) {
+                  return;
+                }
+                setStateDialog(() {
+                  highlightHowToShortInstructions = false;
+                });
+              });
+            }
+
             return Dialog(
               backgroundColor: Colors.transparent,
               insetPadding:
@@ -5335,179 +4734,176 @@ class _PlanFitEjerciciosCatalogScreenState
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(30),
-                    child: SingleChildScrollView(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Container(
-                            height: hasImage ? 250 : 160,
-                            width: double.infinity,
-                            decoration: const BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: <Color>[
-                                  Color(0xFFFFB06A),
-                                  Color(0xFFFFDFA5),
-                                ],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Container(
+                          height: hasImage ? 250 : 160,
+                          width: double.infinity,
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: <Color>[
+                                Color(0xFFFFB06A),
+                                Color(0xFFFFDFA5),
+                              ],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
                             ),
-                            child: GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTap: hasImage
-                                  ? () => _showEjercicioImage(ejercicio)
-                                  : null,
-                              child: Stack(
-                                fit: StackFit.expand,
-                                children: <Widget>[
-                                  if (hasImage)
-                                    Opacity(
+                          ),
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: hasImage
+                                ? () => _showEjercicioImage(ejercicio)
+                                : null,
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: <Widget>[
+                                if (coverImageProvider != null)
+                                  RepaintBoundary(
+                                    child: Opacity(
                                       opacity: 0.24,
-                                      child: Image.memory(
-                                        base64Decode(imageBase64),
+                                      child: Image(
+                                        image: coverImageProvider,
                                         fit: BoxFit.cover,
-                                      ),
-                                    ),
-                                  Container(
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        colors: <Color>[
-                                          Colors.black.withValues(alpha: 0.05),
-                                          Colors.black.withValues(alpha: 0.22),
-                                        ],
-                                        begin: Alignment.topCenter,
-                                        end: Alignment.bottomCenter,
+                                        gaplessPlayback: true,
                                       ),
                                     ),
                                   ),
+                                Container(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: <Color>[
+                                        Colors.black.withValues(alpha: 0.05),
+                                        Colors.black.withValues(alpha: 0.22),
+                                      ],
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                    ),
+                                  ),
+                                ),
+                                Positioned(
+                                  top: 14,
+                                  right: 14,
+                                  child: IconButton(
+                                    onPressed: () => Navigator.pop(context),
+                                    style: IconButton.styleFrom(
+                                      backgroundColor:
+                                          Colors.white.withValues(alpha: 0.22),
+                                    ),
+                                    icon: const Icon(
+                                      Icons.close,
+                                      color: Colors.white,
+                                    ),
+                                    tooltip: 'Cerrar',
+                                  ),
+                                ),
+                                if (hasImage)
                                   Positioned(
-                                    top: 14,
-                                    right: 14,
-                                    child: IconButton(
-                                      onPressed: () => Navigator.pop(context),
-                                      style: IconButton.styleFrom(
-                                        backgroundColor: Colors.white
+                                    top: 16,
+                                    left: 16,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 6,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white
                                             .withValues(alpha: 0.22),
+                                        borderRadius:
+                                            BorderRadius.circular(999),
+                                        border: Border.all(
+                                          color: Colors.white
+                                              .withValues(alpha: 0.28),
+                                        ),
                                       ),
-                                      icon: const Icon(
-                                        Icons.close,
-                                        color: Colors.white,
+                                      child: const Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: <Widget>[
+                                          Icon(
+                                            Icons.zoom_in,
+                                            size: 14,
+                                            color: Colors.white,
+                                          ),
+                                          SizedBox(width: 4),
+                                          Text(
+                                            'Toca para ampliar',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                      tooltip: 'Cerrar',
                                     ),
                                   ),
-                                  if (hasImage)
-                                    Positioned(
-                                      top: 16,
-                                      left: 16,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 10,
-                                          vertical: 6,
+                                Positioned(
+                                  left: 22,
+                                  right: 22,
+                                  bottom: 22,
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: <Widget>[
+                                      Text(
+                                        ejercicio.nombre,
+                                        style: const TextStyle(
+                                          color: Color(0xFF2E1D12),
+                                          fontSize: 21,
+                                          height: 1.1,
+                                          fontWeight: FontWeight.w800,
                                         ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.white
-                                              .withValues(alpha: 0.22),
-                                          borderRadius:
-                                              BorderRadius.circular(999),
-                                          border: Border.all(
-                                            color: Colors.white
-                                                .withValues(alpha: 0.28),
-                                          ),
-                                        ),
-                                        child: const Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: <Widget>[
-                                            Icon(
-                                              Icons.zoom_in,
-                                              size: 14,
-                                              color: Colors.white,
-                                            ),
-                                            SizedBox(width: 4),
-                                            Text(
-                                              'Toca para ampliar',
-                                              style: TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
-                                    ),
-                                  Positioned(
-                                    left: 22,
-                                    right: 22,
-                                    bottom: 22,
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: <Widget>[
-                                        Text(
-                                          ejercicio.nombre,
-                                          style: const TextStyle(
-                                            color: Color(0xFF2E1D12),
-                                            fontSize: 21,
-                                            height: 1.1,
-                                            fontWeight: FontWeight.w800,
+                                      const SizedBox(height: 8),
+                                      RichText(
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        text: TextSpan(
+                                          style: TextStyle(
+                                            color: const Color(0xFF4A321E)
+                                                .withValues(alpha: 0.95),
+                                            fontSize: 14,
+                                            height: 1.35,
                                           ),
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        const SizedBox(height: 8),
-                                        RichText(
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          text: TextSpan(
-                                            style: TextStyle(
-                                              color: const Color(0xFF4A321E)
-                                                  .withValues(alpha: 0.95),
-                                              fontSize: 14,
-                                              height: 1.35,
-                                            ),
-                                            children: [
-                                              TextSpan(text: coverSubtitle),
-                                              if (showReadMoreLink)
-                                                WidgetSpan(
-                                                  alignment:
-                                                      PlaceholderAlignment
-                                                          .baseline,
-                                                  baseline:
-                                                      TextBaseline.alphabetic,
-                                                  child: GestureDetector(
-                                                    onTap: () {
-                                                      setStateDialog(() {
-                                                        expandHowTo = true;
-                                                      });
-                                                    },
-                                                    child: Text(
-                                                      ' Leer más',
-                                                      style: TextStyle(
-                                                        color: const Color(
-                                                          0xFF2F2014,
-                                                        ),
-                                                        fontSize: 12,
-                                                        fontWeight:
-                                                            FontWeight.w700,
-                                                        decoration:
-                                                            TextDecoration
-                                                                .underline,
+                                          children: [
+                                            TextSpan(text: coverSubtitle),
+                                            if (showReadMoreLink)
+                                              WidgetSpan(
+                                                alignment: PlaceholderAlignment
+                                                    .baseline,
+                                                baseline:
+                                                    TextBaseline.alphabetic,
+                                                child: GestureDetector(
+                                                  onTap: triggerHowToFeedback,
+                                                  child: Text(
+                                                    ' Leer más',
+                                                    style: TextStyle(
+                                                      color: const Color(
+                                                        0xFF2F2014,
                                                       ),
+                                                      fontSize: 12,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                      decoration: TextDecoration
+                                                          .underline,
                                                     ),
                                                   ),
                                                 ),
-                                            ],
-                                          ),
+                                              ),
+                                          ],
                                         ),
-                                      ],
-                                    ),
+                                      ),
+                                    ],
                                   ),
-                                ],
-                              ),
+                                ),
+                              ],
                             ),
                           ),
-                          Padding(
+                        ),
+                        Expanded(
+                          child: SingleChildScrollView(
                             padding: const EdgeInsets.fromLTRB(22, 12, 22, 24),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -5615,26 +5011,54 @@ class _PlanFitEjerciciosCatalogScreenState
                                               18,
                                               18,
                                             ),
-                                            title: const Text(
-                                              'Cómo se hace...',
-                                              style: TextStyle(
-                                                fontWeight: FontWeight.w800,
-                                                color: Color(0xFF1D3266),
-                                              ),
+                                            title: const Row(
+                                              children: <Widget>[
+                                                Expanded(
+                                                  child: Text(
+                                                    'Cómo se hace...',
+                                                    style: TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w800,
+                                                      color: Color(0xFF1D3266),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                             children: <Widget>[
-                                              Wrap(
-                                                spacing: 10,
-                                                runSpacing: 10,
+                                              Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
                                                 children: [
                                                   if (shortInstructions
                                                       .isNotEmpty)
                                                     _buildShortInstructionCard(
                                                       shortInstructions,
+                                                      highlighted:
+                                                          highlightHowToShortInstructions,
                                                     ),
+                                                  if (shortInstructions
+                                                          .isNotEmpty &&
+                                                      instructionTags
+                                                          .isNotEmpty)
+                                                    const SizedBox(height: 10),
                                                   ...instructionTags
-                                                      .map(_buildInstructionTag)
-                                                      .toList(growable: false),
+                                                      .asMap()
+                                                      .entries
+                                                      .expand(
+                                                        (entry) => <Widget>[
+                                                          _buildInstructionTag(
+                                                            entry.value,
+                                                            entry.key + 1,
+                                                          ),
+                                                          const SizedBox(
+                                                            height: 10,
+                                                          ),
+                                                        ],
+                                                      ),
+                                                  if (instructionTags
+                                                      .isNotEmpty)
+                                                    const SizedBox(height: 0),
                                                 ],
                                               ),
                                             ],
@@ -5710,8 +5134,14 @@ class _PlanFitEjerciciosCatalogScreenState
                                     SizedBox(
                                       width: double.infinity,
                                       child: OutlinedButton.icon(
-                                        onPressed: () => _launchUrlExternal(
-                                            effectiveVideoUrl),
+                                        onPressed: allowVideoPlayback
+                                            ? () => _launchUrlExternal(
+                                                  effectiveVideoUrl,
+                                                )
+                                            : () =>
+                                                _showPremiumRequiredForEjerciciosVideo(
+                                                  context,
+                                                ),
                                         icon: const Icon(
                                           Icons.play_circle_fill,
                                           size: 18,
@@ -5734,8 +5164,8 @@ class _PlanFitEjerciciosCatalogScreenState
                               ],
                             ),
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -5771,25 +5201,33 @@ class _PlanFitEjerciciosCatalogScreenState
     required String prefix,
     required int count,
     String? tooltip,
+    VoidCallback? onTap,
   }) {
     final hasText = count > 0;
     final bgColor = hasText ? Colors.green.shade100 : Colors.grey.shade300;
     final borderColor = hasText ? Colors.green.shade500 : Colors.grey.shade500;
     final textColor = hasText ? Colors.green.shade800 : Colors.grey.shade700;
 
-    final chip = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-      decoration: BoxDecoration(
-        color: bgColor,
+    final chip = Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: borderColor),
-      ),
-      child: Text(
-        '$prefix $count',
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          color: textColor,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: borderColor),
+          ),
+          child: Text(
+            '$prefix $count',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: textColor,
+            ),
+          ),
         ),
       ),
     );
@@ -5915,6 +5353,7 @@ class _PlanFitEjerciciosCatalogScreenState
                     removeFoto,
                     onDelete,
                     onAddOrChange,
+                    null,
                   );
                 }
               },
@@ -5925,6 +5364,7 @@ class _PlanFitEjerciciosCatalogScreenState
                   removeFoto,
                   onDelete,
                   onAddOrChange,
+                  null,
                 );
               },
               child: MouseRegion(
@@ -5944,7 +5384,7 @@ class _PlanFitEjerciciosCatalogScreenState
         Text(
           hasFoto && !removeFoto
               ? 'Pulsa para ver | Mantén pulsado para opciones'
-              : 'Pulsa para añadir foto',
+              : 'Pulsa para añadir imagen',
           style: Theme.of(
             context,
           ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade600),
@@ -5959,6 +5399,7 @@ class _PlanFitEjerciciosCatalogScreenState
     bool removeFoto,
     VoidCallback onDelete,
     VoidCallback onAddOrChange,
+    VoidCallback? onPaste,
   ) {
     final RenderBox renderBox = context.findRenderObject() as RenderBox;
     final offset = renderBox.localToGlobal(Offset.zero);
@@ -5967,15 +5408,70 @@ class _PlanFitEjerciciosCatalogScreenState
     final menuOptions = <PopupMenuItem<String>>[];
     if (!removeFoto && hasFoto) {
       menuOptions.add(
-        const PopupMenuItem(value: 'delete', child: Text('Eliminar foto')),
+        const PopupMenuItem(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, color: Colors.red),
+              SizedBox(width: 8),
+              Text('Eliminar imagen'),
+            ],
+          ),
+        ),
       );
       menuOptions.add(
-        const PopupMenuItem(value: 'change', child: Text('Cambiar foto')),
+        const PopupMenuItem(
+          value: 'change',
+          child: Row(
+            children: [
+              Icon(Icons.photo_library_outlined),
+              SizedBox(width: 8),
+              Text('Cambiar imagen'),
+            ],
+          ),
+        ),
       );
+      if (onPaste != null) {
+        menuOptions.add(
+          const PopupMenuItem(
+            value: 'paste',
+            child: Row(
+              children: [
+                Icon(Icons.content_paste_rounded),
+                SizedBox(width: 8),
+                Text('Pegar imagen'),
+              ],
+            ),
+          ),
+        );
+      }
     } else {
       menuOptions.add(
-        const PopupMenuItem(value: 'add', child: Text('Añadir foto')),
+        const PopupMenuItem(
+          value: 'add',
+          child: Row(
+            children: [
+              Icon(Icons.add_photo_alternate_outlined),
+              SizedBox(width: 8),
+              Text('Añadir imagen'),
+            ],
+          ),
+        ),
       );
+      if (onPaste != null) {
+        menuOptions.add(
+          const PopupMenuItem(
+            value: 'paste',
+            child: Row(
+              children: [
+                Icon(Icons.content_paste_rounded),
+                SizedBox(width: 8),
+                Text('Pegar imagen'),
+              ],
+            ),
+          ),
+        );
+      }
     }
 
     showMenu<String>(
@@ -5990,6 +5486,8 @@ class _PlanFitEjerciciosCatalogScreenState
     ).then((value) {
       if (value == 'delete') {
         onDelete();
+      } else if (value == 'paste') {
+        onPaste?.call();
       } else if (value == 'change' || value == 'add') {
         onAddOrChange();
       }
@@ -6005,10 +5503,10 @@ class _PlanFitEjerciciosCatalogScreenState
   }) {
     final menuOptions = <String>[];
     if (!removeFoto && hasFoto) {
-      menuOptions.add('Eliminar foto');
-      menuOptions.add('Cambiar foto');
+      menuOptions.add('Eliminar imagen');
+      menuOptions.add('Cambiar imagen');
     } else {
-      menuOptions.add('Añadir foto');
+      menuOptions.add('Añadir imagen');
     }
 
     showMenu<String>(
@@ -6018,9 +5516,9 @@ class _PlanFitEjerciciosCatalogScreenState
           .map((option) => PopupMenuItem(value: option, child: Text(option)))
           .toList(),
     ).then((value) {
-      if (value == 'Eliminar foto') {
+      if (value == 'Eliminar imagen') {
         onDelete();
-      } else if (value == 'Cambiar foto' || value == 'Añadir foto') {
+      } else if (value == 'Cambiar imagen' || value == 'Añadir imagen') {
         onAddOrChange();
       }
     });

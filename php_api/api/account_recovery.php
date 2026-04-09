@@ -147,6 +147,20 @@ function get_usuario_columns_map($db) {
     return $columns;
 }
 
+function build_not_deleted_condition_account_recovery($db, $alias = '') {
+    $columns = get_usuario_columns_map($db);
+    if (!isset($columns['eliminado'])) {
+        return '1=1';
+    }
+
+    $prefix = trim((string)$alias);
+    if ($prefix !== '') {
+        $prefix = rtrim($prefix, '.') . '.';
+    }
+
+    return "COALESCE({$prefix}eliminado, 'N') <> 'S'";
+}
+
 function require_usuario_columns($columns_map, $required_names) {
     foreach ($required_names as $name) {
         if (!isset($columns_map[strtolower($name)])) {
@@ -180,6 +194,41 @@ function get_parametro_valor($db, $nombre) {
         return null;
     }
     return (string)($row['valor'] ?? '');
+}
+
+function normalize_parametro_language_codes($language_code) {
+    $raw = strtolower(trim((string)$language_code));
+    if ($raw === '') {
+        return array();
+    }
+
+    $parts = preg_split('/[-_]/', $raw);
+    $primary = trim((string)($parts[0] ?? ''));
+    if ($primary === '') {
+        return array();
+    }
+
+    if ($primary === 'de') {
+        return array('de', 'al');
+    }
+
+    return array($primary);
+}
+
+function get_parametro_valor_localized($db, $nombre, $language_code) {
+    $codes = normalize_parametro_language_codes($language_code);
+    if (empty($codes) || $codes[0] === 'es') {
+        return get_parametro_valor($db, $nombre);
+    }
+
+    foreach ($codes as $code) {
+        $localized = get_parametro_valor($db, $nombre . '_' . $code);
+        if ($localized !== null && trim((string)$localized) !== '') {
+            return $localized;
+        }
+    }
+
+    return get_parametro_valor($db, $nombre);
 }
 
 function get_parametro_valor_y_valor2($db, $nombre) {
@@ -769,7 +818,8 @@ function get_user_by_identifier($db, $identifier) {
         }
     }
 
-    $query = 'SELECT ' . implode(', ', $query_fields) . ' FROM usuario WHERE nick = :identifier OR email = :identifier LIMIT 1';
+    $notDeletedCondition = build_not_deleted_condition_account_recovery($db);
+    $query = 'SELECT ' . implode(', ', $query_fields) . ' FROM usuario WHERE (nick = :identifier OR email = :identifier) AND ' . $notDeletedCondition . ' LIMIT 1';
     $stmt = $db->prepare($query);
     $stmt->bindParam(':identifier', $identifier, PDO::PARAM_STR);
     $stmt->execute();
@@ -967,6 +1017,7 @@ function notify_premium_payment_done($db, $auth_user, $data) {
     $period_months = intval($data->period_months ?? 0);
     $price_text = trim((string)($data->price_text ?? ''));
     $concept = trim((string)($data->concept ?? ''));
+    $language_code = trim((string)($data->language_code ?? 'es'));
 
     $payment_method = normalize_payment_method_account_recovery($payment_method);
     $period_months = normalize_premium_period_account_recovery($period_months);
@@ -1018,7 +1069,11 @@ function notify_premium_payment_done($db, $auth_user, $data) {
         "Fecha y hora botón pulsado: {fecha_hora_pulsacion_boton}\n\n" .
         "Acción requerida: validar recepción del pago y activar la cuenta Premium.";
 
-    $template = trim((string)get_parametro_valor($db, 'premium_notificacion_pago_email_plantilla'));
+    $template = trim((string)get_parametro_valor_localized(
+        $db,
+        'premium_notificacion_pago_email_plantilla',
+        $language_code
+    ));
     if ($template === '') {
         $template = $default_template;
     }
@@ -1035,7 +1090,11 @@ function notify_premium_payment_done($db, $auth_user, $data) {
         'concepto_pago' => ($concept !== '' ? $concept : '-'),
     );
 
-    $subject_template = trim((string)get_parametro_valor($db, 'premium_notificacion_pago_email_asunto'));
+    $subject_template = trim((string)get_parametro_valor_localized(
+        $db,
+        'premium_notificacion_pago_email_asunto',
+        $language_code
+    ));
     if ($subject_template === '') {
         $subject_template = 'NutriFit - Confirmación de pago Premium ({metodo_pago_elegido}) - Usuario {codigo_usuario}';
     }

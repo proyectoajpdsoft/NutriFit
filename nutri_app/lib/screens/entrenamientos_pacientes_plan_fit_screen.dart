@@ -4,7 +4,9 @@ import 'package:provider/provider.dart';
 import '../models/entrenamiento.dart';
 import '../models/entrenamiento_ejercicio.dart';
 import '../models/paciente.dart';
+import 'entrenamiento_sensaciones_pendientes_screen.dart';
 import '../services/api_service.dart';
+import 'entrenamiento_paciente_evolution_screen.dart';
 import '../widgets/image_viewer_dialog.dart' show showImageViewerDialog;
 
 class EntrenamientosPacientesPlanFitScreen extends StatefulWidget {
@@ -28,6 +30,16 @@ class _EntrenamientosPacientesPlanFitScreenState
   Future<List<Paciente>> _loadPacientes() async {
     final apiService = context.read<ApiService>();
     return apiService.getPacientesConActividadesPlanFit();
+  }
+
+  void _openEvolutionScreen(Paciente paciente) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) =>
+            EntrenamientoPacienteEvolutionScreen(paciente: paciente),
+      ),
+    );
   }
 
   @override
@@ -57,7 +69,17 @@ class _EntrenamientosPacientesPlanFitScreenState
               child: ListTile(
                 title: Text(paciente.nombre),
                 subtitle: const Text('Actividades con Plan Fit'),
-                trailing: const Icon(Icons.chevron_right),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      onPressed: () => _openEvolutionScreen(paciente),
+                      tooltip: 'Ver evolución',
+                      icon: const Icon(Icons.show_chart_rounded),
+                    ),
+                    const Icon(Icons.chevron_right),
+                  ],
+                ),
                 onTap: () {
                   Navigator.push(
                     context,
@@ -140,6 +162,22 @@ class _EntrenamientosPacientePlanFitListScreenState
     return Scaffold(
       appBar: AppBar(
         title: Text('Actividades - ${widget.paciente.nombre}'),
+        actions: [
+          IconButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => EntrenamientoPacienteEvolutionScreen(
+                    paciente: widget.paciente,
+                  ),
+                ),
+              );
+            },
+            tooltip: 'Ver evolución',
+            icon: const Icon(Icons.show_chart_rounded),
+          ),
+        ],
       ),
       body: FutureBuilder<List<Entrenamiento>>(
         future: _entrenamientosFuture,
@@ -541,6 +579,34 @@ class _EntrenamientoPacientePlanFitDetailScreenState
     }
   }
 
+  void _openDetalleSensaciones() {
+    final codigoPaciente = int.tryParse(widget.entrenamiento.codigoPaciente);
+    final codigoPlanFit = widget.entrenamiento.codigoPlanFit;
+
+    if (codigoPaciente == null || codigoPaciente <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo identificar el paciente de la actividad.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => EntrenamientoSensacionesPendientesScreen(
+          codigoPaciente: codigoPaciente,
+          codigoPlanFit: codigoPlanFit,
+          incluirLeidas: true,
+          titulo: 'Sensaciones de la actividad',
+          emptyMessage:
+              'No hay sensaciones registradas para esta actividad o plan fit.',
+        ),
+      ),
+    );
+  }
+
   Widget _buildEjercicioCard(EntrenamientoEjercicio e) {
     final tiempo = e.tiempoRealizado ?? e.tiempoPlan ?? 0;
     final reps = e.repeticionesRealizadas ?? e.repeticionesPlan ?? 0;
@@ -807,6 +873,13 @@ class _EntrenamientoPacientePlanFitDetailScreenState
               ),
           ],
         ),
+        actions: [
+          IconButton(
+            onPressed: _openDetalleSensaciones,
+            tooltip: 'Ver sensaciones',
+            icon: const Icon(Icons.forum_outlined),
+          ),
+        ],
       ),
       body: SafeArea(
         top: false,

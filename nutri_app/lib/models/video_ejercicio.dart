@@ -5,6 +5,8 @@ class VideoEjercicio {
   String tipoMedia; // 'local' | 'youtube'
   String? rutaVideo; // ruta relativa o URL de YouTube
   String? formato; // 'mp4' | 'gif' | null para YouTube
+  String? imagen; // base64 completa
+  String? imagenNombre;
   String? imagenMiniatura; // base64
   String? imagenMiniaturaNombre;
   String visible; // 'S' | 'N'
@@ -25,6 +27,8 @@ class VideoEjercicio {
     this.tipoMedia = 'local',
     this.rutaVideo,
     this.formato,
+    this.imagen,
+    this.imagenNombre,
     this.imagenMiniatura,
     this.imagenMiniaturaNombre,
     this.visible = 'S',
@@ -49,6 +53,8 @@ class VideoEjercicio {
       tipoMedia: json['tipo_media'] ?? 'local',
       rutaVideo: json['ruta_video'],
       formato: json['formato'],
+      imagen: json['imagen'],
+      imagenNombre: json['imagen_nombre'],
       imagenMiniatura: json['imagen_miniatura'],
       imagenMiniaturaNombre: json['imagen_miniatura_nombre'],
       visible: json['visible'] ?? 'S',
@@ -92,6 +98,8 @@ class VideoEjercicio {
         'tipo_media': tipoMedia,
         if (rutaVideo != null) 'ruta_video': rutaVideo,
         if (formato != null) 'formato': formato,
+        if (imagen != null) 'imagen': imagen,
+        if (imagenNombre != null) 'imagen_nombre': imagenNombre,
         if (imagenMiniatura != null) 'imagen_miniatura': imagenMiniatura,
         if (imagenMiniaturaNombre != null)
           'imagen_miniatura_nombre': imagenMiniaturaNombre,

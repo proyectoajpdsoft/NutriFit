@@ -2,6 +2,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
@@ -43,6 +45,9 @@ class EntrenamientoStatsPdfService {
   const EntrenamientoStatsPdfService._();
 
   static const PdfColor _accentPink = PdfColor.fromInt(0xFFFFC0F4);
+  static final NumberFormat _integerFormat =
+      NumberFormat.decimalPattern('es_ES');
+  static pw.Font? _cachedEmojiFont;
 
   static Future<void> generateStatsPdf({
     required BuildContext context,
@@ -59,16 +64,28 @@ class EntrenamientoStatsPdfService {
     bool showDesnivel = true,
     required bool showMinutos,
     required bool showPeso,
+    required String nutricionistaEmail,
+    required String nutricionistaTelegram,
+    required String nutricionistaWebUrl,
+    required String nutricionistaWebLabel,
+    required String nutricionistaInstagramUrl,
+    required String nutricionistaInstagramLabel,
+    required String nutricionistaFacebookUrl,
+    required String nutricionistaFacebookLabel,
   }) async {
     try {
       final logoSize = _parseLogoSize(logoSizeStr);
       final accentColor = _parsePdfColor(accentColorStr) ?? _accentPink;
+      final emojiFont = await _loadEmojiFont();
 
       final pdf = pw.Document();
       pdf.addPage(
         pw.MultiPage(
           pageFormat: PdfPageFormat.a4,
           margin: const pw.EdgeInsets.fromLTRB(24, 16, 24, 24),
+          theme: emojiFont != null
+              ? pw.ThemeData.withFont(fontFallback: [emojiFont])
+              : null,
           header: (ctx) => _buildHeader(
             nutricionistaNombre: nutricionistaNombre,
             nutricionistaSubtitulo: nutricionistaSubtitulo,
@@ -125,6 +142,19 @@ class EntrenamientoStatsPdfService {
             ),
             pw.SizedBox(height: 8),
             _buildResumenTable(resumen),
+            pw.SizedBox(height: 12),
+            pw.Divider(),
+            _buildContactTable(
+              accentColor: accentColor,
+              nutricionistaEmail: nutricionistaEmail,
+              nutricionistaTelegram: nutricionistaTelegram,
+              nutricionistaWebUrl: nutricionistaWebUrl,
+              nutricionistaWebLabel: nutricionistaWebLabel,
+              nutricionistaInstagramUrl: nutricionistaInstagramUrl,
+              nutricionistaInstagramLabel: nutricionistaInstagramLabel,
+              nutricionistaFacebookUrl: nutricionistaFacebookUrl,
+              nutricionistaFacebookLabel: nutricionistaFacebookLabel,
+            ),
           ],
         ),
       );
@@ -186,12 +216,6 @@ class EntrenamientoStatsPdfService {
   }
 
   static pw.Widget _buildResumenTable(EntrenamientoStatsPdfResumen resumen) {
-    final horasTotal = resumen.totalMinutos ~/ 60;
-    final minutosTotal = resumen.totalMinutos % 60;
-    final promedioMinutosRedondeado = resumen.promedioMinutos.round();
-    final horasProm = promedioMinutosRedondeado ~/ 60;
-    final minutosProm = promedioMinutosRedondeado % 60;
-
     pw.Widget row(String a, String b, String c) {
       return pw.Row(
         children: [
@@ -238,32 +262,32 @@ class EntrenamientoStatsPdfService {
           ),
           row(
             'Actividades',
-            '${resumen.totalActividades}',
+            _formatInteger(resumen.totalActividades),
             _formatMax2Decimals(resumen.promedioActividades),
           ),
           row(
             'Kilómetros',
-            resumen.totalKilometros.toStringAsFixed(2),
+            _formatNumber(resumen.totalKilometros, decimals: 2),
             _formatMax2Decimals(resumen.promedioKilometros),
           ),
           row(
             'Subida (m)',
-            resumen.totalDesnivel.toStringAsFixed(0),
+            _formatNumber(resumen.totalDesnivel, decimals: 0),
             _formatMax2Decimals(resumen.promedioDesnivel),
           ),
           row(
             'Tiempo',
-            '${horasTotal}h ${minutosTotal}m',
-            '${horasProm}h ${minutosProm}m',
+            _formatDuration(resumen.totalMinutos),
+            _formatDuration(resumen.promedioMinutos.round()),
           ),
           row(
             'Peso (kg)',
-            resumen.totalPesoKg.toStringAsFixed(1),
+            _formatNumber(resumen.totalPesoKg, decimals: 1),
             _formatMax2Decimals(resumen.promedioPesoKg),
           ),
           row(
             'Ejercicios',
-            resumen.totalEjercicios.toString(),
+            _formatInteger(resumen.totalEjercicios),
             _formatMax2Decimals(resumen.promedioEjercicios),
           ),
         ],
@@ -272,12 +296,40 @@ class EntrenamientoStatsPdfService {
   }
 
   static String _formatMax2Decimals(double value) {
-    final fixed = value.toStringAsFixed(2);
-    return fixed.contains('.')
-        ? fixed
-            .replaceFirst(RegExp(r'0+$'), '')
-            .replaceFirst(RegExp(r'\.$'), '')
-        : fixed;
+    final formatted = NumberFormat.decimalPatternDigits(
+      locale: 'es_ES',
+      decimalDigits: 2,
+    ).format(value);
+    return formatted
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'[,\.]$'), '');
+  }
+
+  static String _formatInteger(num value) {
+    return _integerFormat.format(value);
+  }
+
+  static String _formatNumber(num value, {required int decimals}) {
+    return NumberFormat.decimalPatternDigits(
+      locale: 'es_ES',
+      decimalDigits: decimals,
+    ).format(value);
+  }
+
+  static String _formatDuration(int totalMinutes) {
+    final safeMinutes = totalMinutes < 0 ? 0 : totalMinutes;
+    final days = safeMinutes ~/ (24 * 60);
+    final remainingAfterDays = safeMinutes % (24 * 60);
+    final hours = remainingAfterDays ~/ 60;
+    final minutes = remainingAfterDays % 60;
+
+    if (days > 0) {
+      return '${_formatInteger(days)}d ${_formatInteger(hours)}h ${_formatInteger(minutes)}m';
+    }
+    if (hours > 0) {
+      return '${_formatInteger(hours)}h ${_formatInteger(minutes)}m';
+    }
+    return '${_formatInteger(minutes)}m';
   }
 
   static pw.Widget _head(String text) {
@@ -448,5 +500,169 @@ class EntrenamientoStatsPdfService {
       return PdfColor.fromInt(argb);
     }
     return null;
+  }
+
+  static Future<pw.Font?> _loadEmojiFont() async {
+    if (_cachedEmojiFont != null) {
+      return _cachedEmojiFont;
+    }
+    try {
+      final data = await rootBundle.load('assets/fonts/NotoEmoji-Regular.ttf');
+      _cachedEmojiFont = pw.Font.ttf(data.buffer.asByteData());
+      return _cachedEmojiFont;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static pw.Widget _buildContactTable({
+    required PdfColor accentColor,
+    required String nutricionistaEmail,
+    required String nutricionistaTelegram,
+    required String nutricionistaWebUrl,
+    required String nutricionistaWebLabel,
+    required String nutricionistaInstagramUrl,
+    required String nutricionistaInstagramLabel,
+    required String nutricionistaFacebookUrl,
+    required String nutricionistaFacebookLabel,
+  }) {
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.all(8),
+      decoration: pw.BoxDecoration(color: accentColor),
+      child: pw.Table(
+        columnWidths: const {
+          0: pw.FlexColumnWidth(),
+          1: pw.FlexColumnWidth(),
+          2: pw.FlexColumnWidth(),
+        },
+        children: [
+          pw.TableRow(
+            children: [
+              _buildInfoCell(
+                label: 'Email',
+                iconText: '@',
+                value: nutricionistaEmail,
+              ),
+              _buildInfoCell(
+                label: 'Telegram',
+                iconText: 'TG',
+                value: nutricionistaTelegram,
+              ),
+              _buildLinkCell(
+                label: 'Web',
+                iconText: 'W',
+                url: nutricionistaWebUrl,
+                text: nutricionistaWebLabel,
+              ),
+            ],
+          ),
+          pw.TableRow(
+            children: [
+              _buildLinkCell(
+                label: 'Instagram',
+                iconText: 'IG',
+                url: nutricionistaInstagramUrl,
+                text: nutricionistaInstagramLabel,
+              ),
+              _buildLinkCell(
+                label: 'Facebook',
+                iconText: 'FB',
+                url: nutricionistaFacebookUrl,
+                text: nutricionistaFacebookLabel,
+              ),
+              pw.SizedBox(),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  static pw.Widget _buildInfoCell({
+    required String label,
+    required String value,
+    String? iconText,
+  }) {
+    final labelWidget = iconText != null && iconText.trim().isNotEmpty
+        ? _buildLabelWithIcon(label: label, iconText: iconText)
+        : pw.Text(label,
+            style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold));
+    return pw.Padding(
+      padding: const pw.EdgeInsets.all(4),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          labelWidget,
+          pw.SizedBox(height: 2),
+          pw.Text(value.isNotEmpty ? value : '-',
+              style: const pw.TextStyle(fontSize: 9)),
+        ],
+      ),
+    );
+  }
+
+  static pw.Widget _buildLinkCell({
+    required String label,
+    required String url,
+    required String text,
+    String? iconText,
+  }) {
+    final displayText = text.isNotEmpty ? text : (url.isNotEmpty ? url : '-');
+    final link = url.trim();
+    final labelWidget = iconText != null && iconText.trim().isNotEmpty
+        ? _buildLabelWithIcon(label: label, iconText: iconText)
+        : pw.Text(label,
+            style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold));
+    return pw.Padding(
+      padding: const pw.EdgeInsets.all(4),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          labelWidget,
+          pw.SizedBox(height: 2),
+          if (link.isNotEmpty)
+            pw.UrlLink(
+              destination: link,
+              child: pw.Text(displayText,
+                  style:
+                      const pw.TextStyle(fontSize: 9, color: PdfColors.blue)),
+            )
+          else
+            pw.Text(displayText, style: const pw.TextStyle(fontSize: 9)),
+        ],
+      ),
+    );
+  }
+
+  static pw.Widget _buildLabelWithIcon({
+    required String label,
+    required String iconText,
+  }) {
+    return pw.Row(
+      children: [
+        _buildIconBadge(iconText),
+        pw.SizedBox(width: 4),
+        pw.Text(label,
+            style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
+      ],
+    );
+  }
+
+  static pw.Widget _buildIconBadge(String text) {
+    final trimmed = text.trim();
+    return pw.Container(
+      width: 14,
+      height: 14,
+      alignment: pw.Alignment.center,
+      decoration: const pw.BoxDecoration(
+        color: PdfColors.grey300,
+        shape: pw.BoxShape.circle,
+      ),
+      child: pw.Text(
+        trimmed,
+        style: pw.TextStyle(fontSize: 6, fontWeight: pw.FontWeight.bold),
+      ),
+    );
   }
 }

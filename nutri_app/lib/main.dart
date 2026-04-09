@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:nutri_app/screens/home_screen.dart';
 import 'package:nutri_app/screens/login_screen.dart';
 import 'package:nutri_app/screens/register_screen.dart';
@@ -44,8 +44,11 @@ import 'package:nutri_app/screens/user_settings_screen.dart';
 import 'package:nutri_app/screens/videos_ejercicios/videos_ejercicios_paciente_screen.dart';
 import 'package:nutri_app/screens/videos_ejercicios/videos_ejercicios_list_screen.dart';
 import 'package:nutri_app/screens/premium_info_screen.dart';
+import 'package:nutri_app/services/app_version_service.dart';
+import 'package:nutri_app/services/ads_service.dart';
 import 'package:nutri_app/services/auth_error_handler.dart';
 import 'package:nutri_app/constants/app_constants.dart';
+import 'package:nutri_app/widgets/premium_ad_shell.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -54,6 +57,7 @@ const _windowHeightKey = 'window_height';
 const _windowXKey = 'window_x';
 const _windowYKey = 'window_y';
 const _windowMaximizedKey = 'window_maximized';
+const _lastSeenAppVersionKey = 'last_seen_app_version_key';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -117,6 +121,7 @@ class AppState extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthService()),
+        ChangeNotifierProvider(create: (_) => AdsService()),
         ChangeNotifierProvider(
           create: (_) => ConfigService(),
         ), // <-- SERVICIO AÃ‘ADIDO
@@ -129,8 +134,87 @@ class AppState extends StatelessWidget {
   }
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(
+        context.read<AuthService>().refreshCurrentUserSnapshot(force: true),
+      );
+      unawaited(context.read<AdsService>().ensureInitialized());
+      unawaited(_showUpdateNoticeIfNeeded());
+    });
+  }
+
+  Future<void> _showUpdateNoticeIfNeeded() async {
+    final prefs = await SharedPreferences.getInstance();
+    final currentVersionKey = await AppVersionService.getVersionKey();
+    final currentVersionLabel = await AppVersionService.getVersionLabel();
+    final previousVersionKey = prefs.getString(_lastSeenAppVersionKey);
+
+    await prefs.setString(_lastSeenAppVersionKey, currentVersionKey);
+
+    if (!mounted ||
+        previousVersionKey == null ||
+        previousVersionKey == currentVersionKey) {
+      return;
+    }
+
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+    if (!mounted) return;
+
+    final routeContext = AuthErrorHandler.navigatorKey.currentContext;
+    if (routeContext == null) {
+      return;
+    }
+
+    final l10n = AppLocalizations.of(routeContext);
+    final messenger = ScaffoldMessenger.maybeOf(routeContext);
+    if (l10n == null || messenger == null) {
+      return;
+    }
+
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 6),
+          behavior: SnackBarBehavior.floating,
+          content: Text(l10n.appUpdatedNotice(currentVersionLabel)),
+          action: SnackBarAction(
+            label: l10n.commonClose,
+            onPressed: messenger.hideCurrentSnackBar,
+          ),
+        ),
+      );
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed && mounted) {
+      unawaited(
+        context.read<AuthService>().refreshCurrentUserSnapshot(force: true),
+      );
+      unawaited(context.read<AdsService>().refreshConfig());
+    }
+  }
 
   bool get _isMobileTitlePlatform =>
       defaultTargetPlatform == TargetPlatform.android ||
@@ -140,6 +224,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final mobileTitle = _isMobileTitlePlatform;
     final colorScheme = ColorScheme.fromSeed(seedColor: Colors.pink);
+    final configService = context.watch<ConfigService>();
 
     return MaterialApp(
       title: AppConstants.appTitle,
@@ -163,10 +248,26 @@ class MyApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      locale: const Locale('es', 'ES'),
-      localizationsDelegates: GlobalMaterialLocalizations.delegates,
-      supportedLocales: const [Locale('es', 'ES'), Locale('en', 'US')],
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: configService.appLocale,
+      localeResolutionCallback: (locale, supportedLocales) {
+        if (locale == null) {
+          return const Locale('es');
+        }
+
+        for (final supportedLocale in supportedLocales) {
+          if (supportedLocale.languageCode == locale.languageCode) {
+            return supportedLocale;
+          }
+        }
+
+        return const Locale('es');
+      },
       debugShowCheckedModeBanner: false,
+      builder: (context, child) {
+        return PremiumAdShell(child: child ?? const SizedBox.shrink());
+      },
       initialRoute: 'splash',
       routes: {
         'splash': (_) => const SplashScreen(),
@@ -215,12 +316,12 @@ class AppScrollBehavior extends MaterialScrollBehavior {
 
   @override
   Set<PointerDeviceKind> get dragDevices => {
-        PointerDeviceKind.touch,
-        PointerDeviceKind.mouse,
-        PointerDeviceKind.trackpad,
-        PointerDeviceKind.stylus,
-        PointerDeviceKind.unknown,
-      };
+    PointerDeviceKind.touch,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.trackpad,
+    PointerDeviceKind.stylus,
+    PointerDeviceKind.unknown,
+  };
 }
 
 class WindowStateHandler extends WindowListener {

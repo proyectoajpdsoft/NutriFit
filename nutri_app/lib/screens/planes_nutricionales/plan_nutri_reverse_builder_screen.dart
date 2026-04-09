@@ -790,7 +790,7 @@ class _PlanNutriReverseBuilderScreenState
               children: [
                 const Expanded(
                   child: Text(
-                    'Seleccionar alimento',
+                    'Alimentos',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                   ),
                 ),

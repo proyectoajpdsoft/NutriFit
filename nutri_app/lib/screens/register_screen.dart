@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:nutri_app/services/config_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/services/api_service.dart';
@@ -42,6 +43,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _submit() async {
+    final l10n = AppLocalizations.of(context)!;
     if (!_formKey.currentState!.validate()) return;
 
     final email = _emailController.text.trim();
@@ -51,9 +53,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         if (exists) {
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content:
-                  Text('Esta cuenta de email no puede usarse, indique otra'),
+            SnackBar(
+              content: Text(l10n.registerEmailUnavailable),
               backgroundColor: Colors.red,
             ),
           );
@@ -66,8 +67,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     if (_passwordController.text != _confirmPasswordController.text) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Las contraseñas no coinciden'),
+        SnackBar(
+          content: Text(l10n.loginPasswordsMismatch),
           backgroundColor: Colors.red,
         ),
       );
@@ -93,9 +94,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-                'Usuario registrado correctamente. Por favor, inicia sesión con tus datos (usuario y contraseña)'),
+          SnackBar(
+            content: Text(l10n.registerSuccessMessage),
             backgroundColor: Colors.green,
           ),
         );
@@ -104,10 +104,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     } on SocketException {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'No se ha podido realizar el proceso. Revise la conexión a Internet',
-            ),
+          SnackBar(
+            content: Text(l10n.registerNetworkError),
             backgroundColor: Colors.red,
           ),
         );
@@ -115,7 +113,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     } catch (e) {
       final errorMessage = e.toString().replaceFirst('Exception: ', '');
       final displayMessage =
-          errorMessage.isNotEmpty ? errorMessage : 'Error al registrarse';
+          errorMessage.isNotEmpty ? errorMessage : l10n.registerGenericError;
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -134,12 +132,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final configService = context.watch<ConfigService>();
     final policy = PasswordPolicyRequirements.fromConfig(configService);
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Iniciar registro'),
+        title: Text(l10n.navStartRegistration),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
@@ -183,33 +182,33 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Text('Crear Cuenta',
+                    Text(l10n.registerCreateAccountTitle,
                         style: Theme.of(context).textTheme.headlineLarge),
                     const SizedBox(height: 24),
                     TextFormField(
                       controller: _nameController,
-                      decoration: const InputDecoration(
-                        labelText: 'Nombre Completo',
+                      decoration: InputDecoration(
+                        labelText: l10n.registerFullNameLabel,
                         border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.person),
+                        prefixIcon: const Icon(Icons.person),
                       ),
                       validator: (value) =>
-                          value!.isEmpty ? 'Introduce tu nombre' : null,
+                          value!.isEmpty ? l10n.registerEnterFullName : null,
                     ),
                     const SizedBox(height: 16),
                     TextFormField(
                       controller: _nickController,
-                      decoration: const InputDecoration(
-                        labelText: 'Usuario',
+                      decoration: InputDecoration(
+                        labelText: l10n.loginUsernameLabel,
                         border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.account_circle),
+                        prefixIcon: const Icon(Icons.account_circle),
                       ),
                       validator: (value) {
                         if (value!.isEmpty) {
-                          return 'Introduce tu usuario';
+                          return l10n.loginEnterUsername;
                         }
                         if (value.length < 3) {
-                          return 'El usuario debe tener al menos 3 caracteres';
+                          return l10n.registerUsernameMinLength;
                         }
                         return null;
                       },
@@ -218,10 +217,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     TextFormField(
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
-                      decoration: const InputDecoration(
-                        labelText: 'Email',
+                      decoration: InputDecoration(
+                        labelText: l10n.registerEmailLabel,
                         border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.email_outlined),
+                        prefixIcon: const Icon(Icons.email_outlined),
                       ),
                       validator: (value) {
                         final v = (value ?? '').trim();
@@ -229,7 +228,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         final emailRegex =
                             RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
                         if (!emailRegex.hasMatch(v)) {
-                          return 'Email no válido';
+                          return l10n.registerInvalidEmail;
                         }
                         return null;
                       },
@@ -244,14 +243,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             _optionalDataExpanded = expanded;
                           });
                         },
-                        title: const Text(
-                          'Datos adicionales',
+                        title: Text(
+                          l10n.registerAdditionalDataTitle,
                           style: TextStyle(fontWeight: FontWeight.w600),
                         ),
                         subtitle: Text(
                           _optionalDataExpanded
-                              ? 'Edad y Altura para IMC/MVP'
-                              : 'Edad y Altura (no obligatorios)',
+                              ? l10n.registerAdditionalDataExpandedSubtitle
+                              : l10n.registerAdditionalDataCollapsedSubtitle,
                           style: TextStyle(
                             color: Colors.grey.shade700,
                             fontSize: 12,
@@ -282,7 +281,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                       const SizedBox(width: 10),
                                       Expanded(
                                         child: Text(
-                                          'Para habilitar el cálculo de IMC, MVP y métricas de salud, indica Edad y Altura (en centímetros).',
+                                          l10n.registerAdditionalDataInfo,
                                           style: TextStyle(
                                             color: Colors.orange.shade900,
                                             fontSize: 13,
@@ -297,10 +296,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 TextFormField(
                                   controller: _edadController,
                                   keyboardType: TextInputType.number,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Edad',
+                                  decoration: InputDecoration(
+                                    labelText: l10n.registerAgeLabel,
                                     border: OutlineInputBorder(),
-                                    prefixIcon: Icon(Icons.cake_outlined),
+                                    prefixIcon: const Icon(Icons.cake_outlined),
                                   ),
                                   validator: (value) {
                                     if ((value ?? '').trim().isEmpty) {
@@ -310,7 +309,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     if (parsed == null ||
                                         parsed <= 0 ||
                                         parsed > 120) {
-                                      return 'Edad no válida';
+                                      return l10n.registerInvalidAge;
                                     }
                                     return null;
                                   },
@@ -319,10 +318,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 TextFormField(
                                   controller: _alturaController,
                                   keyboardType: TextInputType.number,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Altura (cm)',
+                                  decoration: InputDecoration(
+                                    labelText: l10n.registerHeightLabel,
                                     border: OutlineInputBorder(),
-                                    prefixIcon: Icon(Icons.height),
+                                    prefixIcon: const Icon(Icons.height),
                                   ),
                                   validator: (value) {
                                     if ((value ?? '').trim().isEmpty) {
@@ -332,7 +331,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     if (parsed == null ||
                                         parsed < 80 ||
                                         parsed > 250) {
-                                      return 'Altura no válida';
+                                      return l10n.registerInvalidHeight;
                                     }
                                     return null;
                                   },
@@ -348,7 +347,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       controller: _passwordController,
                       obscureText: !_passwordVisible,
                       decoration: InputDecoration(
-                        labelText: 'Contraseña',
+                        labelText: l10n.loginPasswordLabel,
                         border: const OutlineInputBorder(),
                         errorMaxLines: 3,
                         prefixIcon: const Icon(Icons.lock),
@@ -364,7 +363,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         final configService = context.read<ConfigService>();
 
                         if (value!.isEmpty) {
-                          return 'Introduce una contraseña';
+                          return l10n.loginEnterPassword;
                         }
 
                         return configService.validatePassword(value);
@@ -383,7 +382,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       controller: _confirmPasswordController,
                       obscureText: !_confirmPasswordVisible,
                       decoration: InputDecoration(
-                        labelText: 'Confirmar Contraseña',
+                        labelText: l10n.registerConfirmPasswordLabel,
                         border: const OutlineInputBorder(),
                         errorMaxLines: 2,
                         prefixIcon: const Icon(Icons.lock),
@@ -396,8 +395,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   !_confirmPasswordVisible),
                         ),
                       ),
-                      validator: (value) =>
-                          value!.isEmpty ? 'Confirma tu contraseña' : null,
+                      validator: (value) => value!.isEmpty
+                          ? l10n.registerConfirmPasswordRequired
+                          : null,
                     ),
                     const SizedBox(height: 24),
                     _isLoading
@@ -407,13 +407,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             style: ElevatedButton.styleFrom(
                               minimumSize: const Size(double.infinity, 50),
                             ),
-                            child: const Text('Crear cuenta'),
+                            child: Text(l10n.registerCreateAccountButton),
                           ),
                     const SizedBox(height: 16),
                     TextButton(
                       onPressed: () =>
                           Navigator.of(context).pushReplacementNamed('login'),
-                      child: const Text('¿Ya tienes cuenta? Inicia sesión'),
+                      child: Text(l10n.registerAlreadyHaveAccount),
                     ),
                   ],
                 ),

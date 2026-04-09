@@ -161,12 +161,19 @@ class TokenValidator {
             $selectFields[] = "premium_periodo_meses";
         }
 
+        $whereParts = array(
+            "token = :token",
+            "(token_expiracion IS NULL OR token_expiracion > NOW())",
+            "activo = 'S'",
+            "accesoweb = 'S'",
+        );
+        if (isset($columns['eliminado'])) {
+            $whereParts[] = "COALESCE(eliminado, 'N') <> 'S'";
+        }
+
         $query = "SELECT " . implode(', ', $selectFields) . "
                   FROM usuario 
-                  WHERE token = :token 
-                  AND (token_expiracion IS NULL OR token_expiracion > NOW()) 
-                  AND activo = 'S' 
-                  AND accesoweb = 'S'
+                  WHERE " . implode(' AND ', $whereParts) . "
                   LIMIT 1";
         
         try {

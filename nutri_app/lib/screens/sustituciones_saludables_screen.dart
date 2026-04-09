@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nutri_app/models/sustitucion_saludable.dart';
 import 'package:nutri_app/services/api_service.dart';
@@ -11,11 +12,54 @@ import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/services/consejo_receta_pdf_service.dart';
 import 'package:provider/provider.dart';
 
+import '../widgets/premium_feature_dialog_helper.dart';
+import '../widgets/premium_upsell_card.dart';
+
 Future<String> _buildNutriFitClipboardSignature(BuildContext context) async {
   final api = context.read<ApiService>();
   final param = await api.getParametro('nutricionista_nombre');
   final nombre = (param?['valor']?.toString() ?? '').trim();
   return nombre.isEmpty ? 'App NutriFit' : 'App NutriFit $nombre';
+}
+
+bool _canAccessSustitucionesCatalog(AuthService authService) {
+  return authService.isPremium ||
+      authService.userType == 'Nutricionista' ||
+      authService.userType == 'Administrador';
+}
+
+Future<void> _showPremiumRequiredForSustitucionesTools(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
+  return PremiumFeatureDialogHelper.show(
+    context,
+    message: l10n.substitutionsPremiumToolsMessage,
+  );
+}
+
+Future<void> _showPremiumRequiredForSustitucionesCopyPdf(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
+  return PremiumFeatureDialogHelper.show(
+    context,
+    message: l10n.substitutionsPremiumCopyPdfMessage,
+  );
+}
+
+Future<void> _showPremiumRequiredForSustitucionesExplore(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
+  return PremiumFeatureDialogHelper.show(
+    context,
+    message: l10n.substitutionsPremiumExploreMessage,
+  );
+}
+
+Future<void> _showPremiumRequiredForSustitucionesEngagement(
+  BuildContext context,
+) {
+  final l10n = AppLocalizations.of(context)!;
+  return PremiumFeatureDialogHelper.show(
+    context,
+    message: l10n.substitutionsPremiumEngagementMessage,
+  );
 }
 
 class SustitucionesSaludablesScreen extends StatefulWidget {
@@ -39,6 +83,8 @@ class _SustitucionesSaludablesScreenState
     extends State<SustitucionesSaludablesScreen>
     with SingleTickerProviderStateMixin {
   static const int _pageSize = 20;
+  static const String _paramNonPremiumPreviewCodes =
+      'codigos_sustituciones_no_premium';
 
   final Map<String, MemoryImage> _coverCache = <String, MemoryImage>{};
   Timer? _searchDebounce;
@@ -70,12 +116,12 @@ class _SustitucionesSaludablesScreenState
   bool _sortAscending = false;
   List<int> _selectedCategoriaIds = <int>[];
   bool _categoriaMatchAll = false;
+  List<int>? _nonPremiumPreviewCodes;
+  List<SustitucionSaludable> _previewItems = <SustitucionSaludable>[];
 
   bool get _isPremiumEligible {
     final auth = context.read<AuthService>();
-    return auth.isPremium ||
-        auth.userType == 'Nutricionista' ||
-        auth.userType == 'Administrador';
+    return _canAccessSustitucionesCatalog(auth);
   }
 
   String? get _userCode => context.read<AuthService>().userCode;
@@ -227,6 +273,9 @@ class _SustitucionesSaludablesScreenState
       _loadDestacadas();
       _loadTodas();
       _loadFavoritas();
+    } else {
+      _loadTodasTotal(_searchQuery.trim());
+      _loadNonPremiumPreview();
     }
   }
 
@@ -560,6 +609,103 @@ class _SustitucionesSaludablesScreenState
     }
   }
 
+  List<int>? _parsePreviewCodes(String? rawValue) {
+    final raw =
+        (rawValue ?? '').trim().replaceAll(';', ',').replaceAll('|', ',');
+    if (raw.isEmpty) return null;
+
+    final codes = raw
+        .split(',')
+        .map((item) => int.tryParse(item.trim()))
+        .whereType<int>()
+        .where((value) => value > 0)
+        .toList(growable: false);
+
+    if (codes.isEmpty) return null;
+    return codes;
+  }
+
+  List<SustitucionSaludable> _buildPreviewItems(
+    List<SustitucionSaludable> source,
+    List<int>? configuredCodes,
+  ) {
+    if (configuredCodes != null && configuredCodes.isNotEmpty) {
+      final byCode = <int, SustitucionSaludable>{
+        for (final item in source)
+          if (item.codigo != null) item.codigo!: item,
+      };
+      final configuredItems = configuredCodes
+          .map((code) => byCode[code])
+          .whereType<SustitucionSaludable>()
+          .toList(growable: false);
+      if (configuredItems.isNotEmpty) {
+        return configuredItems;
+      }
+    }
+
+    final preview = List<SustitucionSaludable>.from(source);
+    preview.sort((a, b) {
+      final dateA = a.fechaa ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final dateB = b.fechaa ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final byDate = dateB.compareTo(dateA);
+      if (byDate != 0) return byDate;
+      return a.titulo.toLowerCase().compareTo(b.titulo.toLowerCase());
+    });
+    return preview.take(3).toList(growable: false);
+  }
+
+  Future<void> _loadNonPremiumPreview() async {
+    setState(() {
+      _loadingTodas = true;
+    });
+
+    try {
+      final apiService = context.read<ApiService>();
+      final previewCodesFuture = apiService
+          .getParametroValor(_paramNonPremiumPreviewCodes)
+          .then(_parsePreviewCodes)
+          .catchError((_) => null);
+      final response = await apiService.get(
+        'api/sustituciones_saludables.php?publico=1&limit=200',
+      );
+      if (response.statusCode == 200 && mounted) {
+        final List<dynamic> data = jsonDecode(response.body) as List<dynamic>;
+        final items = data
+            .map(
+              (item) => SustitucionSaludable.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ),
+            )
+            .toList(growable: false);
+        final previewCodes = await previewCodesFuture;
+        if (!mounted) return;
+        setState(() {
+          _todas = items;
+          _nonPremiumPreviewCodes = previewCodes;
+          _previewItems = _buildPreviewItems(items, previewCodes);
+        });
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _todas = <SustitucionSaludable>[];
+        _previewItems = <SustitucionSaludable>[];
+        _nonPremiumPreviewCodes = null;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingTodas = false;
+        });
+      }
+    }
+  }
+
+  String _catalogHighlightText(int total, String label) {
+    final roundedDown = total - (total % 10);
+    return ' (con más de $roundedDown $label)';
+  }
+
   String _cacheKey(SustitucionSaludable item) {
     final raw = (item.imagenPortada ?? item.imagenMiniatura ?? '').trim();
     if (raw.isEmpty) {
@@ -731,6 +877,7 @@ class _SustitucionesSaludablesScreenState
   }
 
   Future<void> _copySustitucionToClipboard(SustitucionSaludable item) async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       final description =
           item.texto.isEmpty ? item.resumenPrincipal : item.texto;
@@ -739,8 +886,8 @@ class _SustitucionesSaludablesScreenState
       await Clipboard.setData(ClipboardData(text: textToCopy));
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Copiado al portapapeles'),
+        SnackBar(
+          content: Text(l10n.commonCopiedToClipboard),
           duration: Duration(seconds: 2),
         ),
       );
@@ -748,7 +895,7 @@ class _SustitucionesSaludablesScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error al copiar: ${e.toString()}'),
+          content: Text(l10n.commonCopyError(e.toString())),
           backgroundColor: Colors.red,
         ),
       );
@@ -758,6 +905,7 @@ class _SustitucionesSaludablesScreenState
   Future<void> _generateSustitucionPdfFromCard(
     SustitucionSaludable item,
   ) async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       final apiService = context.read<ApiService>();
       final description =
@@ -776,7 +924,7 @@ class _SustitucionesSaludablesScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error al generar PDF: ${e.toString()}'),
+          content: Text(l10n.commonGeneratePdfError(e.toString())),
           backgroundColor: Colors.red,
         ),
       );
@@ -784,6 +932,7 @@ class _SustitucionesSaludablesScreenState
   }
 
   Future<void> _showCategoriaFilterDialog() async {
+    final l10n = AppLocalizations.of(context)!;
     if (_categoriasCatalogo.isEmpty && !_loadingCategorias) {
       await _loadCategorias();
     }
@@ -800,14 +949,15 @@ class _SustitucionesSaludablesScreenState
           titlePadding: const EdgeInsets.fromLTRB(12, 8, 8, 0),
           title: Row(
             children: [
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Filtrar por categorías',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                  l10n.commonFilterByCategories,
+                  style: const TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w600),
                 ),
               ),
               IconButton(
-                tooltip: 'Cerrar',
+                tooltip: l10n.commonClose,
                 onPressed: () => Navigator.pop(dialogContext),
                 icon: const Icon(Icons.close, size: 18),
                 style: IconButton.styleFrom(
@@ -867,8 +1017,8 @@ class _SustitucionesSaludablesScreenState
                 SwitchListTile.adaptive(
                   value: tempAll,
                   onChanged: (value) => setDialogState(() => tempAll = value),
-                  title: const Text('Coincidir todas'),
-                  subtitle: const Text('Exige todas las categorías elegidas.'),
+                  title: Text(l10n.commonMatchAll),
+                  subtitle: Text(l10n.commonRequireAllSelected),
                 ),
               ],
             ),
@@ -883,7 +1033,7 @@ class _SustitucionesSaludablesScreenState
                 _savePreferences();
                 Navigator.pop(dialogContext);
               },
-              child: const Text('Limpiar'),
+              child: Text(l10n.commonClear),
             ),
             ElevatedButton(
               onPressed: () {
@@ -897,7 +1047,7 @@ class _SustitucionesSaludablesScreenState
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('Aplicar'),
+                  Text(l10n.commonApply),
                   const SizedBox(width: 6),
                   Container(
                     constraints:
@@ -932,12 +1082,18 @@ class _SustitucionesSaludablesScreenState
   }
 
   Future<void> _openDetail(SustitucionSaludable item) async {
+    final canAccessFullCatalog = _isPremiumEligible;
     final result = await Navigator.push<SustitucionSaludable>(
       context,
       MaterialPageRoute<SustitucionSaludable>(
         builder: (_) => SustitucionSaludableDetailScreen(
           item: item,
           initialTabIndex: _tabController.index,
+          allowEngagementActions: canAccessFullCatalog,
+          allowCopyAndPdf: canAccessFullCatalog,
+          allowDiscoveryNavigation: canAccessFullCatalog,
+          onRequestPremiumAccess: (message) =>
+              PremiumFeatureDialogHelper.show(context, message: message),
         ),
       ),
     );
@@ -946,45 +1102,11 @@ class _SustitucionesSaludablesScreenState
     }
   }
 
-  Widget _buildPremiumRequired() {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Sustituciones')),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.workspace_premium,
-                size: 54,
-                color: Colors.amber.shade700,
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Esta utilidad está disponible para usuarios Premium.',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'Desde aquí podrás consultar sustituciones saludables, filtros por categorías, favoritos y equivalencias rápidas sin romper tu plan.',
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 18),
-              ElevatedButton.icon(
-                onPressed: () => Navigator.pushNamed(context, '/premium_info'),
-                icon: const Icon(Icons.workspace_premium),
-                label: const Text('Hazte premium'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCard(SustitucionSaludable item) {
+  Widget _buildCard(
+    SustitucionSaludable item, {
+    required bool canAccessFullCatalog,
+  }) {
+    final l10n = AppLocalizations.of(context)!;
     final cover = _coverProvider(item);
     final description = item.texto.isEmpty ? item.resumenPrincipal : item.texto;
     final isDescriptionTruncated = description.length > 100;
@@ -1035,7 +1157,7 @@ class _SustitucionesSaludablesScreenState
                     ),
                     child: Text(
                       item.objetivoMacro.trim().isEmpty
-                          ? 'Sustitución premium'
+                          ? l10n.substitutionsDefaultBadge
                           : item.objetivoMacro,
                       style: const TextStyle(
                         color: Colors.white,
@@ -1051,7 +1173,11 @@ class _SustitucionesSaludablesScreenState
               child: Row(
                 children: [
                   IconButton(
-                    onPressed: () => _toggleLike(item),
+                    onPressed: canAccessFullCatalog
+                        ? () => _toggleLike(item)
+                        : () => _showPremiumRequiredForSustitucionesEngagement(
+                              context,
+                            ),
                     icon: Icon(
                       item.meGusta == 'S'
                           ? Icons.favorite
@@ -1060,12 +1186,16 @@ class _SustitucionesSaludablesScreenState
                     ),
                   ),
                   Text(
-                    '${item.totalLikes} me gusta',
+                    l10n.commonLikesCount(item.totalLikes),
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(width: 8),
                   IconButton(
-                    onPressed: () => _toggleFavorito(item),
+                    onPressed: canAccessFullCatalog
+                        ? () => _toggleFavorito(item)
+                        : () => _showPremiumRequiredForSustitucionesEngagement(
+                              context,
+                            ),
                     icon: Icon(
                       item.favorito == 'S'
                           ? Icons.bookmark
@@ -1076,13 +1206,21 @@ class _SustitucionesSaludablesScreenState
                   const Spacer(),
                   IconButton(
                     icon: const Icon(Icons.copy, size: 18),
-                    onPressed: () => _copySustitucionToClipboard(item),
-                    tooltip: 'Copiar',
+                    onPressed: canAccessFullCatalog
+                        ? () => _copySustitucionToClipboard(item)
+                        : () => _showPremiumRequiredForSustitucionesCopyPdf(
+                              context,
+                            ),
+                    tooltip: l10n.commonCopy,
                   ),
                   IconButton(
                     icon: const Icon(Icons.picture_as_pdf, size: 18),
-                    onPressed: () => _generateSustitucionPdfFromCard(item),
-                    tooltip: 'PDF',
+                    onPressed: canAccessFullCatalog
+                        ? () => _generateSustitucionPdfFromCard(item)
+                        : () => _showPremiumRequiredForSustitucionesCopyPdf(
+                              context,
+                            ),
+                    tooltip: l10n.commonGeneratePdf,
                   ),
                 ],
               ),
@@ -1103,6 +1241,10 @@ class _SustitucionesSaludablesScreenState
                     text: shortDescription,
                     style: TextStyle(color: Colors.grey[700]),
                     onHashtagTap: (hashtag) {
+                      if (!canAccessFullCatalog) {
+                        _showPremiumRequiredForSustitucionesExplore(context);
+                        return;
+                      }
                       Navigator.push(
                         context,
                         MaterialPageRoute<void>(
@@ -1116,8 +1258,8 @@ class _SustitucionesSaludablesScreenState
                   ),
                   if (isDescriptionTruncated) const SizedBox(height: 4),
                   if (isDescriptionTruncated)
-                    const Text(
-                      'Toca para ver el detalle completo',
+                    Text(
+                      l10n.substitutionsTapForDetail,
                       style: TextStyle(color: Colors.blue, fontSize: 12),
                       textAlign: TextAlign.center,
                     ),
@@ -1131,6 +1273,7 @@ class _SustitucionesSaludablesScreenState
   }
 
   Widget _buildTabBody({
+    required bool canAccessFullCatalog,
     required bool loading,
     required List<SustitucionSaludable> source,
     required String emptyText,
@@ -1176,7 +1319,10 @@ class _SustitucionesSaludablesScreenState
                 child: Center(child: CircularProgressIndicator()),
               );
             }
-            return _buildCard(items[index]);
+            return _buildCard(
+              items[index],
+              canAccessFullCatalog: canAccessFullCatalog,
+            );
           },
         ),
       ),
@@ -1185,18 +1331,19 @@ class _SustitucionesSaludablesScreenState
 
   @override
   Widget build(BuildContext context) {
-    if (!_isPremiumEligible) {
-      return _buildPremiumRequired();
-    }
+    final l10n = AppLocalizations.of(context)!;
+    final canAccessFullCatalog = _isPremiumEligible;
+    final currentCount =
+        canAccessFullCatalog ? _currentTabCount() : _totalTodas;
 
     return Scaffold(
       appBar: AppBar(
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Flexible(
+            Flexible(
               child: Text(
-                'Sustituciones',
+                l10n.navSubstitutions,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -1208,7 +1355,7 @@ class _SustitucionesSaludablesScreenState
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
-                '${_currentTabCount()}',
+                '$currentCount',
                 style: const TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.w700,
@@ -1221,15 +1368,21 @@ class _SustitucionesSaludablesScreenState
         actions: [
           if (!_searchVisible)
             IconButton(
-              tooltip: 'Buscar',
-              onPressed: _toggleSearchVisibility,
+              tooltip: l10n.commonSearch,
+              onPressed: canAccessFullCatalog
+                  ? _toggleSearchVisibility
+                  : () => _showPremiumRequiredForSustitucionesTools(context),
               icon: const Icon(Icons.search),
             ),
           IconButton(
             tooltip: _selectedCategoriaIds.isEmpty
-                ? 'Filtrar categorias'
-                : 'Filtrar categorias (${_selectedCategoriaIds.length})',
-            onPressed: _showCategoriaFilterDialog,
+                ? l10n.commonFilterByCategories
+                : l10n.commonFilterByCategoriesCount(
+                    _selectedCategoriaIds.length,
+                  ),
+            onPressed: canAccessFullCatalog
+                ? _showCategoriaFilterDialog
+                : () => _showPremiumRequiredForSustitucionesTools(context),
             icon: Stack(
               clipBehavior: Clip.none,
               children: [
@@ -1261,19 +1414,23 @@ class _SustitucionesSaludablesScreenState
             ),
           ),
           PopupMenuButton<String>(
-            tooltip: 'Más opciones',
+            tooltip: l10n.commonMoreOptions,
             icon: const Icon(Icons.more_vert),
             onSelected: (value) {
+              if (!canAccessFullCatalog) {
+                _showPremiumRequiredForSustitucionesTools(context);
+                return;
+              }
               _handleAppBarMenuAction(value);
             },
             itemBuilder: (_) => [
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: 'search',
                 child: Row(
                   children: [
-                    Icon(Icons.search, size: 18),
-                    SizedBox(width: 10),
-                    Text('Buscar'),
+                    const Icon(Icons.search, size: 18),
+                    const SizedBox(width: 10),
+                    Text(l10n.commonSearch),
                   ],
                 ),
               ),
@@ -1315,17 +1472,17 @@ class _SustitucionesSaludablesScreenState
                         ),
                     ],
                   ),
-                  title: const Text('Filtrar'),
+                  title: Text(l10n.commonFilter),
                   contentPadding: EdgeInsets.zero,
                 ),
               ),
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: 'refresh',
                 child: Row(
                   children: [
-                    Icon(Icons.refresh, size: 18),
-                    SizedBox(width: 10),
-                    Text('Actualizar'),
+                    const Icon(Icons.refresh, size: 18),
+                    const SizedBox(width: 10),
+                    Text(l10n.commonRefresh),
                   ],
                 ),
               ),
@@ -1335,7 +1492,7 @@ class _SustitucionesSaludablesScreenState
                 checked: _sortMode == 'titulo',
                 child: Row(
                   children: [
-                    const Expanded(child: Text('Ordenar Título')),
+                    Expanded(child: Text(l10n.commonSortByTitle)),
                     if (_sortMode == 'titulo')
                       Icon(
                         _sortAscending
@@ -1351,7 +1508,7 @@ class _SustitucionesSaludablesScreenState
                 checked: _sortMode == 'fecha',
                 child: Row(
                   children: [
-                    const Expanded(child: Text('Ordenar Recientes')),
+                    Expanded(child: Text(l10n.commonSortByRecent)),
                     if (_sortMode == 'fecha')
                       Icon(
                         _sortAscending
@@ -1367,7 +1524,7 @@ class _SustitucionesSaludablesScreenState
                 checked: _sortMode == 'popular',
                 child: Row(
                   children: [
-                    const Expanded(child: Text('Ordenar Populares')),
+                    Expanded(child: Text(l10n.commonSortByPopular)),
                     if (_sortMode == 'popular')
                       Icon(
                         _sortAscending
@@ -1383,25 +1540,37 @@ class _SustitucionesSaludablesScreenState
         ],
         bottom: TabBar(
           controller: _tabController,
-          tabs: const [
-            Tab(icon: Icon(Icons.auto_awesome), text: 'Destacadas'),
-            Tab(icon: Icon(Icons.swap_horiz), text: 'Todas'),
-            Tab(icon: Icon(Icons.bookmark), text: 'Favoritas'),
+          onTap: canAccessFullCatalog
+              ? null
+              : (index) {
+                  _showPremiumRequiredForSustitucionesTools(context);
+                  _tabController.animateTo(0);
+                },
+          tabs: [
+            Tab(
+                icon: const Icon(Icons.auto_awesome),
+                text: l10n.commonFeaturedFeminineTab),
+            Tab(
+                icon: const Icon(Icons.swap_horiz),
+                text: l10n.commonAllFeminineTab),
+            Tab(
+                icon: const Icon(Icons.bookmark),
+                text: l10n.commonFavoritesFeminineTab),
           ],
         ),
       ),
       body: Column(
         children: [
-          if (_searchVisible)
+          if (canAccessFullCatalog && _searchVisible)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
               child: TextField(
                 controller: _searchCtrl,
                 decoration: InputDecoration(
-                  labelText: 'Buscar sustituciones o hashtags',
+                  labelText: l10n.substitutionsSearchLabel,
                   prefixIcon: const Icon(Icons.search),
                   suffixIcon: IconButton(
-                    tooltip: 'Ocultar búsqueda',
+                    tooltip: l10n.commonHideSearch,
                     icon: const Icon(Icons.close),
                     onPressed: _toggleSearchVisibility,
                   ),
@@ -1414,35 +1583,79 @@ class _SustitucionesSaludablesScreenState
               ),
             ),
           Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              children: [
-                _buildTabBody(
-                  loading: _loadingDestacadas,
-                  source: _destacadas,
-                  emptyText: 'No hay sustituciones destacadas.',
-                  hasMore: _hasMoreDestacadas,
-                  loadingMore: _loadingMoreDestacadas,
-                  onLoadMore: () => _loadDestacadas(),
-                ),
-                _buildTabBody(
-                  loading: _loadingTodas,
-                  source: _todas,
-                  emptyText: 'No hay sustituciones disponibles.',
-                  hasMore: _hasMoreTodas,
-                  loadingMore: _loadingMoreTodas,
-                  onLoadMore: () => _loadTodas(),
-                ),
-                _buildTabBody(
-                  loading: _loadingFavoritas,
-                  source: _favoritas,
-                  emptyText: 'No tienes sustituciones favoritas todavía.',
-                  hasMore: _hasMoreFavoritas,
-                  loadingMore: _loadingMoreFavoritas,
-                  onLoadMore: () => _loadFavoritas(),
-                ),
-              ],
-            ),
+            child: canAccessFullCatalog
+                ? TabBarView(
+                    controller: _tabController,
+                    children: [
+                      _buildTabBody(
+                        canAccessFullCatalog: true,
+                        loading: _loadingDestacadas,
+                        source: _destacadas,
+                        emptyText: l10n.substitutionsEmptyFeatured,
+                        hasMore: _hasMoreDestacadas,
+                        loadingMore: _loadingMoreDestacadas,
+                        onLoadMore: () => _loadDestacadas(),
+                      ),
+                      _buildTabBody(
+                        canAccessFullCatalog: true,
+                        loading: _loadingTodas,
+                        source: _todas,
+                        emptyText: l10n.substitutionsEmptyAll,
+                        hasMore: _hasMoreTodas,
+                        loadingMore: _loadingMoreTodas,
+                        onLoadMore: () => _loadTodas(),
+                      ),
+                      _buildTabBody(
+                        canAccessFullCatalog: true,
+                        loading: _loadingFavoritas,
+                        source: _favoritas,
+                        emptyText: l10n.substitutionsEmptyFavorites,
+                        hasMore: _hasMoreFavoritas,
+                        loadingMore: _loadingMoreFavoritas,
+                        onLoadMore: () => _loadFavoritas(),
+                      ),
+                    ],
+                  )
+                : _loadingTodas
+                    ? const Center(child: CircularProgressIndicator())
+                    : RefreshIndicator(
+                        onRefresh: () async {
+                          await _loadTodasTotal(_searchQuery.trim());
+                          await _loadNonPremiumPreview();
+                        },
+                        child: ListView.builder(
+                          padding: EdgeInsets.only(
+                            top: 8,
+                            bottom: 88 + MediaQuery.of(context).padding.bottom,
+                          ),
+                          itemCount: _previewItems.length + 1,
+                          itemBuilder: (context, index) {
+                            if (index == _previewItems.length) {
+                              return Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                                child: PremiumUpsellCard(
+                                  title: l10n.substitutionsPremiumTitle,
+                                  subtitle: l10n.substitutionsPremiumSubtitle,
+                                  subtitleHighlight:
+                                      l10n.substitutionsCatalogHighlight(
+                                    _totalTodas - (_totalTodas % 10),
+                                  ),
+                                  subtitleHighlightColor: Colors.pink.shade700,
+                                  onPressed: () => Navigator.pushNamed(
+                                    context,
+                                    '/premium_info',
+                                  ),
+                                ),
+                              );
+                            }
+                            return _buildCard(
+                              _previewItems[index],
+                              canAccessFullCatalog: false,
+                            );
+                          },
+                        ),
+                      ),
           ),
         ],
       ),
@@ -1455,10 +1668,18 @@ class SustitucionSaludableDetailScreen extends StatefulWidget {
     super.key,
     required this.item,
     this.initialTabIndex = 0,
+    this.allowEngagementActions = true,
+    this.allowCopyAndPdf = true,
+    this.allowDiscoveryNavigation = true,
+    this.onRequestPremiumAccess,
   });
 
   final SustitucionSaludable item;
   final int initialTabIndex;
+  final bool allowEngagementActions;
+  final bool allowCopyAndPdf;
+  final bool allowDiscoveryNavigation;
+  final Future<void> Function(String message)? onRequestPremiumAccess;
 
   @override
   State<SustitucionSaludableDetailScreen> createState() =>
@@ -1527,6 +1748,14 @@ class _SustitucionSaludableDetailScreenState
     required String categoriaNombre,
     int? categoriaId,
   }) async {
+    if (!widget.allowDiscoveryNavigation) {
+      final l10n = AppLocalizations.of(context)!;
+      await _requestPremiumAccess(
+        l10n.substitutionsPremiumExploreMessage,
+      );
+      return;
+    }
+
     await Navigator.push<void>(
       context,
       MaterialPageRoute<void>(
@@ -1555,6 +1784,19 @@ class _SustitucionSaludableDetailScreenState
   }
 
   String? get _userCode => context.read<AuthService>().userCode;
+
+  Future<void> _requestPremiumAccess(String message) async {
+    final callback = widget.onRequestPremiumAccess;
+    if (callback != null) {
+      await callback(message);
+      return;
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
 
   String _cleanTextForSimilarity(String text) {
     return text
@@ -1704,6 +1946,7 @@ class _SustitucionSaludableDetailScreenState
   }
 
   String _buildResumenRelacionado(SustitucionSaludable item) {
+    final l10n = AppLocalizations.of(context)!;
     final cleaned = item.resumenPrincipal
         .replaceAllMapped(_genericTokenRegex, (match) {
           final raw = (match.group(1) ?? '').trim();
@@ -1721,29 +1964,30 @@ class _SustitucionSaludableDetailScreenState
           if (structured != null) {
             final prefix = (structured.group(1) ?? '').trim();
             final type = (structured.group(2) ?? '').toLowerCase();
-            final article = type == 'sustitucion_saludable' ? 'la' : 'el';
             String typeLabel;
             switch (type) {
               case 'consejo':
-                typeLabel = 'consejo';
+                typeLabel = l10n.commonTipItem;
                 break;
               case 'receta':
-                typeLabel = 'receta';
+                typeLabel = l10n.commonRecipeItem;
                 break;
               case 'sustitucion_saludable':
-                typeLabel = 'sustitución saludable';
+                typeLabel = l10n.substitutionsDetailTitle.toLowerCase();
                 break;
               case 'aditivo':
-                typeLabel = 'aditivo';
+                typeLabel = l10n.commonAdditiveItem;
                 break;
               case 'suplemento':
-                typeLabel = 'suplemento';
+                typeLabel = l10n.commonSupplementItem;
                 break;
               default:
                 typeLabel = type;
             }
-            final start = prefix.isEmpty ? 'Véase' : prefix;
-            return '$start enlace a $article $typeLabel';
+            final linkText = l10n.commonSeeLinkToType(typeLabel);
+            return prefix.isEmpty
+                ? linkText
+                : '$prefix ${linkText.toLowerCase()}';
           }
 
           return raw;
@@ -1796,6 +2040,13 @@ class _SustitucionSaludableDetailScreenState
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
           onTap: () {
+            if (!widget.allowDiscoveryNavigation) {
+              final l10n = AppLocalizations.of(context)!;
+              _requestPremiumAccess(
+                l10n.substitutionsPremiumExploreMessage,
+              );
+              return;
+            }
             Navigator.push(
               context,
               MaterialPageRoute<void>(
@@ -1869,6 +2120,14 @@ class _SustitucionSaludableDetailScreenState
   }
 
   Future<void> _toggleLike() async {
+    if (!widget.allowEngagementActions) {
+      final l10n = AppLocalizations.of(context)!;
+      await _requestPremiumAccess(
+        l10n.substitutionsPremiumEngagementMessage,
+      );
+      return;
+    }
+
     final userCode = _userCode;
     if (userCode == null || userCode.isEmpty) {
       return;
@@ -1897,6 +2156,14 @@ class _SustitucionSaludableDetailScreenState
   }
 
   Future<void> _toggleFavorito() async {
+    if (!widget.allowEngagementActions) {
+      final l10n = AppLocalizations.of(context)!;
+      await _requestPremiumAccess(
+        l10n.substitutionsPremiumEngagementMessage,
+      );
+      return;
+    }
+
     final userCode = _userCode;
     if (userCode == null || userCode.isEmpty) {
       return;
@@ -1917,6 +2184,14 @@ class _SustitucionSaludableDetailScreenState
   }
 
   Future<void> _copyToClipboard() async {
+    final l10n = AppLocalizations.of(context)!;
+    if (!widget.allowCopyAndPdf) {
+      await _requestPremiumAccess(
+        l10n.substitutionsPremiumCopyPdfMessage,
+      );
+      return;
+    }
+
     try {
       final description =
           _item.texto.isEmpty ? _item.resumenPrincipal : _item.texto;
@@ -1925,8 +2200,8 @@ class _SustitucionSaludableDetailScreenState
       await Clipboard.setData(ClipboardData(text: textToCopy));
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Copiado al portapapeles'),
+        SnackBar(
+          content: Text(l10n.commonCopiedToClipboard),
           duration: Duration(seconds: 2),
         ),
       );
@@ -1934,7 +2209,7 @@ class _SustitucionSaludableDetailScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error al copiar: ${e.toString()}'),
+          content: Text(l10n.commonCopyError(e.toString())),
           backgroundColor: Colors.red,
         ),
       );
@@ -1942,6 +2217,14 @@ class _SustitucionSaludableDetailScreenState
   }
 
   Future<void> _generatePdf() async {
+    final l10n = AppLocalizations.of(context)!;
+    if (!widget.allowCopyAndPdf) {
+      await _requestPremiumAccess(
+        l10n.substitutionsPremiumCopyPdfMessage,
+      );
+      return;
+    }
+
     try {
       final apiService = context.read<ApiService>();
       await ConsejoRecetaPdfService.generatePdf(
@@ -1963,7 +2246,7 @@ class _SustitucionSaludableDetailScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error al generar PDF: ${e.toString()}'),
+          content: Text(l10n.commonGeneratePdfError(e.toString())),
           backgroundColor: Colors.red,
         ),
       );
@@ -1972,6 +2255,7 @@ class _SustitucionSaludableDetailScreenState
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final imageRaw =
         (_item.imagenPortada ?? _item.imagenMiniatura ?? '').trim();
     final imageBytes = imageRaw.isNotEmpty ? base64Decode(imageRaw) : null;
@@ -1980,7 +2264,7 @@ class _SustitucionSaludableDetailScreenState
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Sustitución saludable'),
+        title: Text(l10n.substitutionsDetailTitle),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -2034,7 +2318,7 @@ class _SustitucionSaludableDetailScreenState
                         ),
                       ),
                       Text(
-                        '${_item.totalLikes} me gusta',
+                        l10n.commonLikesCount(_item.totalLikes),
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(width: 8),
@@ -2051,12 +2335,12 @@ class _SustitucionSaludableDetailScreenState
                       IconButton(
                         icon: const Icon(Icons.copy, size: 18),
                         onPressed: _copyToClipboard,
-                        tooltip: 'Copiar',
+                        tooltip: l10n.commonCopy,
                       ),
                       IconButton(
                         icon: const Icon(Icons.picture_as_pdf, size: 18),
                         onPressed: _generatePdf,
-                        tooltip: 'PDF',
+                        tooltip: l10n.commonGeneratePdf,
                       ),
                     ],
                   ),
@@ -2091,7 +2375,7 @@ class _SustitucionSaludableDetailScreenState
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Cambio recomendado',
+                        l10n.substitutionsRecommendedChange,
                         style: Theme.of(context)
                             .textTheme
                             .titleSmall
@@ -2100,20 +2384,20 @@ class _SustitucionSaludableDetailScreenState
                       const SizedBox(height: 12),
                       _DetailRow(
                         icon: Icons.fastfood_outlined,
-                        label: 'Si no tienes',
+                        label: l10n.substitutionsIfUnavailable,
                         value: _item.alimentoOrigen,
                       ),
                       const SizedBox(height: 10),
                       _DetailRow(
                         icon: Icons.swap_horiz,
-                        label: 'Usa',
+                        label: l10n.substitutionsUse,
                         value: _item.sustitutoPrincipal,
                       ),
                       if (_item.equivalenciaTexto.trim().isNotEmpty) ...[
                         const SizedBox(height: 10),
                         _DetailRow(
                           icon: Icons.scale_outlined,
-                          label: 'Equivalencia',
+                          label: l10n.substitutionsEquivalence,
                           value: _item.equivalenciaTexto,
                         ),
                       ],
@@ -2121,7 +2405,7 @@ class _SustitucionSaludableDetailScreenState
                         const SizedBox(height: 10),
                         _DetailRow(
                           icon: Icons.track_changes_outlined,
-                          label: 'Objetivo',
+                          label: l10n.substitutionsGoal,
                           value: _item.objetivoMacro,
                         ),
                       ],
@@ -2131,7 +2415,7 @@ class _SustitucionSaludableDetailScreenState
                 if (_item.texto.trim().isNotEmpty) ...[
                   const SizedBox(height: 18),
                   Text(
-                    'Notas y contexto',
+                    l10n.substitutionsNotesContext,
                     style: Theme.of(context)
                         .textTheme
                         .titleMedium
@@ -2142,6 +2426,12 @@ class _SustitucionSaludableDetailScreenState
                     text: _item.texto,
                     style: const TextStyle(fontSize: 15, height: 1.4),
                     onHashtagTap: (hashtag) {
+                      if (!widget.allowDiscoveryNavigation) {
+                        _requestPremiumAccess(
+                          l10n.substitutionsPremiumExploreMessage,
+                        );
+                        return;
+                      }
                       Navigator.push(
                         context,
                         MaterialPageRoute<void>(
@@ -2165,8 +2455,8 @@ class _SustitucionSaludableDetailScreenState
                         color: Colors.amber.shade600,
                       ),
                       const SizedBox(width: 8),
-                      const Text(
-                        'También te puede interesar...',
+                      Text(
+                        l10n.commonYouMayAlsoLike,
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,

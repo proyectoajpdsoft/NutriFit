@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'dart:convert';
 import '../services/api_service.dart';
@@ -8,7 +9,9 @@ import '../services/config_service.dart';
 import '../models/entrenamiento.dart';
 import '../models/entrenamiento_ejercicio.dart';
 import '../widgets/app_drawer.dart';
+import '../widgets/entrenamiento_evolution_tabs.dart';
 import '../widgets/entrenamiento_stats_chart.dart';
+import '../widgets/entrenamiento_weight_progress_chart.dart';
 import 'entrenamiento_edit_screen.dart' as edit;
 import 'entrenamiento_view_screen.dart';
 import 'entrenamientos_pacientes_plan_fit_screen.dart';
@@ -35,6 +38,9 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
   final Map<String, String> _customActivityIcons = {};
   late bool _isNutri;
   int _sensacionesPendientes = 0;
+  bool _showTotalsBox = true;
+  bool _showEquivalenciasBox = true;
+  bool _showMotivacionalBox = true;
 
   static const String _prefsFiltroVisibleKey = 'entrenamientos_filtro_visible';
   static const String _prefsFiltroPeriodoKey = 'entrenamientos_filtro_periodo';
@@ -64,13 +70,15 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
     'ultimos_dias': 'Últimos .. días',
   };
 
+  String get _localeName => Localizations.localeOf(context).toString();
+
   @override
   void initState() {
     super.initState();
     final authService = Provider.of<AuthService>(context, listen: false);
     _isNutri = authService.userType == 'Nutricionista' ||
         authService.userType == 'Administrador';
-    _tabController = TabController(length: _isNutri ? 3 : 2, vsync: this);
+    _tabController = TabController(length: _isNutri ? 4 : 3, vsync: this);
     _tabController.addListener(() {
       if (!mounted) return;
       setState(() {});
@@ -615,10 +623,27 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
   }
 
   String _formatRatio(double value) {
-    if (value >= 100) return value.toStringAsFixed(0);
-    if (value >= 10) return value.toStringAsFixed(1);
-    if (value >= 1) return value.toStringAsFixed(2);
-    return value.toStringAsFixed(4);
+    if (value >= 100) return _formatDecimal(value, decimals: 0);
+    if (value >= 10) return _formatDecimal(value, decimals: 1);
+    if (value >= 1) return _formatDecimal(value, decimals: 2);
+    return _formatDecimal(value, decimals: 4);
+  }
+
+  String _formatInteger(num value) {
+    return NumberFormat.decimalPattern(_localeName).format(value);
+  }
+
+  String _formatDecimal(num value, {int decimals = 1}) {
+    return NumberFormat.decimalPatternDigits(
+      locale: _localeName,
+      decimalDigits: decimals,
+    ).format(value);
+  }
+
+  String _formatHoursMinutes(int totalMinutes) {
+    final hours = totalMinutes ~/ 60;
+    final minutes = totalMinutes % 60;
+    return '${_formatInteger(hours)}h ${_formatInteger(minutes)}m';
   }
 
   String? _buildKgEquivalentMessage(double totalKg) {
@@ -707,7 +732,7 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
     final kgMsg = _buildKgEquivalentMessage(totalKg);
     final kmMsg = _buildKmEquivalentMessage(totalKm);
     final subidaMsg = totalDesnivel > 0
-        ? 'Has subido ${totalDesnivel.toStringAsFixed(0)} m.'
+        ? 'Has subido ${_formatDecimal(totalDesnivel, decimals: 0)} m.'
         : null;
 
     if (kgMsg == null && kmMsg == null && subidaMsg == null) {
@@ -722,6 +747,13 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Align(
+              alignment: Alignment.topRight,
+              child: _buildDismissCardButton(
+                onTap: () => setState(() => _showEquivalenciasBox = false),
+                color: Colors.brown.shade400,
+              ),
+            ),
             if (kgMsg != null) Text(kgMsg),
             if (kgMsg != null && kmMsg != null) const SizedBox(height: 6),
             if (kmMsg != null) Text(kmMsg),
@@ -820,8 +852,18 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
           controller: _tabController,
           tabs: [
             if (_isNutri) const Tab(text: 'Pacientes'),
-            const Tab(text: 'Listado'),
-            const Tab(text: 'Estadísticas'),
+            const Tab(
+              icon: Icon(Icons.view_list_rounded),
+              text: 'Listado',
+            ),
+            const Tab(
+              icon: Icon(Icons.analytics_outlined),
+              text: 'Análisis',
+            ),
+            const Tab(
+              icon: Icon(Icons.show_chart_rounded),
+              text: 'Evolución',
+            ),
           ],
         ),
       ),
@@ -858,6 +900,16 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
                               subtitle:
                                   'La gráfica de evolución de actividades está disponible solo para usuarios Premium.',
                             ),
+                      canViewActivityStats
+                          ? EntrenamientoEvolutionTabs(
+                              entrenamientos: _filtrarEntrenamientos(),
+                              loadEjercicios: _getEjerciciosForEntrenamiento,
+                            )
+                          : _buildPremiumOnlyStatsCard(
+                              title: 'Evolución Premium',
+                              subtitle:
+                                  'La evolución de pesos y repeticiones por ejercicio está disponible solo para usuarios Premium.',
+                            ),
                     ],
                   ),
                 ),
@@ -884,7 +936,7 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
         children: [
           // Tarjeta de estadísticas
           if (entrenamientosFiltrados.isNotEmpty) ...[
-            if (canViewActivityStats) ...[
+            if (canViewActivityStats && _showTotalsBox) ...[
               _buildEstadisticasCard(
                 entrenamientosFiltrados,
                 totalMinutos,
@@ -893,7 +945,9 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
                 promedioEsfuerzo,
                 totalKgFuture,
               ),
-              if (showEquivalencias && entrenamientosFiltrados.length >= 5) ...[
+              if (_showEquivalenciasBox &&
+                  showEquivalencias &&
+                  entrenamientosFiltrados.length >= 5) ...[
                 const SizedBox(height: 16),
                 FutureBuilder<double>(
                   future: totalKgFuture,
@@ -908,7 +962,7 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
                 ),
                 const SizedBox(height: 16),
               ],
-            ] else ...[
+            ] else if (!canViewActivityStats && _showTotalsBox) ...[
               _buildPremiumOnlyStatsCard(
                 title: 'Totales de actividades Premium',
                 subtitle:
@@ -919,8 +973,10 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
           ],
 
           // Tarjeta motivacional
-          _buildTarjetaMotivacional(entrenamientosFiltrados),
-          const SizedBox(height: 16),
+          if (_showMotivacionalBox) ...[
+            _buildTarjetaMotivacional(entrenamientosFiltrados),
+            const SizedBox(height: 16),
+          ],
 
           // Lista de entrenamientos
           if (entrenamientosFiltrados.isEmpty)
@@ -955,6 +1011,13 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
         ),
         child: Column(
           children: [
+            Align(
+              alignment: Alignment.topRight,
+              child: _buildDismissCardButton(
+                onTap: () => setState(() => _showTotalsBox = false),
+                color: Colors.deepPurple.shade400,
+              ),
+            ),
             Icon(
               Icons.workspace_premium,
               size: 44,
@@ -1006,8 +1069,6 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
     double promedioEsfuerzo,
     Future<double> totalKgLevantadosFuture,
   ) {
-    final horas = totalMinutos ~/ 60;
-    final minutos = totalMinutos % 60;
     final totalEjerciciosFuture = _getTotalEjercicios(entrenamientos);
     return Card(
       elevation: 4,
@@ -1027,12 +1088,19 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
+            Align(
+              alignment: Alignment.topRight,
+              child: _buildDismissCardButton(
+                onTap: () => setState(() => _showTotalsBox = false),
+                color: Colors.white,
+              ),
+            ),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 _buildStatItem(
                   '💪',
-                  '${entrenamientos.length}',
+                  _formatInteger(entrenamientos.length),
                   'Actividades',
                   Colors.white,
                 ),
@@ -1042,7 +1110,7 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
                     final totalEjercicios = snapshot.data ?? 0;
                     return _buildStatItem(
                       '🏋️',
-                      totalEjercicios.toString(),
+                      _formatInteger(totalEjercicios),
                       'Ejercicios',
                       Colors.white,
                     );
@@ -1050,7 +1118,7 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
                 ),
                 _buildStatItem(
                   '⏱️',
-                  '${horas}h ${minutos}m',
+                  _formatHoursMinutes(totalMinutos),
                   'Tiempo total',
                   Colors.white,
                 ),
@@ -1062,7 +1130,7 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
               children: [
                 _buildStatItem(
                   '🔥',
-                  promedioEsfuerzo.toStringAsFixed(1),
+                  _formatDecimal(promedioEsfuerzo, decimals: 1),
                   'Esfuerzo avg',
                   Colors.white,
                 ),
@@ -1072,7 +1140,7 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
                     final totalKg = snapshot.data ?? 0;
                     return _buildStatItem(
                       '🏋️',
-                      '${totalKg.toStringAsFixed(0)} kg',
+                      '${_formatDecimal(totalKg, decimals: 0)} kg',
                       'Total levantado',
                       Colors.white,
                     );
@@ -1081,7 +1149,7 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
                 if (totalKilometros > 0)
                   _buildStatItem(
                     '📍',
-                    totalKilometros.toStringAsFixed(2),
+                    _formatDecimal(totalKilometros, decimals: 2),
                     'Kilómetros',
                     Colors.white,
                   ),
@@ -1090,7 +1158,7 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
             if (totalDesnivel > 0) ...[
               const SizedBox(height: 8),
               Text(
-                'Has subido ${totalDesnivel.toStringAsFixed(0)} m.',
+                'Has subido ${_formatDecimal(totalDesnivel, decimals: 0)} m.',
                 style: const TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.w700,
@@ -1159,20 +1227,31 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Row(
+        child: Column(
           children: [
-            Text(emoji, style: const TextStyle(fontSize: 32)),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Text(
-                mensaje,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Theme.of(context).colorScheme.primary,
-                  height: 1.5,
-                ),
+            Align(
+              alignment: Alignment.topRight,
+              child: _buildDismissCardButton(
+                onTap: () => setState(() => _showMotivacionalBox = false),
+                color: Theme.of(context).colorScheme.primary,
               ),
+            ),
+            Row(
+              children: [
+                Text(emoji, style: const TextStyle(fontSize: 32)),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Text(
+                    mensaje,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: Theme.of(context).colorScheme.primary,
+                      height: 1.5,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -1180,13 +1259,31 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
     );
   }
 
+  Widget _buildDismissCardButton({
+    required VoidCallback onTap,
+    required Color color,
+  }) {
+    return SizedBox(
+      width: 28,
+      height: 28,
+      child: IconButton(
+        onPressed: onTap,
+        tooltip: 'Ocultar',
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        icon: Icon(Icons.close, size: 18, color: color),
+      ),
+    );
+  }
+
   Widget _buildEntrenamientoCard(Entrenamiento entrenamiento) {
-    final duracion =
-        '${entrenamiento.duracionHoras}h ${entrenamiento.duracionMinutos}m';
+    final duracion = _formatHoursMinutes(
+      (entrenamiento.duracionHoras * 60) + entrenamiento.duracionMinutos,
+    );
     final titulo = (entrenamiento.titulo ?? '').trim();
     final kmText = entrenamiento.duracionKilometros != null &&
             entrenamiento.duracionKilometros! > 0
-        ? ' • ${entrenamiento.duracionKilometros!.toStringAsFixed(2)} km'
+        ? ' • ${_formatDecimal(entrenamiento.duracionKilometros!, decimals: 2)} km'
         : '';
     final icono = _getIconoActividad(entrenamiento.actividad);
 
@@ -1383,7 +1480,7 @@ class _EntrenamientosScreenState extends State<EntrenamientosScreen>
             ElevatedButton.icon(
               onPressed: _agregarEntrenamiento,
               icon: const Icon(Icons.add),
-              label: const Text('Agregar entrenamiento'),
+              label: const Text('Agregar actividad'),
             ),
           ],
         ),

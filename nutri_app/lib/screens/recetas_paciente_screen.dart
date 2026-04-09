@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -12,9 +13,11 @@ import 'package:open_filex/open_filex.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import '../services/consejo_receta_pdf_service.dart';
+import '../services/menu_visibility_premium_service.dart';
 import '../models/receta.dart';
 import '../models/receta_documento.dart';
 import '../widgets/image_viewer_dialog.dart';
+import '../widgets/premium_upsell_card.dart';
 import '../widgets/restricted_access_dialog_helper.dart';
 
 bool _canUseRecetasCopyPdf(AuthService authService) {
@@ -24,12 +27,12 @@ bool _canUseRecetasCopyPdf(AuthService authService) {
 }
 
 Future<void> _showPremiumRequiredForRecetasCopyPdf(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
   return RestrictedAccessDialogHelper.show(
     context,
-    title: 'Función Premium',
-    message:
-        'Para poder Copiar y pasar a PDF las Recetas y Consejos, debes ser usuario Premium.',
-    primaryActionLabel: 'Hazte Premium',
+    title: l10n.commonPremiumFeatureTitle,
+    message: l10n.commonRecipesAndTipsPremiumCopyPdfMessage,
+    primaryActionLabel: l10n.navPremium,
     primaryActionIcon: Icons.workspace_premium,
     primaryRouteName: '/premium_info',
   );
@@ -58,7 +61,9 @@ class RecetasPacienteScreen extends StatefulWidget {
 
 class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
     with SingleTickerProviderStateMixin {
-  static const int _pageSize = 10;
+  static const int _defaultPageSize = 6;
+
+  AppLocalizations get l10n => AppLocalizations.of(context)!;
 
   List<Receta> _recetas = [];
   List<Receta> _recetasPortada = [];
@@ -80,23 +85,34 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
   String _searchQuery = '';
   String _sortMode = 'fecha';
   bool _sortAscending = false;
-  int _totalPortada = 0;
-  int _totalRecetas = 0;
-  int _totalFavoritas = 0;
+  int _currentTabFilteredTotal = 0;
+  int _countRequestId = 0;
   bool _categoriasLoading = false;
   List<Map<String, dynamic>> _categoriasCatalogo = [];
   List<int> _selectedCategoriaIds = [];
   bool _categoriaMatchAll = false;
+  bool _isMenuPremiumEnabled = false;
+  List<int>? _nonPremiumPreviewCodes;
+  int _pageSize = _defaultPageSize;
+  SharedPreferences? _prefs;
   final Map<String, MemoryImage> _coverImageProviderCache = {};
 
   String _buildCoverCacheKey(Receta receta) {
-    final raw = (receta.imagenPortada ?? '').trim();
+    final raw = _resolveListCoverBase64(receta);
     if (raw.isEmpty) return '';
     return '${receta.codigo ?? 'noid'}:${raw.hashCode}:${raw.length}';
   }
 
+  String _resolveListCoverBase64(Receta receta) {
+    final portada = (receta.imagenPortada ?? '').trim();
+    if (portada.isNotEmpty) {
+      return portada;
+    }
+    return (receta.imagenMiniatura ?? '').trim();
+  }
+
   ImageProvider? _getCachedCoverProvider(Receta receta) {
-    final raw = (receta.imagenPortada ?? '').trim();
+    final raw = _resolveListCoverBase64(receta);
     if (raw.isEmpty) return null;
 
     final key = _buildCoverCacheKey(receta);
@@ -112,6 +128,253 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
     }
   }
 
+  String? _primaryCategoriaLabel(List<String> categorias) {
+    for (final categoria in categorias) {
+      final normalized = categoria.trim();
+      if (normalized.isNotEmpty) {
+        return normalized;
+      }
+    }
+    return null;
+  }
+
+  List<MapEntry<int, String>> _visibleCategoryTags(
+    List<int> categoriaIds,
+    List<String> categoriaNombres,
+  ) {
+    final tags = <MapEntry<int, String>>[];
+    final total = categoriaIds.length < categoriaNombres.length
+        ? categoriaIds.length
+        : categoriaNombres.length;
+
+    for (var index = 0; index < total; index++) {
+      final id = categoriaIds[index];
+      final label = categoriaNombres[index].trim();
+      if (id <= 0 || label.isEmpty) {
+        continue;
+      }
+      if (tags.any((tag) => tag.key == id)) {
+        continue;
+      }
+      tags.add(MapEntry(id, label));
+      if (tags.length == 2) {
+        break;
+      }
+    }
+
+    return tags;
+  }
+
+  Widget _buildCategoryBadge({
+    required String label,
+    required IconData icon,
+    required VoidCallback onTap,
+  }) {
+    final isLongTag = label.trim().length > 13;
+    final backgroundOpacity = isLongTag ? 0.46 : 0.72;
+    final borderOpacity = isLongTag ? 0.56 : 0.9;
+    final foregroundOpacity = isLongTag ? 0.82 : 1.0;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(backgroundOpacity),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: Colors.white.withOpacity(borderOpacity)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 14,
+                color: Colors.deepOrange.shade700.withOpacity(
+                  foregroundOpacity,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: Colors.deepOrange.shade900.withOpacity(
+                    foregroundOpacity,
+                  ),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _applyCategoryFilterFromCard(int categoryId) {
+    if (_selectedCategoriaIds.length == 1 &&
+        _selectedCategoriaIds.first == categoryId) {
+      return;
+    }
+
+    setState(() {
+      _selectedCategoriaIds = [categoryId];
+    });
+    _savePreferences();
+    _refreshCurrentTabFilteredTotal();
+  }
+
+  Widget _buildRecetaCardHeader(Receta receta, ImageProvider? coverProvider) {
+    final categoryTags = _visibleCategoryTags(
+      receta.categoriaIds,
+      receta.categoriaNombres,
+    );
+
+    return SizedBox(
+      height: 170,
+      width: double.infinity,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.orange.shade50,
+                    Colors.amber.shade50,
+                    Colors.lime.shade50,
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: -24,
+            right: -12,
+            child: Container(
+              width: 88,
+              height: 88,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withOpacity(0.32),
+              ),
+            ),
+          ),
+          Positioned(
+            left: -20,
+            bottom: -30,
+            child: Container(
+              width: 108,
+              height: 108,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.orange.shade100.withOpacity(0.4),
+              ),
+            ),
+          ),
+          Center(
+            child: Container(
+              width: 132,
+              height: 112,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.9),
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: Colors.white.withOpacity(0.95)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.orange.shade100.withOpacity(0.5),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: coverProvider != null
+                  ? RepaintBoundary(
+                      child: Image(
+                        image: coverProvider,
+                        fit: BoxFit.contain,
+                        gaplessPlayback: true,
+                      ),
+                    )
+                  : Icon(
+                      Icons.restaurant_menu,
+                      size: 44,
+                      color: Colors.deepOrange.shade300,
+                    ),
+            ),
+          ),
+          if (categoryTags.isNotEmpty)
+            Positioned(
+              left: 14,
+              bottom: 12,
+              child: _buildCategoryBadge(
+                label: categoryTags.first.value,
+                icon: Icons.local_offer_outlined,
+                onTap: () =>
+                    _applyCategoryFilterFromCard(categoryTags.first.key),
+              ),
+            ),
+          if (categoryTags.length > 1)
+            Positioned(
+              right: 14,
+              bottom: 12,
+              child: _buildCategoryBadge(
+                label: categoryTags[1].value,
+                icon: Icons.sell_outlined,
+                onTap: () => _applyCategoryFilterFromCard(categoryTags[1].key),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<int> _loadConfiguredPageSize() async {
+    try {
+      final raw = await context.read<ApiService>().getParametroValor(
+            'numero_recetas_cargar_paginacion',
+          );
+      final parsed = int.tryParse((raw ?? '').trim());
+      if (parsed == null || parsed <= 0) {
+        return _defaultPageSize;
+      }
+      return parsed > 50 ? 50 : parsed;
+    } catch (_) {
+      return _defaultPageSize;
+    }
+  }
+
+  void _showGenericLoadError() {
+    if (!mounted) {
+      return;
+    }
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(l10n.privacyDeleteConnectionError),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  List<Receta> _parseRecetasResponse(String responseBody) {
+    final decoded = json.decode(responseBody);
+    if (decoded is! List) {
+      throw const FormatException('Respuesta inválida');
+    }
+    return decoded
+        .map((item) => Receta.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -122,89 +385,247 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
     _tabController = TabController(length: 3, vsync: this);
     _tabController.addListener(() {
       if (!_tabController.indexIsChanging && mounted) {
+        _refreshCurrentTabFilteredTotal();
         setState(() {});
       }
+    });
+
+    _initializeScreen();
+    _loadCategorias();
+    _loadPreferences();
+    _refreshCurrentTabFilteredTotal();
+    _loadMenuPremiumConfig();
+  }
+
+  Future<void> _initializeScreen() async {
+    final configuredPageSize = await _loadConfiguredPageSize();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _pageSize = configuredPageSize;
     });
 
     _loadRecetasPortada(reset: true);
     _loadRecetas(reset: true);
     _loadRecetasFavoritas(reset: true);
-    _loadCategorias();
-    _loadPreferences();
-    _loadTotals();
   }
 
-  Future<void> _loadTotals() async {
-    await Future.wait<void>([
-      _loadPortadaTotal(),
-      _loadRecetasTotal(),
-      _loadFavoritasTotal(),
-    ]);
+  bool get _canAccessFullCatalog {
+    final authService = context.read<AuthService>();
+    if (!_isMenuPremiumEnabled) {
+      return true;
+    }
+    return authService.isPremium ||
+        MenuVisibilityPremiumService.isPrivilegedUserType(
+          authService.userType,
+        );
   }
 
-  Future<void> _loadPortadaTotal() async {
+  bool get _isPreviewMode => !_canAccessFullCatalog;
+
+  Future<void> _loadMenuPremiumConfig() async {
     try {
-      final patientParam = (_patientCode != null && _patientCode!.isNotEmpty)
-          ? _patientCode!
-          : '0';
       final apiService = context.read<ApiService>();
-      String url =
-          'api/recetas.php?get_recetas_paciente=1&paciente=$patientParam&total=1&portada=1';
-      if (_userCode != null && !_isGuestMode) {
-        url += '&codigo_usuario=$_userCode';
+      final config = await MenuVisibilityPremiumService.loadConfig(
+        apiService: apiService,
+        forceRefresh: true,
+      );
+      final premiumEnabled = MenuVisibilityPremiumService.isPremium(
+        config,
+        MenuVisibilityPremiumService.recetas,
+      );
+      List<int>? previewCodes;
+      if (premiumEnabled) {
+        final raw = await apiService.getParametroValor(
+          'codigos_recetas_no_premium',
+        );
+        previewCodes = _parsePreviewCodes(raw);
       }
-      final response = await apiService.get(url);
-      if (response.statusCode != 200 || !mounted) return;
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final total = int.tryParse((data['total'] ?? '0').toString()) ?? 0;
-      setState(() => _totalPortada = total);
-    } catch (_) {}
-  }
-
-  Future<void> _loadRecetasTotal() async {
-    try {
-      final patientParam = (_patientCode != null && _patientCode!.isNotEmpty)
-          ? _patientCode!
-          : '0';
-      final apiService = context.read<ApiService>();
-      String url =
-          'api/recetas.php?get_recetas_paciente=1&paciente=$patientParam&total=1&q=$_searchQuery';
-      if (_userCode != null && !_isGuestMode) {
-        url += '&codigo_usuario=$_userCode';
-      }
-      final response = await apiService.get(url);
-      if (response.statusCode != 200 || !mounted) return;
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final total = int.tryParse((data['total'] ?? '0').toString()) ?? 0;
-      setState(() => _totalRecetas = total);
-    } catch (_) {}
-  }
-
-  Future<void> _loadFavoritasTotal() async {
-    try {
-      final userCode = _userCode;
-      if (userCode == null || userCode.isEmpty || _isGuestMode) {
-        if (mounted) {
-          setState(() => _totalFavoritas = 0);
-        }
+      if (!mounted) {
         return;
       }
-      final patientParam = (_patientCode != null && _patientCode!.isNotEmpty)
-          ? _patientCode!
-          : '0';
-      final apiService = context.read<ApiService>();
-      final url =
-          'api/recetas.php?get_recetas_favoritas=1&paciente=$patientParam&codigo_usuario=$userCode&total=1';
-      final response = await apiService.get(url);
-      if (response.statusCode != 200 || !mounted) return;
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final total = int.tryParse((data['total'] ?? '0').toString()) ?? 0;
-      setState(() => _totalFavoritas = total);
+      setState(() {
+        _isMenuPremiumEnabled = premiumEnabled;
+        _nonPremiumPreviewCodes = previewCodes;
+      });
     } catch (_) {}
+  }
+
+  List<int>? _parsePreviewCodes(String? rawValue) {
+    final raw =
+        (rawValue ?? '').trim().replaceAll(';', ',').replaceAll('|', ',');
+    if (raw.isEmpty) {
+      return null;
+    }
+
+    final codes = raw
+        .split(',')
+        .map((item) => int.tryParse(item.trim()))
+        .whereType<int>()
+        .where((value) => value > 0)
+        .toList(growable: false);
+
+    return codes.isEmpty ? null : codes;
+  }
+
+  List<Receta> _allLoadedRecetas() {
+    final byKey = <String, Receta>{};
+
+    void addItems(List<Receta> items) {
+      for (final item in items) {
+        final key = item.codigo?.toString() ??
+            '${item.titulo.trim().toLowerCase()}|${item.texto.hashCode}';
+        byKey.putIfAbsent(key, () => item);
+      }
+    }
+
+    addItems(_recetasPortada);
+    addItems(_recetas);
+    addItems(_recetasFavoritas);
+    return byKey.values.toList(growable: false);
+  }
+
+  List<Receta> _buildPreviewRecetas() {
+    final all = _allLoadedRecetas();
+    final configuredCodes = _nonPremiumPreviewCodes;
+    if (configuredCodes != null && configuredCodes.isNotEmpty) {
+      final byCode = <int, Receta>{
+        for (final item in all)
+          if (item.codigo != null) item.codigo!: item,
+      };
+      final configuredItems = configuredCodes
+          .map((code) => byCode[code])
+          .whereType<Receta>()
+          .toList(growable: false);
+      if (configuredItems.isNotEmpty) {
+        return configuredItems.take(3).toList(growable: false);
+      }
+    }
+
+    final preview = List<Receta>.from(all);
+    preview.sort((a, b) {
+      final dateA = a.fechaInicio ?? a.fechaa ?? DateTime(1970);
+      final dateB = b.fechaInicio ?? b.fechaa ?? DateTime(1970);
+      final byDate = dateB.compareTo(dateA);
+      if (byDate != 0) {
+        return byDate;
+      }
+      return a.titulo.toLowerCase().compareTo(b.titulo.toLowerCase());
+    });
+    return preview.take(3).toList(growable: false);
+  }
+
+  Widget _buildPreviewBody() {
+    final l10n = AppLocalizations.of(context)!;
+    final previewItems = _buildPreviewRecetas();
+    final totalRecetas = _allLoadedRecetas().length;
+
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 80),
+      itemCount: previewItems.length + 1,
+      itemBuilder: (context, index) {
+        if (index == previewItems.length) {
+          return Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: PremiumUpsellCard(
+              title: l10n.recipesPremiumPreviewTitle,
+              subtitle: l10n.recipesPremiumPreviewSubtitle,
+              subtitleHighlight: totalRecetas > 3
+                  ? l10n.recipesPreviewAvailableCount(totalRecetas)
+                  : null,
+              subtitleHighlightColor: Colors.pink.shade700,
+              onPressed: () => Navigator.pushNamed(context, '/premium_info'),
+            ),
+          );
+        }
+
+        return _buildRecetaCard(
+          previewItems[index],
+          allowSocialActions: false,
+          allowCopyAndPdf: false,
+          isPreviewMode: true,
+        );
+      },
+    );
+  }
+
+  Future<List<Receta>> _fetchAllRecetasForCurrentTab() async {
+    final patientParam = (_patientCode != null && _patientCode!.isNotEmpty)
+        ? _patientCode!
+        : '0';
+    final apiService = context.read<ApiService>();
+
+    switch (_tabController.index) {
+      case 0:
+        var portadaUrl =
+            'api/recetas.php?portada=1&paciente_codigo=$patientParam';
+        if (_userCode != null && !_isGuestMode) {
+          portadaUrl += '&codigo_usuario=$_userCode';
+        }
+        final portadaResponse = await apiService.get(portadaUrl);
+        if (portadaResponse.statusCode != 200) return <Receta>[];
+        final List<dynamic> portadaData = json.decode(portadaResponse.body);
+        return portadaData.map((item) => Receta.fromJson(item)).toList();
+      case 2:
+        if (_isGuestMode || _userCode == null || _userCode!.isEmpty) {
+          return <Receta>[];
+        }
+        final favoritasResponse = await apiService.get(
+          'api/receta_usuarios.php?favoritos=1&usuario=$_userCode',
+        );
+        if (favoritasResponse.statusCode != 200) return <Receta>[];
+        final List<dynamic> favoritasData = json.decode(favoritasResponse.body);
+        final parsed = <Receta>[];
+        for (final item in favoritasData) {
+          try {
+            parsed.add(Receta.fromJson(item));
+          } catch (_) {}
+        }
+        return parsed;
+      case 1:
+      default:
+        var recetasUrl =
+            'api/recetas.php?get_recetas_paciente=1&paciente=$patientParam';
+        if (_userCode != null && !_isGuestMode) {
+          recetasUrl += '&codigo_usuario=$_userCode';
+        }
+        final recetasResponse = await apiService.get(recetasUrl);
+        if (recetasResponse.statusCode != 200) return <Receta>[];
+        final List<dynamic> recetasData = json.decode(recetasResponse.body);
+        return recetasData.map((item) => Receta.fromJson(item)).toList();
+    }
+  }
+
+  Future<void> _refreshCurrentTabFilteredTotal() async {
+    final requestId = ++_countRequestId;
+    try {
+      final items = await _fetchAllRecetasForCurrentTab();
+      final total = _applySearchAndSort(items).length;
+      if (!mounted || requestId != _countRequestId) return;
+      setState(() {
+        _currentTabFilteredTotal = total;
+      });
+    } catch (_) {
+      if (!mounted || requestId != _countRequestId) return;
+      setState(() {
+        _currentTabFilteredTotal = _getFilteredTabCount();
+      });
+    }
+  }
+
+  Future<SharedPreferences> _ensurePrefs() async {
+    final cached = _prefs;
+    if (cached != null) {
+      return cached;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    _prefs = prefs;
+    return prefs;
   }
 
   Future<void> _loadPreferences() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _ensurePrefs();
     if (!mounted) return;
     setState(() {
       _sortMode = prefs.getString('recetas_sortMode') ?? 'fecha';
@@ -216,10 +637,11 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
           <int>[];
       _categoriaMatchAll = prefs.getBool('recetas_categoriaMatchAll') ?? false;
     });
+    _refreshCurrentTabFilteredTotal();
   }
 
   Future<void> _savePreferences() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _ensurePrefs();
     await Future.wait([
       prefs.setString('recetas_sortMode', _sortMode),
       prefs.setBool('recetas_sortAscending', _sortAscending),
@@ -265,6 +687,7 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
   }
 
   Future<void> _showCategoriaFilterDialog() async {
+    final l10n = AppLocalizations.of(context)!;
     if (_categoriasCatalogo.isEmpty && !_categoriasLoading) {
       await _loadCategorias();
     }
@@ -280,14 +703,17 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
             titlePadding: const EdgeInsets.fromLTRB(12, 8, 8, 0),
             title: Row(
               children: [
-                const Expanded(
+                Expanded(
                   child: Text(
-                    'Filtrar por categorías',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                    l10n.commonFilterByCategories,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
                 IconButton(
-                  tooltip: 'Cerrar',
+                  tooltip: l10n.commonClose,
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(Icons.close, size: 18),
                   style: IconButton.styleFrom(
@@ -351,37 +777,41 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
                         tempMatchAll = value;
                       });
                     },
-                    title: const Text('Coincidir todas'),
-                    subtitle: const Text('Si esta activo, requiere todas'),
+                    title: Text(l10n.commonMatchAll),
+                    subtitle: Text(l10n.commonRequireAllSelected),
                   ),
                 ],
               ),
             ),
             actions: [
               TextButton(
-                onPressed: () {
+                onPressed: () async {
                   setState(() {
                     _selectedCategoriaIds = [];
                     _categoriaMatchAll = false;
                   });
-                  _savePreferences();
+                  await _savePreferences();
+                  if (!mounted) return;
+                  _refreshCurrentTabFilteredTotal();
                   Navigator.pop(context);
                 },
-                child: const Text('Limpiar'),
+                child: Text(l10n.commonClear),
               ),
               ElevatedButton(
-                onPressed: () {
+                onPressed: () async {
                   setState(() {
                     _selectedCategoriaIds = tempSelected;
                     _categoriaMatchAll = tempMatchAll;
                   });
-                  _savePreferences();
+                  await _savePreferences();
+                  if (!mounted) return;
+                  _refreshCurrentTabFilteredTotal();
                   Navigator.pop(context);
                 },
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text('Aplicar'),
+                    Text(l10n.commonApply),
                     const SizedBox(width: 8),
                     Container(
                       width: 20,
@@ -470,16 +900,7 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
   }
 
   int _currentTabCount() {
-    final currentItemsCount = _applySearchAndSort(_currentTabSource()).length;
-    switch (_tabController.index) {
-      case 0:
-        return _totalPortada > 0 ? _totalPortada : currentItemsCount;
-      case 2:
-        return _totalFavoritas > 0 ? _totalFavoritas : currentItemsCount;
-      case 1:
-      default:
-        return _totalRecetas > 0 ? _totalRecetas : currentItemsCount;
-    }
+    return _currentTabFilteredTotal;
   }
 
   int _getFilteredTabCount() {
@@ -493,6 +914,7 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
         _searchQuery = '';
       }
     });
+    _refreshCurrentTabFilteredTotal();
   }
 
   List<Receta> _applySearchAndSort(List<Receta> source) {
@@ -601,7 +1023,7 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
 
       // Construir URL con codigo_usuario si está disponible (para obtener estado de favorito)
       String url =
-          'api/recetas.php?get_recetas_paciente=1&paciente=$patientParam&limit=$_pageSize&offset=$offset';
+          'api/recetas.php?get_recetas_paciente=1&paciente=$patientParam&limit=$_pageSize&offset=$offset&include_images=0';
       if (_userCode != null && !_isGuestMode) {
         url += '&codigo_usuario=$_userCode';
       }
@@ -609,15 +1031,18 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
       final response = await apiService.get(url);
 
       if (response.statusCode == 200) {
-        final List<dynamic> data = json.decode(response.body);
-        final parsed = data.map((item) => Receta.fromJson(item)).toList();
+        final parsed = _parseRecetasResponse(response.body);
         if (mounted) {
           setState(() {
             _recetas = reset ? parsed : [..._recetas, ...parsed];
             _hasMoreRecetas = parsed.length >= _pageSize;
           });
         }
+      } else {
+        _showGenericLoadError();
       }
+    } catch (_) {
+      _showGenericLoadError();
     } finally {
       if (mounted) {
         setState(() {
@@ -653,7 +1078,7 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
 
       // Construir URL con codigo_usuario si está disponible (para obtener estado de favorito)
       String url =
-          'api/recetas.php?portada=1&paciente_codigo=$patientParam&limit=$_pageSize&offset=$offset';
+          'api/recetas.php?portada=1&paciente_codigo=$patientParam&limit=$_pageSize&offset=$offset&include_images=0';
       if (_userCode != null && !_isGuestMode) {
         url += '&codigo_usuario=$_userCode';
       }
@@ -661,15 +1086,18 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
       final response = await apiService.get(url);
 
       if (response.statusCode == 200) {
-        final List<dynamic> data = json.decode(response.body);
-        final parsed = data.map((item) => Receta.fromJson(item)).toList();
+        final parsed = _parseRecetasResponse(response.body);
         if (mounted) {
           setState(() {
             _recetasPortada = reset ? parsed : [..._recetasPortada, ...parsed];
             _hasMorePortada = parsed.length >= _pageSize;
           });
         }
+      } else {
+        _showGenericLoadError();
       }
+    } catch (_) {
+      _showGenericLoadError();
     } finally {
       if (mounted) {
         setState(() {
@@ -724,17 +1152,11 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
     try {
       final apiService = Provider.of<ApiService>(context, listen: false);
       final response = await apiService.get(
-        'api/receta_usuarios.php?favoritos=1&usuario=$_userCode&limit=$_pageSize&offset=$offset',
+        'api/receta_usuarios.php?favoritos=1&usuario=$_userCode&limit=$_pageSize&offset=$offset&include_images=0',
       );
 
       if (response.statusCode == 200) {
-        final List<dynamic> data = json.decode(response.body);
-        final parsed = <Receta>[];
-        for (final item in data) {
-          try {
-            parsed.add(Receta.fromJson(item));
-          } catch (_) {}
-        }
+        final parsed = _parseRecetasResponse(response.body);
         if (mounted) {
           setState(() {
             _recetasFavoritas =
@@ -742,13 +1164,11 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
             _hasMoreFavoritas = parsed.length >= _pageSize;
           });
         }
+      } else {
+        _showGenericLoadError();
       }
     } catch (_) {
-      if (mounted) {
-        setState(() {
-          _recetasFavoritas = [];
-        });
-      }
+      _showGenericLoadError();
     } finally {
       if (mounted) {
         setState(() {
@@ -760,11 +1180,12 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
   }
 
   Future<void> _toggleLike(Receta receta) async {
+    final l10n = AppLocalizations.of(context)!;
     if (_isGuestMode || _userCode == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Debes iniciar sesión para dar me gusta'),
+          SnackBar(
+            content: Text(l10n.commonSignInToLike),
             backgroundColor: Colors.orange,
             behavior: SnackBarBehavior.floating,
           ),
@@ -806,19 +1227,23 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
         final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(
-            content: Text('Error al cambiar me gusta. $errorMessage'),
-            behavior: SnackBarBehavior.floating));
+        ).showSnackBar(
+          SnackBar(
+            content: Text(l10n.commonLikeChangeError(errorMessage)),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       }
     }
   }
 
   Future<void> _toggleFavorito(Receta receta) async {
+    final l10n = AppLocalizations.of(context)!;
     if (_isGuestMode) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Debes iniciar sesión para guardar favoritos'),
+          SnackBar(
+            content: Text(l10n.commonSignInToSaveFavorites),
             backgroundColor: Colors.orange,
             behavior: SnackBarBehavior.floating,
           ),
@@ -832,8 +1257,8 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
     if (codigoReceta == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Error: No se pudo identificar el usuario'),
+          SnackBar(
+            content: Text(l10n.commonCouldNotIdentifyUser),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
           ),
@@ -866,13 +1291,21 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
         final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(
-            content: Text('Error al cambiar favorito. $errorMessage')));
+        ).showSnackBar(
+          SnackBar(
+            content: Text(l10n.commonFavoriteChangeError(errorMessage)),
+          ),
+        );
       }
     }
   }
 
-  Widget _buildRecetaCard(Receta receta) {
+  Widget _buildRecetaCard(
+    Receta receta, {
+    bool allowSocialActions = true,
+    bool allowCopyAndPdf = true,
+    bool isPreviewMode = false,
+  }) {
     final coverProvider = _getCachedCoverProvider(receta);
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -895,6 +1328,7 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
                   });
                 },
                 onFavoritoChangedFromDetail: _loadRecetasFavoritas,
+                isPreviewMode: isPreviewMode,
               ),
             ),
           ).then((_) {
@@ -906,68 +1340,51 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Imagen de portada
-            if (coverProvider != null)
-              RepaintBoundary(
-                child: Image(
-                  image: coverProvider,
-                  height: 250,
-                  width: double.infinity,
-                  fit: BoxFit.contain,
-                  gaplessPlayback: true,
-                ),
-              )
-            else
-              Container(
-                height: 250,
-                width: double.infinity,
-                color: Colors.grey[300],
-                child: const Icon(
-                  Icons.restaurant_menu,
-                  size: 64,
-                  color: Colors.grey,
-                ),
-              ),
+            _buildRecetaCardHeader(receta, coverProvider),
 
             // Acciones (like, favorito, copiar, pdf)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               child: Row(
                 children: [
-                  IconButton(
-                    icon: Icon(
-                      receta.meGusta == 'S'
-                          ? Icons.favorite
-                          : Icons.favorite_border,
-                      color: receta.meGusta == 'S' ? Colors.red : null,
+                  if (allowSocialActions) ...[
+                    IconButton(
+                      icon: Icon(
+                        receta.meGusta == 'S'
+                            ? Icons.favorite
+                            : Icons.favorite_border,
+                        color: receta.meGusta == 'S' ? Colors.red : null,
+                      ),
+                      onPressed: () => _toggleLike(receta),
                     ),
-                    onPressed: () => _toggleLike(receta),
-                  ),
-                  Text(
-                    '${receta.totalLikes ?? 0} me gusta',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: Icon(
-                      receta.favorito == 'S'
-                          ? Icons.bookmark
-                          : Icons.bookmark_border,
-                      color: receta.favorito == 'S' ? Colors.amber : null,
+                    Text(
+                      '${receta.totalLikes ?? 0} me gusta',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
-                    onPressed: () => _toggleFavorito(receta),
-                  ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: Icon(
+                        receta.favorito == 'S'
+                            ? Icons.bookmark
+                            : Icons.bookmark_border,
+                        color: receta.favorito == 'S' ? Colors.amber : null,
+                      ),
+                      onPressed: () => _toggleFavorito(receta),
+                    ),
+                  ],
                   const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.copy, size: 18),
-                    onPressed: () => _copyRecetaToClipboard(receta),
-                    tooltip: 'Copiar',
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.picture_as_pdf, size: 18),
-                    onPressed: () => _generateRecetaPdfFromCard(receta),
-                    tooltip: 'PDF',
-                  ),
+                  if (allowCopyAndPdf) ...[
+                    IconButton(
+                      icon: const Icon(Icons.copy, size: 18),
+                      onPressed: () => _copyRecetaToClipboard(receta),
+                      tooltip: 'Copiar',
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.picture_as_pdf, size: 18),
+                      onPressed: () => _generateRecetaPdfFromCard(receta),
+                      tooltip: 'PDF',
+                    ),
+                  ],
                   if (receta.mostrarPortada == 'S')
                     const Icon(Icons.star, color: Colors.amber, size: 20),
                 ],
@@ -1030,7 +1447,7 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
             ),
             const SizedBox(height: 10),
             Text(
-              'Para poder marcar $tipo como favoritas, debes registrarte (es gratis).',
+              l10n.commonGuestFavoritesRequiresRegistration(tipo),
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontWeight: FontWeight.w700,
@@ -1041,7 +1458,7 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
             ElevatedButton.icon(
               onPressed: () => Navigator.pushNamed(context, '/register'),
               icon: const Icon(Icons.app_registration),
-              label: const Text('Iniciar registro'),
+              label: Text(l10n.navStartRegistration),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.purple,
                 foregroundColor: Colors.white,
@@ -1055,6 +1472,9 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final canAccessFullCatalog = _canAccessFullCatalog;
+
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -1064,9 +1484,9 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Flexible(
+            Flexible(
               child: Text(
-                'Recetas',
+                l10n.navRecipes,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -1089,303 +1509,284 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
           ],
         ),
         actions: [
-          if (!_isSearchVisible)
+          if (canAccessFullCatalog && !_isSearchVisible)
             IconButton(
-              tooltip: 'Buscar',
+              tooltip: l10n.commonSearch,
               icon: const Icon(Icons.search),
               onPressed: _toggleSearchVisibility,
             ),
-          IconButton(
-            tooltip: _selectedCategoriaIds.isEmpty
-                ? 'Filtrar categorias'
-                : 'Filtrar categorias (${_selectedCategoriaIds.length})',
-            icon: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                const Icon(Icons.filter_alt_outlined),
-                if (_selectedCategoriaIds.isNotEmpty)
-                  Positioned(
-                    right: -8,
-                    top: -6,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 5,
-                        vertical: 1,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.blue,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        '${_selectedCategoriaIds.length}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
+          if (canAccessFullCatalog)
+            IconButton(
+              tooltip: _selectedCategoriaIds.isEmpty
+                  ? l10n.commonFilterByCategories
+                  : l10n.commonFilterByCategoriesCount(
+                      _selectedCategoriaIds.length,
+                    ),
+              icon: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  const Icon(Icons.filter_alt_outlined),
+                  if (_selectedCategoriaIds.isNotEmpty)
+                    Positioned(
+                      right: -8,
+                      top: -6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.blue,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          '${_selectedCategoriaIds.length}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-              ],
-            ),
-            onPressed: _showCategoriaFilterDialog,
-          ),
-          PopupMenuButton<String>(
-            tooltip: 'Más opciones',
-            icon: const Icon(Icons.more_vert),
-            onSelected: (value) {
-              _handleAppBarMenuAction(value);
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'search',
-                child: Row(
-                  children: [
-                    Icon(Icons.search, size: 18),
-                    SizedBox(width: 10),
-                    Text('Buscar'),
-                  ],
-                ),
+                ],
               ),
-              PopupMenuItem(
-                value: 'filter',
-                child: ListTile(
-                  leading: Stack(
-                    alignment: Alignment.center,
+              onPressed: _showCategoriaFilterDialog,
+            ),
+          if (canAccessFullCatalog)
+            PopupMenuButton<String>(
+              tooltip: l10n.commonMoreOptions,
+              icon: const Icon(Icons.more_vert),
+              onSelected: (value) {
+                _handleAppBarMenuAction(value);
+              },
+              itemBuilder: (context) => [
+                PopupMenuItem(
+                  value: 'search',
+                  child: Row(
                     children: [
-                      const SizedBox(width: 18, height: 18),
-                      const Icon(Icons.filter_alt, size: 18),
-                      if (_selectedCategoriaIds.isNotEmpty)
-                        Positioned(
-                          right: -2,
-                          top: -2,
-                          child: Container(
-                            constraints: const BoxConstraints(
-                              minWidth: 14,
-                              minHeight: 14,
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 3,
-                              vertical: 1,
-                            ),
-                            decoration: const BoxDecoration(
-                              color: Colors.blue,
-                              shape: BoxShape.circle,
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(
-                              '${_selectedCategoriaIds.length}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 8,
-                                fontWeight: FontWeight.w700,
+                      const Icon(Icons.search, size: 18),
+                      const SizedBox(width: 10),
+                      Text(l10n.commonSearch),
+                    ],
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'filter',
+                  child: ListTile(
+                    leading: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        const SizedBox(width: 18, height: 18),
+                        const Icon(Icons.filter_alt, size: 18),
+                        if (_selectedCategoriaIds.isNotEmpty)
+                          Positioned(
+                            right: -2,
+                            top: -2,
+                            child: Container(
+                              constraints: const BoxConstraints(
+                                minWidth: 14,
+                                minHeight: 14,
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 3,
+                                vertical: 1,
+                              ),
+                              decoration: const BoxDecoration(
+                                color: Colors.blue,
+                                shape: BoxShape.circle,
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(
+                                '${_selectedCategoriaIds.length}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ),
                           ),
+                      ],
+                    ),
+                    title: Text(l10n.commonFilter),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'refresh',
+                  child: Row(
+                    children: [
+                      const Icon(Icons.refresh, size: 18),
+                      const SizedBox(width: 10),
+                      Text(l10n.commonRefresh),
+                    ],
+                  ),
+                ),
+                const PopupMenuDivider(),
+                CheckedPopupMenuItem<String>(
+                  value: 'sort_title',
+                  checked: _sortMode == 'titulo',
+                  child: Row(
+                    children: [
+                      Expanded(child: Text(l10n.commonSortByTitle)),
+                      if (_sortMode == 'titulo')
+                        Icon(
+                          _sortAscending
+                              ? Icons.arrow_upward
+                              : Icons.arrow_downward,
+                          size: 18,
                         ),
                     ],
                   ),
-                  title: const Text('Filtrar'),
-                  contentPadding: EdgeInsets.zero,
                 ),
-              ),
-              const PopupMenuItem(
-                value: 'refresh',
-                child: Row(
-                  children: [
-                    Icon(Icons.refresh, size: 18),
-                    SizedBox(width: 10),
-                    Text('Actualizar'),
-                  ],
+                CheckedPopupMenuItem<String>(
+                  value: 'sort_recent',
+                  checked: _sortMode == 'fecha',
+                  child: Row(
+                    children: [
+                      Expanded(child: Text(l10n.commonSortByRecent)),
+                      if (_sortMode == 'fecha')
+                        Icon(
+                          _sortAscending
+                              ? Icons.arrow_upward
+                              : Icons.arrow_downward,
+                          size: 18,
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-              const PopupMenuDivider(),
-              CheckedPopupMenuItem<String>(
-                value: 'sort_title',
-                checked: _sortMode == 'titulo',
-                child: Row(
-                  children: [
-                    const Expanded(child: Text('Ordenar Título')),
-                    if (_sortMode == 'titulo')
-                      Icon(
-                        _sortAscending
-                            ? Icons.arrow_upward
-                            : Icons.arrow_downward,
-                        size: 18,
-                      ),
-                  ],
+                CheckedPopupMenuItem<String>(
+                  value: 'sort_popular',
+                  checked: _sortMode == 'popular',
+                  child: Row(
+                    children: [
+                      Expanded(child: Text(l10n.commonSortByPopular)),
+                      if (_sortMode == 'popular')
+                        Icon(
+                          _sortAscending
+                              ? Icons.arrow_upward
+                              : Icons.arrow_downward,
+                          size: 18,
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-              CheckedPopupMenuItem<String>(
-                value: 'sort_recent',
-                checked: _sortMode == 'fecha',
-                child: Row(
-                  children: [
-                    const Expanded(child: Text('Ordenar Recientes')),
-                    if (_sortMode == 'fecha')
-                      Icon(
-                        _sortAscending
-                            ? Icons.arrow_upward
-                            : Icons.arrow_downward,
-                        size: 18,
-                      ),
-                  ],
-                ),
-              ),
-              CheckedPopupMenuItem<String>(
-                value: 'sort_popular',
-                checked: _sortMode == 'popular',
-                child: Row(
-                  children: [
-                    const Expanded(child: Text('Ordenar Populares')),
-                    if (_sortMode == 'popular')
-                      Icon(
-                        _sortAscending
-                            ? Icons.arrow_upward
-                            : Icons.arrow_downward,
-                        size: 18,
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(kToolbarHeight),
-          child: Scrollbar(
-            thumbVisibility: true,
-            child: TabBar(
-              controller: _tabController,
-              tabs: const [
-                Tab(icon: Icon(Icons.star), text: 'Destacadas'),
-                Tab(icon: Icon(Icons.restaurant_menu), text: 'Todas'),
-                Tab(icon: Icon(Icons.bookmark), text: 'Favoritas'),
               ],
             ),
-          ),
-        ),
-      ),
-      body: Column(
-        children: [
-          if (_isSearchVisible)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: TextField(
-                decoration: InputDecoration(
-                  labelText: 'Buscar recetas',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: IconButton(
-                    tooltip: 'Ocultar búsqueda',
-                    icon: const Icon(Icons.close),
-                    onPressed: _toggleSearchVisibility,
+        ],
+        bottom: canAccessFullCatalog
+            ? PreferredSize(
+                preferredSize: const Size.fromHeight(kToolbarHeight),
+                child: Scrollbar(
+                  thumbVisibility: true,
+                  child: TabBar(
+                    controller: _tabController,
+                    tabs: [
+                      Tab(
+                        icon: const Icon(Icons.star),
+                        text: l10n.commonFeaturedFeminineTab,
+                      ),
+                      Tab(
+                        icon: const Icon(Icons.restaurant_menu),
+                        text: l10n.commonAllFeminineTab,
+                      ),
+                      Tab(
+                        icon: const Icon(Icons.bookmark),
+                        text: l10n.commonFavoritesFeminineTab,
+                      ),
+                    ],
                   ),
-                  border: const OutlineInputBorder(),
                 ),
-                onChanged: (value) {
-                  setState(() {
-                    _searchQuery = value;
-                  });
-                },
-              ),
-            ),
-          if (_selectedCategoriaIds.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _selectedCategoriaIds.map((id) {
-                  final match = _categoriasCatalogo.firstWhere(
-                    (cat) => int.parse(cat['codigo'].toString()) == id,
-                    orElse: () => {'nombre': 'Categoría $id'},
-                  );
-                  return Chip(
-                    label: Text(match['nombre'].toString()),
-                    onDeleted: () {
-                      setState(() {
-                        _selectedCategoriaIds.remove(id);
-                      });
-                    },
-                  );
-                }).toList(),
-              ),
-            ),
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
+              )
+            : null,
+      ),
+      body: _isPreviewMode
+          ? _buildPreviewBody()
+          : Column(
               children: [
-                RefreshIndicator(
-                  onRefresh: () => _loadRecetasPortada(reset: true),
-                  child: Builder(
-                    builder: (context) {
-                      if (_isLoadingPortada) {
-                        return const Center(
-                          child: CircularProgressIndicator(),
+                if (_isSearchVisible)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: TextField(
+                      decoration: InputDecoration(
+                        labelText: l10n.recipesSearchLabel,
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: IconButton(
+                          tooltip: l10n.commonHideSearch,
+                          icon: const Icon(Icons.close),
+                          onPressed: _toggleSearchVisibility,
+                        ),
+                        border: const OutlineInputBorder(),
+                      ),
+                      onChanged: (value) {
+                        setState(() {
+                          _searchQuery = value;
+                        });
+                        _refreshCurrentTabFilteredTotal();
+                      },
+                    ),
+                  ),
+                if (_selectedCategoriaIds.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _selectedCategoriaIds.map((id) {
+                        final match = _categoriasCatalogo.firstWhere(
+                          (cat) => int.parse(cat['codigo'].toString()) == id,
+                          orElse: () => {
+                            'nombre': l10n.commonCategoryFallback(id),
+                          },
                         );
-                      }
-                      final items = _applySearchAndSort(_recetasPortada);
-                      if (items.isEmpty) {
-                        return const Center(
-                          child: Text('No hay recetas destacadas'),
+                        return Chip(
+                          label: Text(match['nombre'].toString()),
+                          onDeleted: () {
+                            setState(() {
+                              _selectedCategoriaIds.remove(id);
+                            });
+                            _savePreferences();
+                            _refreshCurrentTabFilteredTotal();
+                          },
                         );
-                      }
-                      return NotificationListener<ScrollNotification>(
-                        onNotification: (notification) {
-                          if (_hasMorePortada &&
-                              !_isLoadingMorePortada &&
-                              notification.metrics.pixels >=
-                                  notification.metrics.maxScrollExtent - 300) {
-                            _loadRecetasPortada();
-                          }
-                          return false;
-                        },
-                        child: ListView.builder(
-                          padding: const EdgeInsets.only(bottom: 80),
-                          itemCount:
-                              items.length + (_isLoadingMorePortada ? 1 : 0),
-                          itemBuilder: (context, index) {
-                            if (index >= items.length) {
-                              return const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 20),
-                                child:
-                                    Center(child: CircularProgressIndicator()),
+                      }).toList(),
+                    ),
+                  ),
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      RefreshIndicator(
+                        onRefresh: () => _loadRecetasPortada(reset: true),
+                        child: Builder(
+                          builder: (context) {
+                            if (_isLoadingPortada) {
+                              return const Center(
+                                child: CircularProgressIndicator(),
                               );
                             }
-                            return _buildRecetaCard(items[index]);
-                          },
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                RefreshIndicator(
-                  onRefresh: () => _loadRecetas(reset: true),
-                  child: _isLoading
-                      ? const Center(child: CircularProgressIndicator())
-                      : Builder(
-                          builder: (context) {
-                            final items = _applySearchAndSort(_recetas);
+                            final items = _applySearchAndSort(_recetasPortada);
                             if (items.isEmpty) {
-                              return const Center(
-                                child: Text('No hay recetas disponibles'),
+                              return Center(
+                                child: Text(l10n.recipesNoFeaturedAvailable),
                               );
                             }
                             return NotificationListener<ScrollNotification>(
                               onNotification: (notification) {
-                                if (_hasMoreRecetas &&
-                                    !_isLoadingMore &&
+                                if (_hasMorePortada &&
+                                    !_isLoadingMorePortada &&
                                     notification.metrics.pixels >=
                                         notification.metrics.maxScrollExtent -
                                             300) {
-                                  _loadRecetas();
+                                  _loadRecetasPortada();
                                 }
                                 return false;
                               },
                               child: ListView.builder(
                                 padding: const EdgeInsets.only(bottom: 80),
-                                itemCount:
-                                    items.length + (_isLoadingMore ? 1 : 0),
+                                itemCount: items.length +
+                                    (_isLoadingMorePortada ? 1 : 0),
                                 itemBuilder: (context, index) {
                                   if (index >= items.length) {
                                     return const Padding(
@@ -1401,65 +1802,118 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
                             );
                           },
                         ),
-                ),
-                RefreshIndicator(
-                  onRefresh: () => _loadRecetasFavoritas(reset: true),
-                  child: Builder(
-                    builder: (context) {
-                      if (_isLoadingFavoritas) {
-                        return const Center(
-                          child: CircularProgressIndicator(),
-                        );
-                      }
-                      final items = _applySearchAndSort(_recetasFavoritas);
-                      final isWithoutCredentials =
-                          _isGuestMode || (_userCode ?? '').isEmpty;
-                      if (items.isEmpty) {
-                        if (isWithoutCredentials) {
-                          return _buildGuestFavoritasEmptyCard(tipo: 'recetas');
-                        }
-                        return const Center(
-                          child: Text('No tienes recetas favoritas'),
-                        );
-                      }
-                      return NotificationListener<ScrollNotification>(
-                        onNotification: (notification) {
-                          if (_hasMoreFavoritas &&
-                              !_isLoadingMoreFavoritas &&
-                              notification.metrics.pixels >=
-                                  notification.metrics.maxScrollExtent - 300) {
-                            _loadRecetasFavoritas();
-                          }
-                          return false;
-                        },
-                        child: ListView.builder(
-                          padding: const EdgeInsets.only(bottom: 80),
-                          itemCount:
-                              items.length + (_isLoadingMoreFavoritas ? 1 : 0),
-                          itemBuilder: (context, index) {
-                            if (index >= items.length) {
-                              return const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 20),
-                                child:
-                                    Center(child: CircularProgressIndicator()),
+                      ),
+                      RefreshIndicator(
+                        onRefresh: () => _loadRecetas(reset: true),
+                        child: _isLoading
+                            ? const Center(child: CircularProgressIndicator())
+                            : Builder(
+                                builder: (context) {
+                                  final items = _applySearchAndSort(_recetas);
+                                  if (items.isEmpty) {
+                                    return Center(
+                                      child:
+                                          Text(l10n.recipesNoRecipesAvailable),
+                                    );
+                                  }
+                                  return NotificationListener<
+                                      ScrollNotification>(
+                                    onNotification: (notification) {
+                                      if (_hasMoreRecetas &&
+                                          !_isLoadingMore &&
+                                          notification.metrics.pixels >=
+                                              notification
+                                                      .metrics.maxScrollExtent -
+                                                  300) {
+                                        _loadRecetas();
+                                      }
+                                      return false;
+                                    },
+                                    child: ListView.builder(
+                                      padding:
+                                          const EdgeInsets.only(bottom: 80),
+                                      itemCount: items.length +
+                                          (_isLoadingMore ? 1 : 0),
+                                      itemBuilder: (context, index) {
+                                        if (index >= items.length) {
+                                          return const Padding(
+                                            padding: EdgeInsets.symmetric(
+                                                vertical: 20),
+                                            child: Center(
+                                                child:
+                                                    CircularProgressIndicator()),
+                                          );
+                                        }
+                                        return _buildRecetaCard(items[index]);
+                                      },
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                      RefreshIndicator(
+                        onRefresh: () => _loadRecetasFavoritas(reset: true),
+                        child: Builder(
+                          builder: (context) {
+                            if (_isLoadingFavoritas) {
+                              return const Center(
+                                child: CircularProgressIndicator(),
                               );
                             }
-                            return _buildRecetaCard(items[index]);
+                            final items =
+                                _applySearchAndSort(_recetasFavoritas);
+                            final isWithoutCredentials =
+                                _isGuestMode || (_userCode ?? '').isEmpty;
+                            if (items.isEmpty) {
+                              if (isWithoutCredentials) {
+                                return _buildGuestFavoritasEmptyCard(
+                                    tipo: 'recetas');
+                              }
+                              return Center(
+                                child: Text(l10n.recipesNoFavoriteRecipes),
+                              );
+                            }
+                            return NotificationListener<ScrollNotification>(
+                              onNotification: (notification) {
+                                if (_hasMoreFavoritas &&
+                                    !_isLoadingMoreFavoritas &&
+                                    notification.metrics.pixels >=
+                                        notification.metrics.maxScrollExtent -
+                                            300) {
+                                  _loadRecetasFavoritas();
+                                }
+                                return false;
+                              },
+                              child: ListView.builder(
+                                padding: const EdgeInsets.only(bottom: 80),
+                                itemCount: items.length +
+                                    (_isLoadingMoreFavoritas ? 1 : 0),
+                                itemBuilder: (context, index) {
+                                  if (index >= items.length) {
+                                    return const Padding(
+                                      padding:
+                                          EdgeInsets.symmetric(vertical: 20),
+                                      child: Center(
+                                          child: CircularProgressIndicator()),
+                                    );
+                                  }
+                                  return _buildRecetaCard(items[index]);
+                                },
+                              ),
+                            );
                           },
                         ),
-                      );
-                    },
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
-          ),
-        ],
-      ),
     );
   }
 
   Future<void> _copyRecetaToClipboard(Receta receta) async {
+    final l10n = AppLocalizations.of(context)!;
     final authService = Provider.of<AuthService>(context, listen: false);
     if (!_canUseRecetasCopyPdf(authService)) {
       await _showPremiumRequiredForRecetasCopyPdf(context);
@@ -1472,8 +1926,8 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
       await Clipboard.setData(ClipboardData(text: textToCopy));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Copiado al portapapeles'),
+          SnackBar(
+            content: Text(l10n.commonCopiedToClipboard),
             duration: Duration(seconds: 2),
           ),
         );
@@ -1482,7 +1936,7 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al copiar: ${e.toString()}'),
+            content: Text(l10n.commonCopyError(e.toString())),
             backgroundColor: Colors.red,
           ),
         );
@@ -1491,6 +1945,7 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
   }
 
   Future<void> _generateRecetaPdfFromCard(Receta receta) async {
+    final l10n = AppLocalizations.of(context)!;
     final authService = Provider.of<AuthService>(context, listen: false);
     if (!_canUseRecetasCopyPdf(authService)) {
       await _showPremiumRequiredForRecetasCopyPdf(context);
@@ -1536,7 +1991,7 @@ class _RecetasPacienteScreenState extends State<RecetasPacienteScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al generar PDF: ${e.toString()}'),
+            content: Text(l10n.commonGeneratePdfError(e.toString())),
             backgroundColor: Colors.red,
           ),
         );
@@ -1573,6 +2028,9 @@ class RecetaDetailScreen extends StatefulWidget {
 class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
   static const MethodChannel _externalUrlChannel =
       MethodChannel('nutri_app/external_url');
+
+  AppLocalizations get l10n => AppLocalizations.of(context)!;
+
   static final RegExp _contentTokenRegex =
       RegExp(r'\[\[(img|documento|enlace):(\d+)\]\]');
   static final RegExp _genericTokenRegex = RegExp(r'\[\[([^\[\]]+)\]\]');
@@ -1656,11 +2114,43 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
   void initState() {
     super.initState();
     _receta = widget.receta;
+    _loadRecetaDetalleSiHaceFalta();
     _loadDocumentos();
     _loadRelacionados();
     if (!widget.isPreviewMode) {
       _marcarComoLeido();
     }
+  }
+
+  Future<void> _loadRecetaDetalleSiHaceFalta() async {
+    final codigo = _receta.codigo;
+    if (codigo == null) {
+      return;
+    }
+    if ((_receta.imagenPortada ?? '').trim().isNotEmpty) {
+      return;
+    }
+
+    try {
+      final apiService = context.read<ApiService>();
+      final response = await apiService.get('api/recetas.php?codigo=$codigo');
+      if (response.statusCode != 200) {
+        return;
+      }
+      final detalle = Receta.fromJson(
+        json.decode(response.body) as Map<String, dynamic>,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _receta.imagenPortada = detalle.imagenPortada ?? _receta.imagenPortada;
+        _receta.imagenMiniatura =
+            detalle.imagenMiniatura ?? _receta.imagenMiniatura;
+        _receta.imagenPortadaNombre =
+            detalle.imagenPortadaNombre ?? _receta.imagenPortadaNombre;
+      });
+    } catch (_) {}
   }
 
   @override
@@ -2010,6 +2500,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
   }
 
   Future<void> _toggleLike() async {
+    final l10n = AppLocalizations.of(context)!;
     if (widget.isPreviewMode) return;
 
     final authService = Provider.of<AuthService>(context, listen: false);
@@ -2018,8 +2509,8 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
     if (authService.isGuestMode || userCode == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Debes iniciar sesión para dar me gusta'),
+          SnackBar(
+            content: Text(l10n.commonSignInToLike),
             backgroundColor: Colors.orange,
             behavior: SnackBarBehavior.floating,
           ),
@@ -2055,13 +2546,17 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
       final errorMessage = e.toString().replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(
-          content: Text('Error al cambiar me gusta. $errorMessage'),
-          behavior: SnackBarBehavior.floating));
+      ).showSnackBar(
+        SnackBar(
+          content: Text(l10n.commonLikeChangeError(errorMessage)),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
   }
 
   Future<void> _toggleFavorito() async {
+    final l10n = AppLocalizations.of(context)!;
     if (widget.isPreviewMode) return;
 
     final authService = Provider.of<AuthService>(context, listen: false);
@@ -2070,8 +2565,8 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
     if (authService.isGuestMode) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Debes iniciar sesión para guardar favoritos'),
+          SnackBar(
+            content: Text(l10n.commonSignInToSaveFavorites),
             backgroundColor: Colors.orange,
             behavior: SnackBarBehavior.floating,
           ),
@@ -2084,8 +2579,8 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
     if (userCode == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Error: No se pudo identificar el usuario'),
+          SnackBar(
+            content: Text(l10n.commonCouldNotIdentifyUser),
             backgroundColor: Colors.red,
           ),
         );
@@ -2125,13 +2620,17 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
         final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(
-            content: Text('Error al cambiar favorito. $errorMessage')));
+        ).showSnackBar(
+          SnackBar(
+            content: Text(l10n.commonFavoriteChangeError(errorMessage)),
+          ),
+        );
       }
     }
   }
 
   Future<void> _copyToClipboard() async {
+    final l10n = AppLocalizations.of(context)!;
     final authService = Provider.of<AuthService>(context, listen: false);
     if (!_canUseRecetasCopyPdf(authService)) {
       await _showPremiumRequiredForRecetasCopyPdf(context);
@@ -2149,8 +2648,8 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
       await Clipboard.setData(ClipboardData(text: textToCopy));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Copiado al portapapeles'),
+          SnackBar(
+            content: Text(l10n.commonCopiedToClipboard),
             duration: Duration(seconds: 2),
           ),
         );
@@ -2159,7 +2658,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al copiar: ${e.toString()}'),
+            content: Text(l10n.commonCopyError(e.toString())),
             backgroundColor: Colors.red,
           ),
         );
@@ -2168,6 +2667,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
   }
 
   Future<void> _generateRecetaPdf() async {
+    final l10n = AppLocalizations.of(context)!;
     final authService = Provider.of<AuthService>(context, listen: false);
     if (!_canUseRecetasCopyPdf(authService)) {
       await _showPremiumRequiredForRecetasCopyPdf(context);
@@ -2203,7 +2703,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al generar PDF: ${e.toString()}'),
+            content: Text(l10n.commonGeneratePdfError(e.toString())),
             backgroundColor: Colors.red,
           ),
         );
@@ -2212,6 +2712,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
   }
 
   Future<void> _launchUrl(String url) async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       await launchUrlString(url, mode: LaunchMode.externalApplication);
     } on PlatformException catch (e) {
@@ -2224,13 +2725,14 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
       if (mounted) {
         final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al abrir enlace. $errorMessage')),
+          SnackBar(content: Text(l10n.commonOpenLinkError(errorMessage))),
         );
       }
     }
   }
 
   Future<void> _openDocumento(RecetaDocumento doc) async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       showDialog(
         context: context,
@@ -2262,8 +2764,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
-                  'Error al cargar documento: ${response.statusCode}',
-                ),
+                    l10n.commonOpenDocumentError('${response.statusCode}')),
               ),
             );
           }
@@ -2275,7 +2776,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
         if (mounted) Navigator.of(context).pop();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('El documento no está disponible')),
+            SnackBar(content: Text(l10n.commonDocumentUnavailable)),
           );
         }
         return;
@@ -2296,9 +2797,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
           if (mounted) {
             final errorMessage = e2.toString().replaceFirst('Exception: ', '');
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                  content:
-                      Text('Error al decodificar documento. $errorMessage')),
+              SnackBar(content: Text(l10n.commonDecodeError(errorMessage))),
             );
           }
           return;
@@ -2320,9 +2819,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
         if (mounted) Navigator.of(context).pop();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Error: No se pudo guardar el documento'),
-            ),
+            SnackBar(content: Text(l10n.commonSaveDocumentError)),
           );
         }
         return;
@@ -2335,7 +2832,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
       if (result.type != ResultType.done && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al abrir documento: ${result.message}'),
+            content: Text(l10n.commonOpenDocumentError(result.message)),
           ),
         );
       }
@@ -2344,7 +2841,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
       if (mounted) {
         final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al abrir documento. $errorMessage')),
+          SnackBar(content: Text(l10n.commonOpenDocumentError(errorMessage))),
         );
       }
     }
@@ -2587,7 +3084,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
             child: OutlinedButton.icon(
               onPressed: () => _openDocumento(doc),
               icon: const Icon(Icons.download),
-              label: const Text('Descargar documento'),
+              label: Text(l10n.commonDownloadDocument),
             ),
           ),
         ],
@@ -2743,10 +3240,16 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final documentosYEnlaces =
         _documentos.where((doc) => doc.tipo != 'imagen').toList();
-    final detailCoverProvider =
-        _getDetailCachedImageProvider(_receta.codigo, _receta.imagenPortada);
+    final detailCoverBase64 = ((_receta.imagenPortada ?? '').trim().isNotEmpty)
+        ? _receta.imagenPortada
+        : _receta.imagenMiniatura;
+    final detailCoverProvider = _getDetailCachedImageProvider(
+      _receta.codigo,
+      detailCoverBase64,
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -2754,7 +3257,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: const Text('Detalle de la Receta'),
+        title: Text(l10n.recipesDetailTitle),
         actions: [
           if (!widget.isPreviewMode) ...[
             IconButton(
@@ -2792,7 +3295,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Vista Previa - Así verán la receta los usuarios',
+                        l10n.recipesPreviewBanner,
                         style: TextStyle(
                           color: Colors.blue[800],
                           fontWeight: FontWeight.w500,
@@ -2806,7 +3309,7 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
               GestureDetector(
                 onTap: () => showImageViewerDialog(
                   context: context,
-                  base64Image: _receta.imagenPortada!,
+                  base64Image: detailCoverBase64!,
                   title: _receta.titulo,
                 ),
                 child: RepaintBoundary(
@@ -2837,19 +3340,19 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
                         onPressed: _toggleLike,
                       ),
                       Text(
-                        '${_receta.totalLikes ?? 0} me gusta',
+                        l10n.commonLikesCount(_receta.totalLikes ?? 0),
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                       const Spacer(),
                       IconButton(
                         icon: const Icon(Icons.copy, size: 20),
                         onPressed: _copyToClipboard,
-                        tooltip: 'Copiar',
+                        tooltip: l10n.commonCopy,
                       ),
                       IconButton(
                         icon: const Icon(Icons.picture_as_pdf, size: 20),
                         onPressed: _generateRecetaPdf,
-                        tooltip: 'Generar PDF',
+                        tooltip: l10n.commonGeneratePdf,
                       ),
                     ],
                   ),
@@ -2864,8 +3367,8 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
                   _buildDetalleTextoConImagenes(),
                   const SizedBox(height: 24),
                   if (documentosYEnlaces.isNotEmpty) ...[
-                    const Text(
-                      'Documentos y enlaces',
+                    Text(
+                      l10n.commonDocumentsAndLinks,
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -2916,8 +3419,8 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
                                       Text(
                                         doc.nombre ??
                                             (doc.tipo == 'url'
-                                                ? 'Enlace'
-                                                : 'Documento'),
+                                                ? l10n.commonLink
+                                                : l10n.commonDocument),
                                         textAlign: TextAlign.center,
                                         style: const TextStyle(fontSize: 12),
                                         maxLines: 2,
@@ -2943,8 +3446,8 @@ class _RecetaDetailScreenState extends State<RecetaDetailScreen> {
                           color: Colors.amber.shade600,
                         ),
                         const SizedBox(width: 8),
-                        const Text(
-                          'También te puede interesar...',
+                        Text(
+                          l10n.commonYouMayAlsoLike,
                           style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
@@ -3036,13 +3539,14 @@ class _RecetasHashtagScreenState extends State<RecetasHashtagScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: Text('Recetas con ${widget.hashtag}'),
+        title: Text(l10n.recipesHashtagTitle(widget.hashtag)),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -3054,7 +3558,7 @@ class _RecetasHashtagScreenState extends State<RecetasHashtagScreen> {
                       Icon(Icons.tag, size: 64, color: Colors.grey[400]),
                       const SizedBox(height: 16),
                       Text(
-                        'No hay recetas con ${widget.hashtag}',
+                        l10n.recipesHashtagEmpty(widget.hashtag),
                         style: TextStyle(fontSize: 16, color: Colors.grey[600]),
                       ),
                     ],

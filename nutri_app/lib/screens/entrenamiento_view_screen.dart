@@ -11,10 +11,8 @@ import 'entrenamiento_edit_screen.dart';
 class EntrenamientoViewScreen extends StatefulWidget {
   final Entrenamiento entrenamiento;
 
-  const EntrenamientoViewScreen({
-    Key? key,
-    required this.entrenamiento,
-  }) : super(key: key);
+  const EntrenamientoViewScreen({Key? key, required this.entrenamiento})
+      : super(key: key);
 
   @override
   State<EntrenamientoViewScreen> createState() =>
@@ -100,10 +98,12 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
 
       // Filtrar por actividad y fecha anterior a la actual
       final anteriores = entrenamientos
-          .where((e) =>
-              e.actividad == widget.entrenamiento.actividad &&
-              e.fecha.isBefore(widget.entrenamiento.fecha) &&
-              e.codigo != widget.entrenamiento.codigo)
+          .where(
+            (e) =>
+                e.actividad == widget.entrenamiento.actividad &&
+                e.fecha.isBefore(widget.entrenamiento.fecha) &&
+                e.codigo != widget.entrenamiento.codigo,
+          )
           .toList();
 
       // Ordenar por fecha descendente y tomar los últimos 2-3
@@ -126,8 +126,9 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
     try {
       final apiService = Provider.of<ApiService>(context, listen: false);
       if (widget.entrenamiento.codigo != null) {
-        final imagenes = await apiService
-            .getImagenesEntrenamiento(widget.entrenamiento.codigo!);
+        final imagenes = await apiService.getImagenesEntrenamiento(
+          widget.entrenamiento.codigo!,
+        );
         setState(() {
           _fotos = imagenes;
         });
@@ -141,8 +142,9 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
     try {
       final apiService = Provider.of<ApiService>(context, listen: false);
       if (widget.entrenamiento.codigo != null) {
-        final ejercicios = await apiService
-            .getEntrenamientoEjercicios(widget.entrenamiento.codigo!);
+        final ejercicios = await apiService.getEntrenamientoEjercicios(
+          widget.entrenamiento.codigo!,
+        );
 
         final catalogCodes = ejercicios
             .where((e) => (e.codigoEjercicioCatalogo ?? 0) > 0)
@@ -156,10 +158,8 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
           await Future.wait(
             catalogCodes.map((catalogCode) async {
               try {
-                final catalogExercise =
-                    await apiService.getPlanFitEjercicioCatalogWithFoto(
-                  catalogCode,
-                );
+                final catalogExercise = await apiService
+                    .getPlanFitEjercicioCatalogWithFoto(catalogCode);
                 if (catalogExercise != null) {
                   catalogByCode[catalogCode] = catalogExercise;
                 }
@@ -283,10 +283,9 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                   width: 60,
                                   height: 60,
                                   decoration: BoxDecoration(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .primary
-                                        .withOpacity(0.15),
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.primary.withOpacity(0.15),
                                     borderRadius: BorderRadius.circular(16),
                                   ),
                                   child: Center(
@@ -317,9 +316,7 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                         style: Theme.of(context)
                                             .textTheme
                                             .bodySmall
-                                            ?.copyWith(
-                                              color: Colors.grey[600],
-                                            ),
+                                            ?.copyWith(color: Colors.grey[600]),
                                       ),
                                     ],
                                   ),
@@ -331,7 +328,9 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                               children: [
                                 Container(
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 10, vertical: 6),
+                                    horizontal: 10,
+                                    vertical: 6,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: widget.entrenamiento.validado == true
                                         ? Colors.green.withOpacity(0.15)
@@ -384,7 +383,8 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                     'Esfuerzo',
                                     '${widget.entrenamiento.nivelEsfuerzo}/10',
                                     Entrenamiento.getIconoNivelEsfuerzo(
-                                        widget.entrenamiento.nivelEsfuerzo),
+                                      widget.entrenamiento.nivelEsfuerzo,
+                                    ),
                                   ),
                                 ),
                                 if (widget.entrenamiento.vueltas != null &&
@@ -413,16 +413,15 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                     style: Theme.of(context)
                                         .textTheme
                                         .titleMedium
-                                        ?.copyWith(
-                                          fontWeight: FontWeight.bold,
-                                        ),
+                                        ?.copyWith(fontWeight: FontWeight.bold),
                                   ),
                                   const SizedBox(height: 8),
                                   Text(
                                     widget.entrenamiento.descripcionActividad ??
                                         '',
-                                    style:
-                                        Theme.of(context).textTheme.bodyMedium,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodyMedium,
                                   ),
                                 ],
                               ),
@@ -440,9 +439,7 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                     style: Theme.of(context)
                                         .textTheme
                                         .titleMedium
-                                        ?.copyWith(
-                                          fontWeight: FontWeight.bold,
-                                        ),
+                                        ?.copyWith(fontWeight: FontWeight.bold),
                                   ),
                                   const SizedBox(height: 12),
                                   SizedBox(
@@ -455,16 +452,37 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                       },
                                       itemCount: _fotos.length,
                                       itemBuilder: (context, index) {
+                                        final imagenBase64 =
+                                            (_fotos[index]['imagen'] ?? '')
+                                                .toString();
                                         return Padding(
                                           padding: const EdgeInsets.symmetric(
-                                              horizontal: 4),
+                                            horizontal: 4,
+                                          ),
                                           child: ClipRRect(
-                                            borderRadius:
-                                                BorderRadius.circular(12),
-                                            child: Image(
-                                              image: MemoryImage(base64Decode(
-                                                  _fotos[index]['imagen'])),
-                                              fit: BoxFit.cover,
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
+                                            child: Material(
+                                              color: Colors.transparent,
+                                              child: InkWell(
+                                                onTap: imagenBase64.isEmpty
+                                                    ? null
+                                                    : () =>
+                                                        showImageViewerDialog(
+                                                          context: context,
+                                                          base64Image:
+                                                              imagenBase64,
+                                                          title:
+                                                              '${widget.entrenamiento.actividad} · Foto ${index + 1}',
+                                                        ),
+                                                child: Image(
+                                                  image: MemoryImage(
+                                                    base64Decode(imagenBase64),
+                                                  ),
+                                                  fit: BoxFit.cover,
+                                                ),
+                                              ),
                                             ),
                                           ),
                                         );
@@ -482,13 +500,14 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                           width: 8,
                                           height: 8,
                                           margin: const EdgeInsets.symmetric(
-                                              horizontal: 4),
+                                            horizontal: 4,
+                                          ),
                                           decoration: BoxDecoration(
                                             shape: BoxShape.circle,
                                             color: _currentImageIndex == index
-                                                ? Theme.of(context)
-                                                    .colorScheme
-                                                    .primary
+                                                ? Theme.of(
+                                                    context,
+                                                  ).colorScheme.primary
                                                 : Colors.grey[400],
                                           ),
                                         ),
@@ -510,9 +529,7 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                     style: Theme.of(context)
                                         .textTheme
                                         .titleMedium
-                                        ?.copyWith(
-                                          fontWeight: FontWeight.bold,
-                                        ),
+                                        ?.copyWith(fontWeight: FontWeight.bold),
                                   ),
                                   const SizedBox(height: 12),
                                   ListView.separated(
@@ -524,6 +541,10 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                         const SizedBox(height: 8),
                                     itemBuilder: (context, index) {
                                       final e = _ejercicios[index];
+                                      final tieneSensaciones =
+                                          (e.sensaciones ?? '')
+                                              .trim()
+                                              .isNotEmpty;
                                       final tieneComentario =
                                           (e.comentarioNutricionista ?? '')
                                               .trim()
@@ -563,8 +584,9 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                         padding: const EdgeInsets.all(12),
                                         decoration: BoxDecoration(
                                           color: backgroundColor,
-                                          borderRadius:
-                                              BorderRadius.circular(8),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
                                         ),
                                         child: Column(
                                           crossAxisAlignment:
@@ -578,7 +600,8 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                                   ClipRRect(
                                                     borderRadius:
                                                         BorderRadius.circular(
-                                                            8),
+                                                      8,
+                                                    ),
                                                     child: GestureDetector(
                                                       onTap: hasImagenCompleta
                                                           ? () =>
@@ -592,7 +615,8 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                                           : null,
                                                       child: Image.memory(
                                                         base64Decode(
-                                                            e.fotoMiniatura!),
+                                                          e.fotoMiniatura!,
+                                                        ),
                                                         width: 64,
                                                         height: 64,
                                                         fit: BoxFit.cover,
@@ -608,7 +632,8 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                                           Colors.grey.shade200,
                                                       borderRadius:
                                                           BorderRadius.circular(
-                                                              8),
+                                                        8,
+                                                      ),
                                                     ),
                                                     child: const Icon(
                                                       Icons.fitness_center,
@@ -626,9 +651,9 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                                       Text(
                                                         e.nombre,
                                                         style: const TextStyle(
-                                                            fontWeight:
-                                                                FontWeight
-                                                                    .bold),
+                                                          fontWeight:
+                                                              FontWeight.bold,
+                                                        ),
                                                       ),
                                                       const SizedBox(height: 6),
                                                       Row(
@@ -637,41 +662,53 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                                                   0 ||
                                                               repsPlan > 0) ...[
                                                             const Icon(
-                                                                Icons.repeat,
-                                                                size: 16),
+                                                              Icons.repeat,
+                                                              size: 16,
+                                                            ),
                                                             const SizedBox(
-                                                                width: 4),
+                                                              width: 4,
+                                                            ),
                                                             Text(
-                                                                '${repsRealizadas > 0 ? repsRealizadas : repsPlan}'),
+                                                              '${repsRealizadas > 0 ? repsRealizadas : repsPlan}',
+                                                            ),
                                                             const SizedBox(
-                                                                width: 12),
+                                                              width: 12,
+                                                            ),
                                                           ],
                                                           if (tiempoRealizado >
                                                                   0 ||
                                                               tiempoPlan >
                                                                   0) ...[
                                                             const Icon(
-                                                                Icons.timer,
-                                                                size: 16),
+                                                              Icons.timer,
+                                                              size: 16,
+                                                            ),
                                                             const SizedBox(
-                                                                width: 4),
+                                                              width: 4,
+                                                            ),
                                                             Text(
-                                                                '${tiempoRealizado > 0 ? tiempoRealizado : tiempoPlan}s'),
+                                                              '${tiempoRealizado > 0 ? tiempoRealizado : tiempoPlan}s',
+                                                            ),
                                                             const SizedBox(
-                                                                width: 12),
+                                                              width: 12,
+                                                            ),
                                                           ],
                                                           if (kilosPlan >
                                                               0) ...[
                                                             const Icon(
-                                                                Icons
-                                                                    .fitness_center,
-                                                                size: 16),
+                                                              Icons
+                                                                  .fitness_center,
+                                                              size: 16,
+                                                            ),
                                                             const SizedBox(
-                                                                width: 4),
+                                                              width: 4,
+                                                            ),
                                                             Text(
-                                                                '$kilosPlan kg'),
+                                                              '$kilosPlan kg',
+                                                            ),
                                                             const SizedBox(
-                                                                width: 12),
+                                                              width: 12,
+                                                            ),
                                                           ],
                                                           Container(
                                                             width: 20,
@@ -680,15 +717,18 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                                                 BoxDecoration(
                                                               shape: BoxShape
                                                                   .circle,
-                                                              color: getEsfuerzoColor(
-                                                                      esfuerzo)
-                                                                  .withOpacity(
-                                                                      0.3),
+                                                              color:
+                                                                  getEsfuerzoColor(
+                                                                esfuerzo,
+                                                              ).withOpacity(
+                                                                0.3,
+                                                              ),
                                                               border:
                                                                   Border.all(
                                                                 color:
                                                                     getEsfuerzoColor(
-                                                                        esfuerzo),
+                                                                  esfuerzo,
+                                                                ),
                                                                 width: 2,
                                                               ),
                                                             ),
@@ -701,25 +741,186 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                                                   fontWeight:
                                                                       FontWeight
                                                                           .bold,
-                                                                  color: getEsfuerzoColor(
-                                                                      esfuerzo),
+                                                                  color:
+                                                                      getEsfuerzoColor(
+                                                                    esfuerzo,
+                                                                  ),
                                                                 ),
                                                               ),
                                                             ),
                                                           ),
                                                         ],
                                                       ),
+                                                      if (tieneSensaciones ||
+                                                          tieneComentario) ...[
+                                                        const SizedBox(
+                                                          height: 8,
+                                                        ),
+                                                        Wrap(
+                                                          spacing: 8,
+                                                          runSpacing: 8,
+                                                          children: [
+                                                            if (tieneSensaciones)
+                                                              Container(
+                                                                padding:
+                                                                    const EdgeInsets
+                                                                        .symmetric(
+                                                                  horizontal:
+                                                                      10,
+                                                                  vertical: 5,
+                                                                ),
+                                                                decoration:
+                                                                    BoxDecoration(
+                                                                  color: e.sensacionesLeidoNutri ==
+                                                                          true
+                                                                      ? Colors
+                                                                          .green
+                                                                          .shade100
+                                                                      : Colors
+                                                                          .orange
+                                                                          .shade100,
+                                                                  borderRadius:
+                                                                      BorderRadius
+                                                                          .circular(
+                                                                    999,
+                                                                  ),
+                                                                  border: Border
+                                                                      .all(
+                                                                    color: e.sensacionesLeidoNutri ==
+                                                                            true
+                                                                        ? Colors
+                                                                            .green
+                                                                            .shade400
+                                                                        : Colors
+                                                                            .orange
+                                                                            .shade400,
+                                                                  ),
+                                                                ),
+                                                                child: Row(
+                                                                  mainAxisSize:
+                                                                      MainAxisSize
+                                                                          .min,
+                                                                  children: [
+                                                                    Icon(
+                                                                      Icons
+                                                                          .chat_bubble_outline,
+                                                                      size: 14,
+                                                                      color: e.sensacionesLeidoNutri ==
+                                                                              true
+                                                                          ? Colors
+                                                                              .green
+                                                                              .shade800
+                                                                          : Colors
+                                                                              .orange
+                                                                              .shade800,
+                                                                    ),
+                                                                    const SizedBox(
+                                                                      width: 5,
+                                                                    ),
+                                                                    Text(
+                                                                      'Sensaciones',
+                                                                      style:
+                                                                          TextStyle(
+                                                                        fontSize:
+                                                                            12,
+                                                                        fontWeight:
+                                                                            FontWeight.w700,
+                                                                        color: e.sensacionesLeidoNutri ==
+                                                                                true
+                                                                            ? Colors.green.shade900
+                                                                            : Colors.orange.shade900,
+                                                                      ),
+                                                                    ),
+                                                                  ],
+                                                                ),
+                                                              ),
+                                                            if (tieneComentario)
+                                                              Container(
+                                                                padding:
+                                                                    const EdgeInsets
+                                                                        .symmetric(
+                                                                  horizontal:
+                                                                      10,
+                                                                  vertical: 5,
+                                                                ),
+                                                                decoration:
+                                                                    BoxDecoration(
+                                                                  color: Theme
+                                                                          .of(
+                                                                    context,
+                                                                  )
+                                                                      .colorScheme
+                                                                      .primary
+                                                                      .withOpacity(
+                                                                        0.14,
+                                                                      ),
+                                                                  borderRadius:
+                                                                      BorderRadius
+                                                                          .circular(
+                                                                    999,
+                                                                  ),
+                                                                  border: Border
+                                                                      .all(
+                                                                    color: Theme
+                                                                            .of(
+                                                                      context,
+                                                                    )
+                                                                        .colorScheme
+                                                                        .primary
+                                                                        .withOpacity(
+                                                                          0.45,
+                                                                        ),
+                                                                  ),
+                                                                ),
+                                                                child: Row(
+                                                                  mainAxisSize:
+                                                                      MainAxisSize
+                                                                          .min,
+                                                                  children: [
+                                                                    Icon(
+                                                                      Icons
+                                                                          .support_agent,
+                                                                      size: 14,
+                                                                      color: Theme
+                                                                              .of(
+                                                                        context,
+                                                                      )
+                                                                          .colorScheme
+                                                                          .primary,
+                                                                    ),
+                                                                    const SizedBox(
+                                                                      width: 5,
+                                                                    ),
+                                                                    Text(
+                                                                      'Entrenador',
+                                                                      style:
+                                                                          TextStyle(
+                                                                        fontSize:
+                                                                            12,
+                                                                        fontWeight:
+                                                                            FontWeight.w700,
+                                                                        color: Theme
+                                                                            .of(
+                                                                          context,
+                                                                        ).colorScheme.primary,
+                                                                      ),
+                                                                    ),
+                                                                  ],
+                                                                ),
+                                                              ),
+                                                          ],
+                                                        ),
+                                                      ],
                                                     ],
                                                   ),
                                                 ),
                                               ],
                                             ),
-                                            if ((e.sensaciones ?? '')
-                                                .trim()
-                                                .isNotEmpty) ...[
+                                            if (tieneSensaciones) ...[
                                               const SizedBox(height: 6),
                                               Text(
-                                                  'Sensaciones: ${e.sensaciones}'),
+                                                'Sensaciones: ${e.sensaciones}',
+                                              ),
                                               const SizedBox(height: 4),
                                               Row(
                                                 children: [
@@ -744,9 +945,9 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                                             true
                                                         ? 'Leido por dietista'
                                                         : 'Pendiente de leer',
-                                                    style: Theme.of(context)
-                                                        .textTheme
-                                                        .bodySmall,
+                                                    style: Theme.of(
+                                                      context,
+                                                    ).textTheme.bodySmall,
                                                   ),
                                                 ],
                                               ),
@@ -754,8 +955,9 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                                             if (tieneComentario) ...[
                                               const SizedBox(height: 6),
                                               Container(
-                                                padding:
-                                                    const EdgeInsets.all(8),
+                                                padding: const EdgeInsets.all(
+                                                  8,
+                                                ),
                                                 decoration: BoxDecoration(
                                                   color: Theme.of(context)
                                                       .colorScheme
@@ -786,16 +988,15 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                     // Mensaje de ánimo y comparativa
                     Card(
                       elevation: 2,
-                      color: Theme.of(context).colorScheme.primary.withOpacity(
-                            0.1,
-                          ),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.primary.withOpacity(0.1),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                         side: BorderSide(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .primary
-                              .withOpacity(0.3),
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.primary.withOpacity(0.3),
                         ),
                       ),
                       child: Padding(
@@ -808,9 +1009,7 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                               style: Theme.of(context)
                                   .textTheme
                                   .bodyLarge
-                                  ?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                                  ?.copyWith(fontWeight: FontWeight.w600),
                             ),
                           ],
                         ),
@@ -829,18 +1028,18 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
                             style: Theme.of(context)
                                 .textTheme
                                 .titleLarge
-                                ?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
+                                ?.copyWith(fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 12),
                           ..._actividadesAnteriores
                               .asMap()
                               .entries
-                              .map((e) => _buildActividadAnteriorCard(
-                                    e.value,
-                                    e.key + 1,
-                                  ))
+                              .map(
+                                (e) => _buildActividadAnteriorCard(
+                                  e.value,
+                                  e.key + 1,
+                                ),
+                              )
                               .toList(),
                         ],
                       ),
@@ -889,15 +1088,16 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
               children: [
                 Text(
                   Entrenamiento.getIconoNivelEsfuerzo(
-                      widget.entrenamiento.nivelEsfuerzo),
+                    widget.entrenamiento.nivelEsfuerzo,
+                  ),
                   style: const TextStyle(fontSize: 48),
                 ),
                 const SizedBox(height: 16),
                 Text(
                   'Nivel de Esfuerzo',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -937,10 +1137,7 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(
-            icon,
-            style: const TextStyle(fontSize: 20),
-          ),
+          Text(icon, style: const TextStyle(fontSize: 20)),
           const SizedBox(height: 6),
           Text(
             label,
@@ -952,9 +1149,9 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
           const SizedBox(height: 3),
           Text(
             value,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
           ),
         ],
       ),
@@ -970,8 +1167,10 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
       elevation: 1,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       child: ListTile(
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 12,
+        ),
         leading: Container(
           width: 44,
           height: 44,
@@ -982,18 +1181,15 @@ class _EntrenamientoViewScreenState extends State<EntrenamientoViewScreen> {
           child: Center(
             child: Text(
               '$numeroDias',
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-              ),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
           ),
         ),
         title: Text(
           'Hace $diasDiferencia días',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Colors.grey[600],
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

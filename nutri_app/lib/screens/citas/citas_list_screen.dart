@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -11,8 +12,11 @@ import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/services/citas_pdf_service.dart';
 import 'package:nutri_app/mixins/auth_error_handler_mixin.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:add_2_calendar/add_2_calendar.dart';
 
 class CitasListScreen extends StatefulWidget {
   final Paciente? paciente;
@@ -123,6 +127,84 @@ class _CitasListScreenState extends State<CitasListScreen>
           descripcion.contains(_searchText) ||
           tipo.contains(_searchText);
     }).toList();
+  }
+
+  bool get _isDesktop =>
+      Platform.isWindows || Platform.isLinux || Platform.isMacOS;
+
+  String _icsDateTime(DateTime dt) {
+    // Formato UTC: 20260401T120000Z
+    final utc = dt.toUtc();
+    return '${utc.year.toString().padLeft(4, '0')}'
+        '${utc.month.toString().padLeft(2, '0')}'
+        '${utc.day.toString().padLeft(2, '0')}'
+        'T'
+        '${utc.hour.toString().padLeft(2, '0')}'
+        '${utc.minute.toString().padLeft(2, '0')}'
+        '${utc.second.toString().padLeft(2, '0')}'
+        'Z';
+  }
+
+  String _icsEscape(String text) => text
+      .replaceAll('\\', '\\\\')
+      .replaceAll('\n', '\\n')
+      .replaceAll(',', '\\,')
+      .replaceAll(';', '\\;');
+
+  Future<void> _exportarCitaIcs(Cita cita) async {
+    final inicio = cita.comienzo!;
+    final fin = cita.fin ?? inicio.add(const Duration(hours: 1));
+    final uid = 'cita-${cita.codigo}@nutrifit';
+    final stamp = _icsDateTime(DateTime.now());
+
+    final ics = StringBuffer()
+      ..writeln('BEGIN:VCALENDAR')
+      ..writeln('VERSION:2.0')
+      ..writeln('PRODID:-//NutriFit//NutriFit App//ES')
+      ..writeln('CALSCALE:GREGORIAN')
+      ..writeln('METHOD:PUBLISH')
+      ..writeln('BEGIN:VEVENT')
+      ..writeln('UID:$uid')
+      ..writeln('DTSTAMP:$stamp')
+      ..writeln('DTSTART:${_icsDateTime(inicio)}')
+      ..writeln('DTEND:${_icsDateTime(fin)}')
+      ..writeln('SUMMARY:${_icsEscape(cita.asunto)}');
+    if (cita.descripcion != null && cita.descripcion!.isNotEmpty) {
+      ics.writeln('DESCRIPTION:${_icsEscape(cita.descripcion!)}');
+    }
+    if (cita.ubicacion != null && cita.ubicacion!.isNotEmpty) {
+      ics.writeln('LOCATION:${_icsEscape(cita.ubicacion!)}');
+    }
+    ics
+      ..writeln('END:VEVENT')
+      ..writeln('END:VCALENDAR');
+
+    try {
+      final dir = await getTemporaryDirectory();
+      final fileName =
+          'cita_${cita.codigo}_${DateFormat('yyyyMMdd').format(inicio)}.ics';
+      final file = File('${dir.path}${Platform.pathSeparator}$fileName');
+      await file.writeAsString(ics.toString(), encoding: utf8);
+      final result = await OpenFilex.open(file.path, type: 'text/calendar');
+      if (result.type != ResultType.done && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                'No se pudo abrir el fichero .ics (${result.message}). Guardado en: ${file.path}'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al exportar la cita: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   void _navigateToEditScreen({Cita? cita}) {
@@ -743,6 +825,36 @@ class _CitasListScreenState extends State<CitasListScreen>
                                         onPressed: () =>
                                             _showDeleteConfirmation(cita),
                                         tooltip: 'Eliminar',
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(
+                                            Icons.event_available_outlined),
+                                        color: Colors.teal,
+                                        tooltip:
+                                            'Añadir al calendario del dispositivo',
+                                        onPressed: cita.comienzo == null
+                                            ? null
+                                            : () {
+                                                if (_isDesktop) {
+                                                  _exportarCitaIcs(cita);
+                                                } else {
+                                                  final event = Event(
+                                                    title: cita.asunto,
+                                                    description:
+                                                        cita.descripcion ?? '',
+                                                    location:
+                                                        cita.ubicacion ?? '',
+                                                    startDate: cita.comienzo!,
+                                                    endDate: cita.fin ??
+                                                        cita.comienzo!.add(
+                                                          const Duration(
+                                                              hours: 1),
+                                                        ),
+                                                  );
+                                                  Add2Calendar.addEvent2Cal(
+                                                      event);
+                                                }
+                                              },
                                       ),
                                     ],
                                   ),

@@ -7,6 +7,7 @@ header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers
 include_once '../config/database.php';
 include_once '../auth/token_validator.php';
 include_once '../auth/permissions.php';
+include_once 'plan_fit_auto_adherencia_helper.php';
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
@@ -35,6 +36,8 @@ switch ($method) {
             get_unread_comments();
         } elseif ($action === 'unread_sensaciones_nutri') {
             get_unread_sensaciones_nutri();
+        } elseif ($action === 'sensaciones_nutri') {
+            get_sensaciones_nutri();
         } elseif (isset($_GET['codigo_entrenamiento'])) {
             get_ejercicios_entrenamiento(intval($_GET['codigo_entrenamiento']));
         } else {
@@ -69,7 +72,13 @@ function get_ejercicios_entrenamiento($codigo_entrenamiento) {
     global $db;
     $query = "SELECT e.codigo, e.codigo_entrenamiento, e.codigo_plan_fit_ejercicio,
                COALESCE(e.codigo_ejercicio_catalogo, pfe.codigo_ejercicio_catalogo) AS codigo_ejercicio_catalogo,
-               e.nombre, e.instrucciones, e.url_video,
+               e.nombre,
+               e.instrucciones,
+               COALESCE(
+                   NULLIF(TRIM(c_direct.instrucciones_detalladas), ''),
+                   NULLIF(TRIM(c_plan.instrucciones_detalladas), '')
+               ) AS instrucciones_detalladas,
+               e.url_video,
                NULL AS foto,
                COALESCE(c_direct.foto_miniatura, c_plan.foto_miniatura, pfe.foto_miniatura) AS foto_miniatura,
                      e.tiempo_plan, e.descanso_plan, e.repeticiones_plan, e.kilos_plan, e.esfuerzo_percibido, e.tiempo_realizado, e.repeticiones_realizadas,
@@ -152,6 +161,20 @@ function get_unread_comments() {
 }
 
 function get_unread_sensaciones_nutri() {
+        get_sensaciones_nutri_base(true);
+}
+
+function get_sensaciones_nutri() {
+        $codigo_paciente = isset($_GET['codigo_paciente']) ? intval($_GET['codigo_paciente']) : null;
+        $codigo_plan_fit = isset($_GET['codigo_plan_fit']) ? intval($_GET['codigo_plan_fit']) : null;
+        $incluir_leidas = isset($_GET['incluir_leidas'])
+            ? filter_var($_GET['incluir_leidas'], FILTER_VALIDATE_BOOLEAN)
+            : false;
+
+        get_sensaciones_nutri_base(!$incluir_leidas, $codigo_paciente, $codigo_plan_fit);
+}
+
+function get_sensaciones_nutri_base($only_unread = true, $codigo_paciente = null, $codigo_plan_fit = null) {
         global $db, $user;
 
         if ($user['tipo'] !== 'Nutricionista' && $user['tipo'] !== 'Administrador') {
@@ -165,6 +188,8 @@ function get_unread_sensaciones_nutri() {
                          e.codigo_plan_fit_ejercicio,
                          e.nombre AS nombre_ejercicio,
                          e.sensaciones,
+                         e.sensaciones_leido_nutri,
+                         e.sensaciones_leido_nutri_fecha,
                          e.tiempo_realizado,
                          e.repeticiones_realizadas,
                          e.tiempo_plan,
@@ -174,32 +199,54 @@ function get_unread_sensaciones_nutri() {
                          pfe.foto_miniatura,
                          en.actividad,
                          en.fecha,
+                         en.codigo_plan_fit,
                          en.duracion_horas,
                          en.duracion_minutos,
                          en.nivel_esfuerzo,
                          p.codigo AS codigo_paciente,
                          p.nombre AS nombre_paciente,
-                                                 (
-                                                     SELECT u.img_perfil
-                                                     FROM usuario u
-                                                     WHERE u.codigo_paciente = p.codigo
-                                                         AND u.img_perfil IS NOT NULL
-                                                     LIMIT 1
-                                                 ) AS usuario_img_perfil
-                            FROM nu_entrenamientos_ejercicios e
-                            INNER JOIN nu_entrenamientos en ON en.codigo = e.codigo_entrenamiento
-                            LEFT JOIN nu_paciente p ON p.codigo = en.codigo_paciente
-                            LEFT JOIN nu_plan_fit_ejercicio pfe ON e.codigo_plan_fit_ejercicio = pfe.codigo
-                            WHERE e.sensaciones IS NOT NULL
-                                AND e.sensaciones <> ''
-                                AND (e.sensaciones_leido_nutri IS NULL OR e.sensaciones_leido_nutri = 0)
-                            ORDER BY en.fecha DESC";
+                         (
+                             SELECT u.img_perfil
+                             FROM usuario u
+                             WHERE u.codigo_paciente = p.codigo
+                                 AND u.img_perfil IS NOT NULL
+                             LIMIT 1
+                         ) AS usuario_img_perfil
+                    FROM nu_entrenamientos_ejercicios e
+                    INNER JOIN nu_entrenamientos en ON en.codigo = e.codigo_entrenamiento
+                    LEFT JOIN nu_paciente p ON p.codigo = en.codigo_paciente
+                    LEFT JOIN nu_plan_fit_ejercicio pfe ON e.codigo_plan_fit_ejercicio = pfe.codigo
+                    WHERE e.sensaciones IS NOT NULL
+                        AND e.sensaciones <> ''";
+
+        if ($only_unread) {
+            $query .= " AND (e.sensaciones_leido_nutri IS NULL OR e.sensaciones_leido_nutri = 0)";
+        }
+
+        if (!empty($codigo_paciente)) {
+            $query .= " AND en.codigo_paciente = :codigo_paciente";
+        }
+
+        if (!empty($codigo_plan_fit)) {
+            $query .= " AND en.codigo_plan_fit = :codigo_plan_fit";
+        }
+
+        $query .= $only_unread
+            ? " ORDER BY en.fecha DESC"
+            : " ORDER BY COALESCE(e.sensaciones_leido_nutri, 0) ASC, en.fecha DESC";
 
         $stmt = $db->prepare($query);
+
+        if (!empty($codigo_paciente)) {
+            $stmt->bindValue(':codigo_paciente', $codigo_paciente, PDO::PARAM_INT);
+        }
+        if (!empty($codigo_plan_fit)) {
+            $stmt->bindValue(':codigo_plan_fit', $codigo_plan_fit, PDO::PARAM_INT);
+        }
+
         $stmt->execute();
         $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        // Codificar imágenes en base64
         foreach ($items as &$item) {
             if (!empty($item['foto_miniatura'])) {
                 $item['foto_miniatura'] = base64_encode($item['foto_miniatura']);
@@ -325,7 +372,7 @@ function mark_sensaciones_read() {
 }
 
 function save_ejercicios_entrenamiento() {
-    global $db;
+    global $db, $user;
     $data = json_decode(file_get_contents("php://input"), true);
 
     $codigo_entrenamiento = $data['codigo_entrenamiento'] ?? null;
@@ -347,6 +394,7 @@ function save_ejercicios_entrenamiento() {
     }
 
     if (!is_array($ejercicios) || empty($ejercicios)) {
+        pfaa_generate_auto_fit_adherence_if_missing($db, $codigo_entrenamiento, intval($user['codigo'] ?? 0));
         http_response_code(200);
         ob_clean();
         echo json_encode(["message" => "Ejercicios guardados."]);
@@ -407,6 +455,7 @@ function save_ejercicios_entrenamiento() {
         return;
     }
 
+    pfaa_generate_auto_fit_adherence_if_missing($db, $codigo_entrenamiento, intval($user['codigo'] ?? 0));
     http_response_code(200);
     ob_clean();
     echo json_encode(["message" => "Ejercicios guardados.", "total" => $totalInsertados]);

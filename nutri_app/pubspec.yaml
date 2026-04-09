@@ -1,8 +1,8 @@
 name: nutri_app
-description: "Una aplicación para la gestión de nutricionistas."
+description: "App nutrición, salud y deporte."
 # Prevenir publicaciones accidentales en pub.dev.
 publish_to: 'none' 
-version: 1.0.0+1
+version: 2.8.1393+1393
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
@@ -84,12 +84,15 @@ dependencies:
   super_clipboard: ^0.8.0
   super_native_extensions: ^0.8.0
   auto_size_text: ^3.0.0
+  package_info_plus: ^8.3.0
   url_launcher: ^6.3.1
+  add_2_calendar: ^3.0.1
   video_player: ^2.9.2
   chewie: ^1.8.5
   firebase_core: ^3.8.0
   firebase_messaging: ^15.1.5
   flutter_local_notifications: ^18.0.1
+  google_mobile_ads: ^5.3.1
   local_notifier: ^0.1.6
   ftpconnect: ^2.0.10
   encrypt: ^5.0.3
@@ -108,6 +111,7 @@ dev_dependencies:
 
 # Configuración específica de Flutter.
 flutter:
+  generate: true
   # La siguiente línea asegura que la fuente Material Icons esté incluida.
   uses-material-design: true
 

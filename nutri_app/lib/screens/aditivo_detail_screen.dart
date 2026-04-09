@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../models/consejo.dart';
@@ -25,6 +26,9 @@ class AditivoDetailScreen extends StatelessWidget {
     this.allAditivos = const <Aditivo>[],
     this.showPremiumRecommendations = false,
     this.onNavigateToAditivo,
+    this.allowCopyAndPdf = true,
+    this.allowDiscoveryNavigation = true,
+    this.onRequestPremiumAccess,
   });
 
   final Aditivo aditivo;
@@ -33,6 +37,9 @@ class AditivoDetailScreen extends StatelessWidget {
   final List<Aditivo> allAditivos;
   final bool showPremiumRecommendations;
   final Future<void> Function(Aditivo aditivo)? onNavigateToAditivo;
+  final bool allowCopyAndPdf;
+  final bool allowDiscoveryNavigation;
+  final Future<void> Function(String message)? onRequestPremiumAccess;
 
   String get _descripcion => (aditivo.descripcion ?? '').trim();
 
@@ -218,6 +225,15 @@ class AditivoDetailScreen extends StatelessWidget {
     BuildContext context,
     ({String prefix, String type, int codigo}) link,
   ) async {
+    final l10n = AppLocalizations.of(context)!;
+    if (!allowDiscoveryNavigation) {
+      await _requestPremiumAccess(
+        context,
+        l10n.additivesPremiumExploreMessage,
+      );
+      return;
+    }
+
     String endpoint;
     switch (link.type) {
       case 'consejo':
@@ -366,6 +382,15 @@ class AditivoDetailScreen extends StatelessWidget {
     BuildContext context,
     String rawTitle,
   ) async {
+    final l10n = AppLocalizations.of(context)!;
+    if (!allowDiscoveryNavigation) {
+      await _requestPremiumAccess(
+        context,
+        l10n.additivesPremiumExploreMessage,
+      );
+      return;
+    }
+
     final found = _findAditivoByTitle(rawTitle);
     if (found == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -473,7 +498,32 @@ class AditivoDetailScreen extends StatelessWidget {
     return (match?.group(1) ?? line).trim();
   }
 
+  Future<void> _requestPremiumAccess(
+    BuildContext context,
+    String message,
+  ) async {
+    final callback = onRequestPremiumAccess;
+    if (callback != null) {
+      await callback(message);
+      return;
+    }
+
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
   void _handleHashtagTap(BuildContext context, String tag) {
+    final l10n = AppLocalizations.of(context)!;
+    if (!allowDiscoveryNavigation) {
+      _requestPremiumAccess(
+        context,
+        l10n.additivesPremiumExploreMessage,
+      );
+      return;
+    }
+
     final cleanTag = _withoutHashtagPrefix(tag);
     if (onHashtagTap != null) {
       onHashtagTap!(cleanTag);
@@ -783,6 +833,15 @@ class AditivoDetailScreen extends StatelessWidget {
             tooltip: 'Copiar',
             icon: const Icon(Icons.copy_outlined),
             onPressed: () async {
+              final l10n = AppLocalizations.of(context)!;
+              if (!allowCopyAndPdf) {
+                await _requestPremiumAccess(
+                  context,
+                  l10n.additivesPremiumCopyPdfMessage,
+                );
+                return;
+              }
+
               final copyText = await _buildCopyText(context);
               await Clipboard.setData(ClipboardData(text: copyText));
               if (!context.mounted) return;
@@ -797,6 +856,15 @@ class AditivoDetailScreen extends StatelessWidget {
             tooltip: 'PDF',
             icon: const Icon(Icons.picture_as_pdf_outlined),
             onPressed: () async {
+              final l10n = AppLocalizations.of(context)!;
+              if (!allowCopyAndPdf) {
+                await _requestPremiumAccess(
+                  context,
+                  l10n.additivesPremiumCopyPdfMessage,
+                );
+                return;
+              }
+
               final sanitizedDescripcion =
                   _replaceStructuredLinks(_descripcion, forDisplay: true);
               final descripcionConPeligrosidad =
@@ -925,7 +993,17 @@ class AditivoDetailScreen extends StatelessWidget {
                             borderRadius: BorderRadius.circular(12),
                             onTap: onNavigateToAditivo == null
                                 ? null
-                                : () => onNavigateToAditivo!(item),
+                                : () {
+                                    final l10n = AppLocalizations.of(context)!;
+                                    if (!allowDiscoveryNavigation) {
+                                      _requestPremiumAccess(
+                                        context,
+                                        l10n.additivesPremiumExploreMessage,
+                                      );
+                                      return;
+                                    }
+                                    onNavigateToAditivo!(item);
+                                  },
                             child: Padding(
                               padding: const EdgeInsets.all(12),
                               child: Column(

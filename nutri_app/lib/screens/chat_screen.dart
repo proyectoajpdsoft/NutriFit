@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:image/image.dart' as img;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../l10n/app_localizations.dart';
 import '../models/chat_message.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
@@ -126,23 +127,23 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _ensureNotGuest() async {
     final authService = context.read<AuthService>();
     if (!authService.isGuestMode) return;
+    final l10n = AppLocalizations.of(context)!;
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Registro requerido'),
-        content: const Text(
-            'Para chatear con tu dietista online, por favor, regístrate (es gratis)'),
+        title: Text(l10n.drawerRegistrationRequiredTitle),
+        content: Text(l10n.drawerRegistrationRequiredChatMessage),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
+            child: Text(l10n.commonClose),
           ),
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
               Navigator.pushNamed(context, '/register');
             },
-            child: const Text('Iniciar registro'),
+            child: Text(l10n.navStartRegistration),
           ),
         ],
       ),
@@ -815,14 +816,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final authService = context.watch<AuthService>();
     final myId = int.tryParse(authService.userCode ?? '') ?? 0;
     final isNutri = _isNutriUser(authService);
     final hasCustomTitle = widget.otherDisplayName != null &&
         widget.otherDisplayName!.trim().isNotEmpty;
     final title = isNutri
-        ? (hasCustomTitle ? widget.otherDisplayName!.trim() : 'Chat')
-        : 'Chat con Dietista';
+        ? (hasCustomTitle ? widget.otherDisplayName!.trim() : l10n.chatTitle)
+        : l10n.navChatWithDietitian;
 
     return Scaffold(
       appBar: AppBar(
@@ -836,7 +838,7 @@ class _ChatScreenState extends State<ChatScreen> {
             icon: Icon(
               _isSearchVisible ? Icons.search_off_outlined : Icons.search,
             ),
-            tooltip: _isSearchVisible ? 'Ocultar búsqueda' : 'Buscar',
+            tooltip: _isSearchVisible ? l10n.chatHideSearch : l10n.chatSearch,
             onPressed: _toggleSearch,
           ),
         ],
@@ -851,7 +853,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   controller: _searchController,
                   textInputAction: TextInputAction.search,
                   decoration: InputDecoration(
-                    hintText: 'Buscar en el chat...',
+                    hintText: l10n.chatSearchHint,
                     prefixIcon: const Icon(Icons.search),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
@@ -903,7 +905,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             _scrollToBottom();
                           },
                           decoration: InputDecoration(
-                            hintText: 'Escribe un mensaje',
+                            hintText: l10n.chatMessageHint,
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(20),
                             ),

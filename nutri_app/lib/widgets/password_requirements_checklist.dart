@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:nutri_app/services/config_service.dart';
 
 class PasswordPolicyRequirements {
@@ -81,6 +82,7 @@ class PasswordRequirementsChecklist extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -92,7 +94,9 @@ class PasswordRequirementsChecklist extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            title,
+            title == 'Requisitos de contraseña:'
+                ? l10n.passwordChecklistTitle
+                : title,
             style: TextStyle(
               fontWeight: FontWeight.bold,
               color: Colors.blue.shade900,
@@ -100,17 +104,19 @@ class PasswordRequirementsChecklist extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           _requirementItem(
-            'Mínimo ${policy.minLength} caracteres',
+            l10n.passwordChecklistMinLength(policy.minLength),
             password.length >= policy.minLength,
           ),
           if (policy.requireUpperLower)
-            _requirementItem('Al menos una mayúscula y una minúscula',
-                _hasUpper && _hasLower),
+            _requirementItem(
+              l10n.passwordChecklistUpperLower,
+              _hasUpper && _hasLower,
+            ),
           if (policy.requireNumbers)
-            _requirementItem('Al menos un número (0-9)', _hasNumber),
+            _requirementItem(l10n.passwordChecklistNumber, _hasNumber),
           if (policy.requireSpecialChars)
             _requirementItem(
-              'Al menos un carácter especial (*,.+-#\$?¿!¡_()/\\%&)',
+              l10n.passwordChecklistSpecial,
               _hasSpecial,
             ),
         ],

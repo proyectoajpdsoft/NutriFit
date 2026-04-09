@@ -1103,362 +1103,403 @@ class _PacientesListScreenState extends State<PacientesListScreen> {
                                                         spacing: 4.0,
                                                         runSpacing: 2.0,
                                                         children: [
-                                                          ActionChip(
-                                                            avatar: const Icon(
-                                                                Icons
-                                                                    .calendar_today,
-                                                                size: 12,
-                                                                color: Colors
-                                                                    .purple),
-                                                            label: Row(
-                                                              mainAxisSize:
-                                                                  MainAxisSize
-                                                                      .min,
-                                                              children: [
-                                                                const Text('CI',
-                                                                    style: TextStyle(
-                                                                        fontSize:
-                                                                            11)),
-                                                                const SizedBox(
-                                                                    width: 2),
-                                                                _buildCountBadge(
-                                                                    contadores?[
-                                                                        'citas']),
-                                                              ],
+                                                          Tooltip(
+                                                            message: 'Citas',
+                                                            child: ActionChip(
+                                                              avatar: const Icon(
+                                                                  Icons
+                                                                      .calendar_today,
+                                                                  size: 12,
+                                                                  color: Colors
+                                                                      .purple),
+                                                              label: Row(
+                                                                mainAxisSize:
+                                                                    MainAxisSize
+                                                                        .min,
+                                                                children: [
+                                                                  const Text(
+                                                                      'CI',
+                                                                      style: TextStyle(
+                                                                          fontSize:
+                                                                              11)),
+                                                                  const SizedBox(
+                                                                      width: 2),
+                                                                  _buildCountBadge(
+                                                                      contadores?[
+                                                                          'citas']),
+                                                                ],
+                                                              ),
+                                                              onPressed: () =>
+                                                                  _navigateAndRefreshCounters(
+                                                                CitasListScreen(
+                                                                    paciente:
+                                                                        paciente),
+                                                                paciente.codigo,
+                                                              ),
+                                                              backgroundColor:
+                                                                  Colors.purple[
+                                                                      50],
+                                                              side: BorderSide(
+                                                                  color: Colors
+                                                                          .purple[
+                                                                      200]!),
+                                                              padding:
+                                                                  const EdgeInsets
+                                                                      .symmetric(
+                                                                      horizontal:
+                                                                          4,
+                                                                      vertical:
+                                                                          1),
                                                             ),
-                                                            onPressed: () =>
-                                                                _navigateAndRefreshCounters(
-                                                              CitasListScreen(
-                                                                  paciente:
-                                                                      paciente),
-                                                              paciente.codigo,
-                                                            ),
-                                                            backgroundColor:
-                                                                Colors
-                                                                    .purple[50],
-                                                            side: BorderSide(
-                                                                color: Colors
-                                                                        .purple[
-                                                                    200]!),
-                                                            padding:
-                                                                const EdgeInsets
-                                                                    .symmetric(
-                                                                    horizontal:
-                                                                        4,
-                                                                    vertical:
-                                                                        1),
                                                           ),
-                                                          ActionChip(
-                                                            avatar: const Icon(
-                                                                Icons
-                                                                    .rate_review,
-                                                                size: 12,
-                                                                color: Colors
-                                                                    .indigo),
-                                                            label: Row(
-                                                              mainAxisSize:
-                                                                  MainAxisSize
-                                                                      .min,
-                                                              children: [
-                                                                const Text('RE',
-                                                                    style: TextStyle(
-                                                                        fontSize:
-                                                                            11)),
-                                                                const SizedBox(
-                                                                    width: 2),
-                                                                _buildCountBadge(
-                                                                    contadores?[
-                                                                        'revisiones']),
-                                                              ],
+                                                          Tooltip(
+                                                            message:
+                                                                'Revisiones',
+                                                            child: ActionChip(
+                                                              avatar: const Icon(
+                                                                  Icons
+                                                                      .rate_review,
+                                                                  size: 12,
+                                                                  color: Colors
+                                                                      .indigo),
+                                                              label: Row(
+                                                                mainAxisSize:
+                                                                    MainAxisSize
+                                                                        .min,
+                                                                children: [
+                                                                  const Text(
+                                                                      'RE',
+                                                                      style: TextStyle(
+                                                                          fontSize:
+                                                                              11)),
+                                                                  const SizedBox(
+                                                                      width: 2),
+                                                                  _buildCountBadge(
+                                                                      contadores?[
+                                                                          'revisiones']),
+                                                                ],
+                                                              ),
+                                                              onPressed: () =>
+                                                                  _navigateAndRefreshCounters(
+                                                                RevisionesListScreen(
+                                                                    paciente:
+                                                                        paciente),
+                                                                paciente.codigo,
+                                                              ),
+                                                              backgroundColor:
+                                                                  Colors.indigo[
+                                                                      50],
+                                                              side: BorderSide(
+                                                                  color: Colors
+                                                                          .indigo[
+                                                                      200]!),
+                                                              padding:
+                                                                  const EdgeInsets
+                                                                      .symmetric(
+                                                                      horizontal:
+                                                                          4,
+                                                                      vertical:
+                                                                          1),
                                                             ),
-                                                            onPressed: () =>
-                                                                _navigateAndRefreshCounters(
-                                                              RevisionesListScreen(
-                                                                  paciente:
-                                                                      paciente),
-                                                              paciente.codigo,
-                                                            ),
-                                                            backgroundColor:
-                                                                Colors
-                                                                    .indigo[50],
-                                                            side: BorderSide(
-                                                                color: Colors
-                                                                        .indigo[
-                                                                    200]!),
-                                                            padding:
-                                                                const EdgeInsets
-                                                                    .symmetric(
-                                                                    horizontal:
-                                                                        4,
-                                                                    vertical:
-                                                                        1),
                                                           ),
-                                                          ActionChip(
-                                                            avatar: const Icon(
-                                                                Icons
-                                                                    .fitbit_rounded,
-                                                                size: 12,
-                                                                color: Colors
-                                                                    .green),
-                                                            label: Row(
-                                                              mainAxisSize:
-                                                                  MainAxisSize
-                                                                      .min,
-                                                              children: [
-                                                                const Text('ME',
-                                                                    style: TextStyle(
-                                                                        fontSize:
-                                                                            11)),
-                                                                const SizedBox(
-                                                                    width: 2),
-                                                                _buildCountBadge(
-                                                                    contadores?[
-                                                                        'mediciones']),
-                                                              ],
+                                                          Tooltip(
+                                                            message:
+                                                                'Mediciones',
+                                                            child: ActionChip(
+                                                              avatar: const Icon(
+                                                                  Icons
+                                                                      .fitbit_rounded,
+                                                                  size: 12,
+                                                                  color: Colors
+                                                                      .green),
+                                                              label: Row(
+                                                                mainAxisSize:
+                                                                    MainAxisSize
+                                                                        .min,
+                                                                children: [
+                                                                  const Text(
+                                                                      'ME',
+                                                                      style: TextStyle(
+                                                                          fontSize:
+                                                                              11)),
+                                                                  const SizedBox(
+                                                                      width: 2),
+                                                                  _buildCountBadge(
+                                                                      contadores?[
+                                                                          'mediciones']),
+                                                                ],
+                                                              ),
+                                                              onPressed: () =>
+                                                                  _navigateAndRefreshCounters(
+                                                                MedicionesListScreen(
+                                                                    paciente:
+                                                                        paciente),
+                                                                paciente.codigo,
+                                                              ),
+                                                              backgroundColor:
+                                                                  Colors.green[
+                                                                      50],
+                                                              side: BorderSide(
+                                                                  color: Colors
+                                                                          .green[
+                                                                      200]!),
+                                                              padding:
+                                                                  const EdgeInsets
+                                                                      .symmetric(
+                                                                      horizontal:
+                                                                          4,
+                                                                      vertical:
+                                                                          1),
                                                             ),
-                                                            onPressed: () =>
-                                                                _navigateAndRefreshCounters(
-                                                              MedicionesListScreen(
-                                                                  paciente:
-                                                                      paciente),
-                                                              paciente.codigo,
-                                                            ),
-                                                            backgroundColor:
-                                                                Colors
-                                                                    .green[50],
-                                                            side: BorderSide(
-                                                                color: Colors
-                                                                        .green[
-                                                                    200]!),
-                                                            padding:
-                                                                const EdgeInsets
-                                                                    .symmetric(
-                                                                    horizontal:
-                                                                        4,
-                                                                    vertical:
-                                                                        1),
                                                           ),
-                                                          ActionChip(
-                                                            avatar: const Icon(
-                                                                Icons
-                                                                    .assignment,
-                                                                size: 12,
-                                                                color: Colors
-                                                                    .orange),
-                                                            label: Row(
-                                                              mainAxisSize:
-                                                                  MainAxisSize
-                                                                      .min,
-                                                              children: [
-                                                                const Text('EN',
-                                                                    style: TextStyle(
-                                                                        fontSize:
-                                                                            11)),
-                                                                const SizedBox(
-                                                                    width: 2),
-                                                                _buildCountBadge(
-                                                                    contadores?[
-                                                                        'entrevistas']),
-                                                              ],
+                                                          Tooltip(
+                                                            message:
+                                                                'Entrevistas',
+                                                            child: ActionChip(
+                                                              avatar: const Icon(
+                                                                  Icons
+                                                                      .assignment,
+                                                                  size: 12,
+                                                                  color: Colors
+                                                                      .orange),
+                                                              label: Row(
+                                                                mainAxisSize:
+                                                                    MainAxisSize
+                                                                        .min,
+                                                                children: [
+                                                                  const Text(
+                                                                      'EN',
+                                                                      style: TextStyle(
+                                                                          fontSize:
+                                                                              11)),
+                                                                  const SizedBox(
+                                                                      width: 2),
+                                                                  _buildCountBadge(
+                                                                      contadores?[
+                                                                          'entrevistas']),
+                                                                ],
+                                                              ),
+                                                              onPressed: () =>
+                                                                  _navigateAndRefreshCounters(
+                                                                EntrevistasListScreen(
+                                                                    paciente:
+                                                                        paciente),
+                                                                paciente.codigo,
+                                                              ),
+                                                              backgroundColor:
+                                                                  Colors.orange[
+                                                                      50],
+                                                              side: BorderSide(
+                                                                  color: Colors
+                                                                          .orange[
+                                                                      200]!),
+                                                              padding:
+                                                                  const EdgeInsets
+                                                                      .symmetric(
+                                                                      horizontal:
+                                                                          4,
+                                                                      vertical:
+                                                                          1),
                                                             ),
-                                                            onPressed: () =>
-                                                                _navigateAndRefreshCounters(
-                                                              EntrevistasListScreen(
-                                                                  paciente:
-                                                                      paciente),
-                                                              paciente.codigo,
-                                                            ),
-                                                            backgroundColor:
-                                                                Colors
-                                                                    .orange[50],
-                                                            side: BorderSide(
-                                                                color: Colors
-                                                                        .orange[
-                                                                    200]!),
-                                                            padding:
-                                                                const EdgeInsets
-                                                                    .symmetric(
-                                                                    horizontal:
-                                                                        4,
-                                                                    vertical:
-                                                                        1),
                                                           ),
-                                                          ActionChip(
-                                                            avatar: const Icon(
-                                                                Icons
-                                                                    .sports_gymnastics,
-                                                                size: 12,
-                                                                color:
-                                                                    Colors.red),
-                                                            label: Row(
-                                                              mainAxisSize:
-                                                                  MainAxisSize
-                                                                      .min,
-                                                              children: [
-                                                                const Text('EF',
-                                                                    style: TextStyle(
-                                                                        fontSize:
-                                                                            11)),
-                                                                const SizedBox(
-                                                                    width: 2),
-                                                                _buildCountBadge(
-                                                                    contadores?[
-                                                                        'entrevistas_fit']),
-                                                              ],
+                                                          Tooltip(
+                                                            message:
+                                                                'Entrevistas Fit',
+                                                            child: ActionChip(
+                                                              avatar: const Icon(
+                                                                  Icons
+                                                                      .sports_gymnastics,
+                                                                  size: 12,
+                                                                  color: Colors
+                                                                      .red),
+                                                              label: Row(
+                                                                mainAxisSize:
+                                                                    MainAxisSize
+                                                                        .min,
+                                                                children: [
+                                                                  const Text(
+                                                                      'EF',
+                                                                      style: TextStyle(
+                                                                          fontSize:
+                                                                              11)),
+                                                                  const SizedBox(
+                                                                      width: 2),
+                                                                  _buildCountBadge(
+                                                                      contadores?[
+                                                                          'entrevistas_fit']),
+                                                                ],
+                                                              ),
+                                                              onPressed: () =>
+                                                                  _navigateAndRefreshCounters(
+                                                                EntrevistasFitListScreen(
+                                                                    paciente:
+                                                                        paciente),
+                                                                paciente.codigo,
+                                                              ),
+                                                              backgroundColor:
+                                                                  Colors
+                                                                      .red[50],
+                                                              side: BorderSide(
+                                                                  color: Colors
+                                                                          .red[
+                                                                      200]!),
+                                                              padding:
+                                                                  const EdgeInsets
+                                                                      .symmetric(
+                                                                      horizontal:
+                                                                          4,
+                                                                      vertical:
+                                                                          1),
                                                             ),
-                                                            onPressed: () =>
-                                                                _navigateAndRefreshCounters(
-                                                              EntrevistasFitListScreen(
-                                                                  paciente:
-                                                                      paciente),
-                                                              paciente.codigo,
-                                                            ),
-                                                            backgroundColor:
-                                                                Colors.red[50],
-                                                            side: BorderSide(
-                                                                color: Colors
-                                                                    .red[200]!),
-                                                            padding:
-                                                                const EdgeInsets
-                                                                    .symmetric(
-                                                                    horizontal:
-                                                                        4,
-                                                                    vertical:
-                                                                        1),
                                                           ),
-                                                          ActionChip(
-                                                            avatar: const Icon(
-                                                                Icons
-                                                                    .description,
-                                                                size: 12,
-                                                                color: Colors
-                                                                    .teal),
-                                                            label: Row(
-                                                              mainAxisSize:
-                                                                  MainAxisSize
-                                                                      .min,
-                                                              children: [
-                                                                const Text('PN',
-                                                                    style: TextStyle(
-                                                                        fontSize:
-                                                                            11)),
-                                                                const SizedBox(
-                                                                    width: 2),
-                                                                _buildCountBadge(
-                                                                    contadores?[
-                                                                        'planes']),
-                                                              ],
+                                                          Tooltip(
+                                                            message:
+                                                                'Planes Nutricionales',
+                                                            child: ActionChip(
+                                                              avatar: const Icon(
+                                                                  Icons
+                                                                      .description,
+                                                                  size: 12,
+                                                                  color: Colors
+                                                                      .teal),
+                                                              label: Row(
+                                                                mainAxisSize:
+                                                                    MainAxisSize
+                                                                        .min,
+                                                                children: [
+                                                                  const Text(
+                                                                      'PN',
+                                                                      style: TextStyle(
+                                                                          fontSize:
+                                                                              11)),
+                                                                  const SizedBox(
+                                                                      width: 2),
+                                                                  _buildCountBadge(
+                                                                      contadores?[
+                                                                          'planes']),
+                                                                ],
+                                                              ),
+                                                              onPressed: () =>
+                                                                  _navigateAndRefreshCounters(
+                                                                PlanesListScreen(
+                                                                    paciente:
+                                                                        paciente),
+                                                                paciente.codigo,
+                                                              ),
+                                                              backgroundColor:
+                                                                  Colors
+                                                                      .teal[50],
+                                                              side: BorderSide(
+                                                                  color: Colors
+                                                                          .teal[
+                                                                      200]!),
+                                                              padding:
+                                                                  const EdgeInsets
+                                                                      .symmetric(
+                                                                      horizontal:
+                                                                          4,
+                                                                      vertical:
+                                                                          1),
                                                             ),
-                                                            onPressed: () =>
-                                                                _navigateAndRefreshCounters(
-                                                              PlanesListScreen(
-                                                                  paciente:
-                                                                      paciente),
-                                                              paciente.codigo,
-                                                            ),
-                                                            backgroundColor:
-                                                                Colors.teal[50],
-                                                            side: BorderSide(
-                                                                color:
-                                                                    Colors.teal[
-                                                                        200]!),
-                                                            padding:
-                                                                const EdgeInsets
-                                                                    .symmetric(
-                                                                    horizontal:
-                                                                        4,
-                                                                    vertical:
-                                                                        1),
                                                           ),
-                                                          ActionChip(
-                                                            avatar: const Icon(
-                                                                Icons
-                                                                    .fitness_center_outlined,
-                                                                size: 12,
-                                                                color: Colors
-                                                                    .purple),
-                                                            label: Row(
-                                                              mainAxisSize:
-                                                                  MainAxisSize
-                                                                      .min,
-                                                              children: [
-                                                                const Text('PF',
-                                                                    style: TextStyle(
-                                                                        fontSize:
-                                                                            11)),
-                                                                const SizedBox(
-                                                                    width: 2),
-                                                                _buildCountBadge(
-                                                                    contadores?[
-                                                                        'planes_fit']),
-                                                              ],
+                                                          Tooltip(
+                                                            message:
+                                                                'Planes Fit',
+                                                            child: ActionChip(
+                                                              avatar: const Icon(
+                                                                  Icons
+                                                                      .fitness_center_outlined,
+                                                                  size: 12,
+                                                                  color: Colors
+                                                                      .purple),
+                                                              label: Row(
+                                                                mainAxisSize:
+                                                                    MainAxisSize
+                                                                        .min,
+                                                                children: [
+                                                                  const Text(
+                                                                      'PF',
+                                                                      style: TextStyle(
+                                                                          fontSize:
+                                                                              11)),
+                                                                  const SizedBox(
+                                                                      width: 2),
+                                                                  _buildCountBadge(
+                                                                      contadores?[
+                                                                          'planes_fit']),
+                                                                ],
+                                                              ),
+                                                              onPressed: () =>
+                                                                  _navigateAndRefreshCounters(
+                                                                PlanesFitListScreen(
+                                                                    paciente:
+                                                                        paciente),
+                                                                paciente.codigo,
+                                                              ),
+                                                              backgroundColor:
+                                                                  Colors.purple[
+                                                                      50],
+                                                              side: BorderSide(
+                                                                  color: Colors
+                                                                          .purple[
+                                                                      200]!),
+                                                              padding:
+                                                                  const EdgeInsets
+                                                                      .symmetric(
+                                                                      horizontal:
+                                                                          4,
+                                                                      vertical:
+                                                                          1),
                                                             ),
-                                                            onPressed: () =>
-                                                                _navigateAndRefreshCounters(
-                                                              PlanesFitListScreen(
-                                                                  paciente:
-                                                                      paciente),
-                                                              paciente.codigo,
-                                                            ),
-                                                            backgroundColor:
-                                                                Colors
-                                                                    .purple[50],
-                                                            side: BorderSide(
-                                                                color: Colors
-                                                                        .purple[
-                                                                    200]!),
-                                                            padding:
-                                                                const EdgeInsets
-                                                                    .symmetric(
-                                                                    horizontal:
-                                                                        4,
-                                                                    vertical:
-                                                                        1),
                                                           ),
-                                                          ActionChip(
-                                                            avatar: const Icon(
-                                                                Icons
-                                                                    .monetization_on,
-                                                                size: 12,
-                                                                color: Colors
-                                                                    .amber),
-                                                            label: Row(
-                                                              mainAxisSize:
-                                                                  MainAxisSize
-                                                                      .min,
-                                                              children: [
-                                                                const Text('CO',
-                                                                    style: TextStyle(
-                                                                        fontSize:
-                                                                            11)),
-                                                                const SizedBox(
-                                                                    width: 2),
-                                                                _buildCountBadge(
-                                                                    contadores?[
-                                                                        'cobros']),
-                                                              ],
+                                                          Tooltip(
+                                                            message: 'Cobros',
+                                                            child: ActionChip(
+                                                              avatar: const Icon(
+                                                                  Icons
+                                                                      .monetization_on,
+                                                                  size: 12,
+                                                                  color: Colors
+                                                                      .amber),
+                                                              label: Row(
+                                                                mainAxisSize:
+                                                                    MainAxisSize
+                                                                        .min,
+                                                                children: [
+                                                                  const Text(
+                                                                      'CO',
+                                                                      style: TextStyle(
+                                                                          fontSize:
+                                                                              11)),
+                                                                  const SizedBox(
+                                                                      width: 2),
+                                                                  _buildCountBadge(
+                                                                      contadores?[
+                                                                          'cobros']),
+                                                                ],
+                                                              ),
+                                                              onPressed: () =>
+                                                                  _navigateAndRefreshCounters(
+                                                                CobrosListScreen(
+                                                                    paciente:
+                                                                        paciente),
+                                                                paciente.codigo,
+                                                              ),
+                                                              backgroundColor:
+                                                                  Colors.amber[
+                                                                      50],
+                                                              side: BorderSide(
+                                                                  color: Colors
+                                                                          .amber[
+                                                                      300]!),
+                                                              padding:
+                                                                  const EdgeInsets
+                                                                      .symmetric(
+                                                                      horizontal:
+                                                                          4,
+                                                                      vertical:
+                                                                          1),
                                                             ),
-                                                            onPressed: () =>
-                                                                _navigateAndRefreshCounters(
-                                                              CobrosListScreen(
-                                                                  paciente:
-                                                                      paciente),
-                                                              paciente.codigo,
-                                                            ),
-                                                            backgroundColor:
-                                                                Colors
-                                                                    .amber[50],
-                                                            side: BorderSide(
-                                                                color: Colors
-                                                                        .amber[
-                                                                    300]!),
-                                                            padding:
-                                                                const EdgeInsets
-                                                                    .symmetric(
-                                                                    horizontal:
-                                                                        4,
-                                                                    vertical:
-                                                                        1),
                                                           ),
                                                         ],
                                                       ),

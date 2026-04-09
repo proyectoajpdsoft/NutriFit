@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -825,7 +825,7 @@ class _RecetasListScreenState extends State<RecetasListScreen> {
 
   String? _extractImageSourceFromHtml(String html) {
     final imgSrcMatch = RegExp(
-      "<img[^>]+src\\s*=\\s*['\\\"]([^'\\\"]+)['\\\"]",
+      r'''<img[^>]+src\s*=\s*['"]([^'"]+)['"]''',
       caseSensitive: false,
       dotAll: true,
     ).firstMatch(html);
@@ -834,10 +834,65 @@ class _RecetasListScreenState extends State<RecetasListScreen> {
     }
 
     final cssUrlMatch = RegExp(
-      "url\\(\\s*['\\\"]?([^'\\\"\\)]+)['\\\"]?\\s*\\)",
+      r'''url\(\s*['"]?([^'")]+)['"]?\s*\)''',
       caseSensitive: false,
     ).firstMatch(html);
     return cssUrlMatch?.group(1)?.trim();
+  }
+
+  /// Returns all <img src> values found in [html], in document order.
+  List<String> _extractAllImageSourcesFromHtml(String html) {
+    final sources = <String>[];
+    for (final m in RegExp(
+      r'''<img[^>]+src\s*=\s*['"]([^'"]+)['"]''',
+      caseSensitive: false,
+      dotAll: true,
+    ).allMatches(html)) {
+      final src = m.group(1)?.trim();
+      if (src != null && src.isNotEmpty) sources.add(src);
+    }
+    return sources;
+  }
+
+  /// Strips HTML tags from [html], replacing the first <img> with nothing (portada)
+  /// and each subsequent <img> with a "\n\n[[[IMG_N]]]\n\n" marker.
+  /// Returns plain text suitable for use as a prefill description.
+  String _buildDescriptionFromHtmlWithMarkers(String html) {
+    int imgIdx = -1;
+    var text = html.replaceAllMapped(
+      RegExp(r'<img[^>]*>', caseSensitive: false, dotAll: true),
+      (m) {
+        imgIdx++;
+        if (imgIdx == 0) return '\n'; // portada: skip
+        return '\n\n[[[IMG_${imgIdx - 1}]]]\n\n';
+      },
+    );
+    text = text.replaceAll(
+      RegExp(
+        r'<(?:/?(?:p|div|h[1-6]|br|li|tr|ul|ol|table|thead|tbody|blockquote|section|article|header|footer|nav|main))\b[^>]*>',
+        caseSensitive: false,
+      ),
+      '\n',
+    );
+    text = text.replaceAll(RegExp(r'<[^>]+>'), '');
+    text = text
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'")
+        .replaceAll('&apos;', "'")
+        .replaceAll('&#8220;', '\u201C')
+        .replaceAll('&#8221;', '\u201D')
+        .replaceAll('&#8216;', '\u2018')
+        .replaceAll('&#8217;', '\u2019')
+        .replaceAll('&#8211;', '\u2013')
+        .replaceAll('&#8212;', '\u2014');
+    text = text.replaceAll(RegExp(r'<!--.*?-->', dotAll: true), '');
+    text = text.replaceAll(RegExp(r'[ \t]+'), ' ');
+    text = text.replaceAll(RegExp(r'\n{3,}'), '\n\n');
+    return text.trim();
   }
 
   Uint8List? _decodeImageFromDataUri(String value) {
@@ -975,9 +1030,12 @@ class _RecetasListScreenState extends State<RecetasListScreen> {
     Map<String, int?> mapMissingToExistingCategoryId = <String, int?>{};
     List<Map<String, dynamic>> detectedCategoryCatalog =
         <Map<String, dynamic>>[];
+    // Body images extracted from HTML clipboard (indices 1..N-1 in all image srcs)
+    List<Uint8List?> bodyImageBytes = <Uint8List?>[];
+    // Description text built from HTML with [[[IMG_N]]] markers; null → use draft.descripcion
+    String? htmlDescription;
 
     final supportsImageClipboard = _supportsSystemClipboardImage();
-
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -1071,11 +1129,23 @@ class _RecetasListScreenState extends State<RecetasListScreen> {
                                   final clipboardHtml = supportsImageClipboard
                                       ? await _tryReadSystemClipboardHtmlText()
                                       : null;
-                                  final htmlImageSource = clipboardHtml == null
-                                      ? null
-                                      : _extractImageSourceFromHtml(
+                                  // --- Extract ALL images from HTML ---
+                                  final allHtmlImageSrcs = clipboardHtml == null
+                                      ? <String>[]
+                                      : _extractAllImageSourcesFromHtml(
                                           clipboardHtml,
                                         );
+                                  final portadaHtmlSrc =
+                                      allHtmlImageSrcs.isNotEmpty
+                                          ? allHtmlImageSrcs.first
+                                          : null;
+                                  final bodyImageSrcs =
+                                      allHtmlImageSrcs.length > 1
+                                          ? allHtmlImageSrcs.sublist(1)
+                                          : <String>[];
+
+                                  // Portada: prefer system image, then text base64, then HTML first img, then URI
+                                  final htmlImageSource = portadaHtmlSrc;
                                   final imageFromHtml = htmlImageSource == null
                                       ? null
                                       : await _tryResolveImageSource(
@@ -1093,6 +1163,70 @@ class _RecetasListScreenState extends State<RecetasListScreen> {
                                       imageFromText ??
                                       imageFromHtml ??
                                       imageFromUri;
+
+                                  // Resolve body images (may be slow if downloading)
+                                  final nextBodyImageBytes = <Uint8List?>[];
+                                  for (final src in bodyImageSrcs) {
+                                    final bytes = await _tryResolveImageSource(
+                                      src,
+                                    );
+                                    nextBodyImageBytes.add(bytes);
+                                  }
+
+                                  // Build description with markers if body images exist
+                                  String? nextHtmlDescription;
+                                  if (bodyImageSrcs.isNotEmpty &&
+                                      clipboardHtml != null &&
+                                      parsed != null) {
+                                    final htmlText =
+                                        _buildDescriptionFromHtmlWithMarkers(
+                                      clipboardHtml,
+                                    );
+                                    // Strip title line from the top of HTML-derived text
+                                    final lines = htmlText.split('\n');
+                                    int skipCount = 0;
+                                    for (int i = 0; i < lines.length; i++) {
+                                      final line = lines[i].trim();
+                                      if (line.isEmpty) {
+                                        skipCount = i + 1;
+                                        continue;
+                                      }
+                                      final titleLower =
+                                          parsed.titulo.trim().toLowerCase();
+                                      final lineLower = line.toLowerCase();
+                                      if (titleLower.isNotEmpty &&
+                                          (lineLower.contains(titleLower) ||
+                                              titleLower.contains(lineLower))) {
+                                        skipCount = i + 1;
+                                      }
+                                      break;
+                                    }
+                                    final descLines =
+                                        lines.skip(skipCount).toList();
+                                    int metadataSkipCount = 0;
+                                    for (int i = 0; i < descLines.length; i++) {
+                                      final line = descLines[i].trim();
+                                      if (line.isEmpty) {
+                                        metadataSkipCount = i + 1;
+                                        continue;
+                                      }
+                                      final parts = line
+                                          .split('|')
+                                          .map((part) => part.trim())
+                                          .toList(growable: false);
+                                      if (parts.length >= 2) {
+                                        metadataSkipCount = i + 1;
+                                      }
+                                      break;
+                                    }
+                                    final desc = descLines
+                                        .skip(metadataSkipCount)
+                                        .join('\n')
+                                        .trim();
+                                    if (desc.isNotEmpty) {
+                                      nextHtmlDescription = desc;
+                                    }
+                                  }
                                   final catalog = parsed == null
                                       ? const <Map<String, dynamic>>[]
                                       : await _fetchRecetaCategoriasCatalog();
@@ -1141,13 +1275,11 @@ class _RecetasListScreenState extends State<RecetasListScreen> {
                                     mapMissingToExistingCategoryId =
                                         nextMappings;
                                     detectedCategoryCatalog = catalog;
-
-                                    if (parsed == null) {
-                                      errorText =
-                                          'No se detectó una receta válida en el portapapeles.';
-                                    } else {
-                                      errorText = null;
-                                    }
+                                    bodyImageBytes = nextBodyImageBytes;
+                                    htmlDescription = nextHtmlDescription;
+                                    errorText = parsed == null
+                                        ? 'No se detectó una receta válida en el portapapeles.'
+                                        : null;
                                   });
                                 },
                           icon: readingClipboard
@@ -1303,6 +1435,125 @@ class _RecetasListScreenState extends State<RecetasListScreen> {
                                   fontSize: 12,
                                   color: Colors.orange.shade800,
                                 ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Card(
+                        margin: EdgeInsets.zero,
+                        child: ExpansionTile(
+                          tilePadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 4,
+                          ),
+                          childrenPadding: const EdgeInsets.fromLTRB(
+                            12,
+                            0,
+                            12,
+                            12,
+                          ),
+                          title: Row(
+                            children: [
+                              const Expanded(
+                                child: Text(
+                                  'Imágenes del cuerpo',
+                                  style: TextStyle(fontWeight: FontWeight.w700),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              buildCountBadge(
+                                bodyImageBytes.whereType<Uint8List>().length,
+                              ),
+                            ],
+                          ),
+                          subtitle: Text(
+                            bodyImageBytes.isEmpty
+                                ? 'No se detectaron imágenes adicionales'
+                                : '${bodyImageBytes.whereType<Uint8List>().length} de ${bodyImageBytes.length} listas para adjuntar',
+                            style: TextStyle(
+                              color: bodyImageBytes
+                                      .whereType<Uint8List>()
+                                      .isNotEmpty
+                                  ? Colors.green.shade700
+                                  : Colors.orange.shade800,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12,
+                            ),
+                          ),
+                          children: [
+                            if (bodyImageBytes.isEmpty)
+                              Text(
+                                'Al pegar desde HTML, las imágenes del cuerpo se adjuntarán como documentos de tipo imagen e insertarán en la descripción como [[img:codigo]].',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.orange.shade800,
+                                ),
+                              )
+                            else
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  for (int i = 0;
+                                      i < bodyImageBytes.length;
+                                      i++)
+                                    Container(
+                                      width: 88,
+                                      height: 88,
+                                      decoration: BoxDecoration(
+                                        border: Border.all(
+                                          color: Colors.grey.shade300,
+                                        ),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      clipBehavior: Clip.antiAlias,
+                                      child: bodyImageBytes[i] != null &&
+                                              bodyImageBytes[i]!.isNotEmpty
+                                          ? Stack(
+                                              fit: StackFit.expand,
+                                              children: [
+                                                Image.memory(
+                                                  bodyImageBytes[i]!,
+                                                  fit: BoxFit.cover,
+                                                ),
+                                                Positioned(
+                                                  right: 4,
+                                                  bottom: 4,
+                                                  child: Container(
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
+                                                      horizontal: 6,
+                                                      vertical: 2,
+                                                    ),
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.black54,
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                        8,
+                                                      ),
+                                                    ),
+                                                    child: Text(
+                                                      '#${i + 1}',
+                                                      style: const TextStyle(
+                                                        color: Colors.white,
+                                                        fontSize: 10,
+                                                        fontWeight:
+                                                            FontWeight.w700,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            )
+                                          : const Center(
+                                              child: Icon(
+                                                Icons.broken_image_outlined,
+                                                color: Colors.orange,
+                                              ),
+                                            ),
+                                    ),
+                                ],
                               ),
                           ],
                         ),
@@ -1605,7 +1856,9 @@ class _RecetasListScreenState extends State<RecetasListScreen> {
                                 ),
                               ),
                               const SizedBox(width: 8),
-                              buildCountPill(draft!.descripcion.length),
+                              buildCountPill(
+                                (htmlDescription ?? draft!.descripcion).length,
+                              ),
                             ],
                           ),
                           children: [
@@ -1616,7 +1869,9 @@ class _RecetasListScreenState extends State<RecetasListScreen> {
                                 child: SingleChildScrollView(
                                   child: Align(
                                     alignment: Alignment.topLeft,
-                                    child: Text(draft!.descripcion),
+                                    child: Text(
+                                      htmlDescription ?? draft!.descripcion,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -1757,9 +2012,11 @@ class _RecetasListScreenState extends State<RecetasListScreen> {
                           '/receta_edit',
                           arguments: <String, dynamic>{
                             'prefill_titulo': draft!.titulo,
-                            'prefill_texto': draft!.descripcion,
+                            'prefill_texto':
+                                htmlDescription ?? draft!.descripcion,
                             'prefill_categoria_names': finalCategoryNames,
                             'prefill_image_bytes': imageBytes,
+                            'prefill_body_images': bodyImageBytes,
                           },
                         );
                         if (!mounted) return;

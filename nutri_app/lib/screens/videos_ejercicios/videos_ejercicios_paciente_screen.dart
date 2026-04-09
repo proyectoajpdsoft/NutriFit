@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher_string.dart';
@@ -8,8 +9,26 @@ import 'dart:convert';
 import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import '../../models/video_ejercicio.dart';
+import '../../widgets/premium_feature_dialog_helper.dart';
+import '../../widgets/premium_upsell_card.dart';
 import 'video_ejercicio_detail_screen.dart';
 import 'video_ejercicio_player_screen.dart';
+
+Future<void> _showPremiumRequiredForVideosTools(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
+  return PremiumFeatureDialogHelper.show(
+    context,
+    message: l10n.videosPremiumToolsMessage,
+  );
+}
+
+Future<void> _showPremiumRequiredForVideosPlayback(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
+  return PremiumFeatureDialogHelper.show(
+    context,
+    message: l10n.videosPremiumPlaybackMessage,
+  );
+}
 
 class VideosEjerciciosPacienteScreen extends StatefulWidget {
   const VideosEjerciciosPacienteScreen({super.key});
@@ -22,6 +41,8 @@ class VideosEjerciciosPacienteScreen extends StatefulWidget {
 class _VideosEjerciciosPacienteScreenState
     extends State<VideosEjerciciosPacienteScreen>
     with SingleTickerProviderStateMixin {
+  static const String _paramNonPremiumPreviewCodes =
+      'codigos_videos_ejercicios_no_premium';
   static const MethodChannel _externalUrlChannel =
       MethodChannel('nutri_app/external_url');
 
@@ -39,9 +60,11 @@ class _VideosEjerciciosPacienteScreenState
   List<int> _selectedCategoriaIds = [];
   bool _categoriaMatchAll = false;
   String _rutaBaseVideos = '';
+  List<int>? _nonPremiumPreviewCodes;
   String? _activeFilterInfo;
   String _sortMode = 'fecha';
   bool _sortAscending = false;
+  final Map<String, MemoryImage> _thumbnailCache = {};
 
   static const String _prefsSortModeKey = 'videos_paciente_sort_mode';
   static const String _prefsSortAscKey = 'videos_paciente_sort_asc';
@@ -52,6 +75,16 @@ class _VideosEjerciciosPacienteScreenState
   static const String _prefsCategoriaMatchAllKey =
       'videos_paciente_categoria_match_all';
 
+  bool get _canAccessFullCatalog {
+    final authService = context.read<AuthService>();
+    final userType = (authService.userType ?? '').toLowerCase().trim();
+    return authService.isPremium ||
+        userType == 'nutricionista' ||
+        userType == 'administrador';
+  }
+
+  bool get _isPreviewMode => !_canAccessFullCatalog;
+
   @override
   void initState() {
     super.initState();
@@ -61,8 +94,13 @@ class _VideosEjerciciosPacienteScreenState
     _tabController = TabController(length: 2, vsync: this);
     _loadPreferences();
     _loadVideos();
-    _loadFavoritos();
-    _loadCategorias();
+    if (_isPreviewMode) {
+      _isLoadingFavoritos = false;
+      _categoriasLoading = false;
+    } else {
+      _loadFavoritos();
+      _loadCategorias();
+    }
     _loadParametrosVideos();
   }
 
@@ -99,6 +137,14 @@ class _VideosEjerciciosPacienteScreenState
               .where((e) => e > 0)
               .toList();
       _categoriaMatchAll = prefs.getBool(_prefsCategoriaMatchAllKey) ?? false;
+      if (_isPreviewMode) {
+        _isSearchVisible = false;
+        _searchQuery = '';
+        _searchCtrl.clear();
+        _selectedCategoriaIds = [];
+        _categoriaMatchAll = false;
+        _activeFilterInfo = null;
+      }
     });
   }
 
@@ -116,6 +162,10 @@ class _VideosEjerciciosPacienteScreenState
   }
 
   void _applySortSelection(String mode) {
+    if (_isPreviewMode) {
+      _showPremiumRequiredForVideosTools(context);
+      return;
+    }
     setState(() {
       if (_sortMode == mode) {
         _sortAscending = !_sortAscending;
@@ -128,6 +178,10 @@ class _VideosEjerciciosPacienteScreenState
   }
 
   void _toggleSearchVisibility() {
+    if (_isPreviewMode) {
+      _showPremiumRequiredForVideosTools(context);
+      return;
+    }
     setState(() {
       _isSearchVisible = !_isSearchVisible;
       if (!_isSearchVisible) {
@@ -158,14 +212,90 @@ class _VideosEjerciciosPacienteScreenState
     return ruta;
   }
 
+  List<int>? _parsePreviewCodes(String? rawValue) {
+    if (rawValue == null || rawValue.trim().isEmpty) {
+      return null;
+    }
+
+    final codes = rawValue
+        .split(',')
+        .map((value) => int.tryParse(value.trim()))
+        .whereType<int>()
+        .where((value) => value > 0)
+        .toList();
+
+    if (codes.isEmpty) {
+      return null;
+    }
+
+    return codes.toSet().toList();
+  }
+
+  List<VideoEjercicio> _buildPreviewVideos(
+    List<VideoEjercicio> source,
+    List<int>? previewCodes,
+  ) {
+    if (source.isEmpty) {
+      return <VideoEjercicio>[];
+    }
+
+    if (previewCodes != null && previewCodes.isNotEmpty) {
+      final byCode = <int, VideoEjercicio>{
+        for (final video in source)
+          if (video.codigo != null) video.codigo!: video,
+      };
+      final selected = previewCodes
+          .map((code) => byCode[code])
+          .whereType<VideoEjercicio>()
+          .toList();
+      if (selected.isNotEmpty) {
+        return selected;
+      }
+    }
+
+    final sorted = List<VideoEjercicio>.from(source)
+      ..sort((a, b) => (b.codigo ?? 0).compareTo(a.codigo ?? 0));
+
+    return sorted.take(3).toList();
+  }
+
+  String _catalogHighlightCount(int total) {
+    if (total <= 0) {
+      return '0';
+    }
+    if (total < 10) {
+      return '$total';
+    }
+    final rounded = (total ~/ 10) * 10;
+    return '$rounded+';
+  }
+
   Future<void> _loadVideos() async {
     setState(() => _isLoading = true);
     try {
+      if (_userId == null) {
+        if (mounted) {
+          setState(() {
+            _videos = [];
+            _nonPremiumPreviewCodes = null;
+            _isLoading = false;
+          });
+        }
+        return;
+      }
       final apiService = Provider.of<ApiService>(context, listen: false);
+      final previewCodesFuture = _isPreviewMode
+          ? apiService
+              .getParametroValor(_paramNonPremiumPreviewCodes)
+              .then(_parsePreviewCodes)
+              .catchError((_) => null)
+          : Future<List<int>?>.value(null);
       final rawList = await apiService.getVideosEjerciciosForUser(_userId!);
+      final previewCodes = await previewCodesFuture;
       if (mounted) {
         setState(() {
           _videos = rawList.map((e) => VideoEjercicio.fromJson(e)).toList();
+          _nonPremiumPreviewCodes = previewCodes;
         });
       }
     } catch (e) {
@@ -180,6 +310,15 @@ class _VideosEjerciciosPacienteScreenState
   }
 
   Future<void> _loadFavoritos() async {
+    if (_isPreviewMode || _userId == null) {
+      if (mounted) {
+        setState(() {
+          _favoritos = [];
+          _isLoadingFavoritos = false;
+        });
+      }
+      return;
+    }
     setState(() => _isLoadingFavoritos = true);
     try {
       final apiService = Provider.of<ApiService>(context, listen: false);
@@ -197,6 +336,15 @@ class _VideosEjerciciosPacienteScreenState
   }
 
   Future<void> _loadCategorias() async {
+    if (_isPreviewMode) {
+      if (mounted) {
+        setState(() {
+          _categoriasCatalogo = [];
+          _categoriasLoading = false;
+        });
+      }
+      return;
+    }
     setState(() => _categoriasLoading = true);
     try {
       final apiService = Provider.of<ApiService>(context, listen: false);
@@ -309,6 +457,10 @@ class _VideosEjerciciosPacienteScreenState
   }
 
   Future<void> _toggleLike(VideoEjercicio video) async {
+    if (_isPreviewMode) {
+      await _showPremiumRequiredForVideosTools(context);
+      return;
+    }
     if (_userId == null) return;
     try {
       final apiService = context.read<ApiService>();
@@ -334,6 +486,10 @@ class _VideosEjerciciosPacienteScreenState
   }
 
   Future<void> _toggleFavorito(VideoEjercicio video) async {
+    if (_isPreviewMode) {
+      await _showPremiumRequiredForVideosTools(context);
+      return;
+    }
     if (_userId == null) return;
     try {
       final apiService = context.read<ApiService>();
@@ -356,6 +512,10 @@ class _VideosEjerciciosPacienteScreenState
   }
 
   Future<void> _playVideo(VideoEjercicio video) async {
+    if (_isPreviewMode) {
+      await _showPremiumRequiredForVideosPlayback(context);
+      return;
+    }
     final rawUrl = (video.rutaVideo ?? '').trim();
     final isExternalUrl =
         rawUrl.startsWith('http://') || rawUrl.startsWith('https://');
@@ -430,6 +590,22 @@ class _VideosEjerciciosPacienteScreenState
   }
 
   Future<void> _openVideoDetail(VideoEjercicio video) async {
+    if (_isPreviewMode) {
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => VideoEjercicioDetailScreen(
+            video: video,
+            onPlay: () => _showPremiumRequiredForVideosPlayback(context),
+            onActionSelected: (_) => _showPremiumRequiredForVideosTools(
+              context,
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
     final result = await Navigator.push<String>(
       context,
       MaterialPageRoute(
@@ -521,6 +697,10 @@ class _VideosEjerciciosPacienteScreenState
   }
 
   Future<void> _showCategoriaFilterDialog() async {
+    if (_isPreviewMode) {
+      await _showPremiumRequiredForVideosTools(context);
+      return;
+    }
     if (_categoriasCatalogo.isEmpty && !_categoriasLoading) {
       await _loadCategorias();
     }
@@ -758,166 +938,227 @@ class _VideosEjerciciosPacienteScreenState
     return RichText(text: TextSpan(children: spans));
   }
 
-  Widget _buildVideoCard(VideoEjercicio video) {
-    ImageProvider? thumbProvider;
-    if (video.imagenMiniatura != null && video.imagenMiniatura!.isNotEmpty) {
-      try {
-        thumbProvider = MemoryImage(base64Decode(video.imagenMiniatura!));
-      } catch (_) {}
+  ImageProvider? _thumbnailProviderFor(VideoEjercicio video) {
+    final raw = (video.imagenMiniatura ?? '').trim();
+    if (raw.isEmpty) return null;
+    final cached = _thumbnailCache[raw];
+    if (cached != null) {
+      return cached;
     }
+    try {
+      final provider = MemoryImage(base64Decode(raw));
+      _thumbnailCache[raw] = provider;
+      return provider;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Widget _buildYoutubeOverlayBadge() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.38),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+      ),
+      child: const Icon(
+        Icons.smart_display_rounded,
+        color: Colors.white,
+        size: 18,
+      ),
+    );
+  }
+
+  Widget _buildVideoCard(VideoEjercicio video) {
+    final isPreviewMode = _isPreviewMode;
+    final thumbProvider = _thumbnailProviderFor(video);
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () => _openVideoDetail(video),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Thumbnail
-            thumbProvider != null
-                ? AspectRatio(
-                    aspectRatio: 16 / 9,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        Image(image: thumbProvider, fit: BoxFit.cover),
-                        Center(
-                          child: Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: const BoxDecoration(
-                              color: Colors.black45,
-                              shape: BoxShape.circle,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => _playVideo(video),
+              child: thumbProvider != null
+                  ? AspectRatio(
+                      aspectRatio: 16 / 9,
+                      child: RepaintBoundary(
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Image(
+                              image: thumbProvider,
+                              fit: BoxFit.cover,
+                              gaplessPlayback: true,
                             ),
+                            Center(
+                              child: Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: const BoxDecoration(
+                                  color: Colors.black45,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  video.esYoutube
+                                      ? Icons.play_circle_outline
+                                      : Icons.play_arrow,
+                                  color: Colors.white,
+                                  size: 40,
+                                ),
+                              ),
+                            ),
+                            if (video.esYoutube)
+                              Positioned(
+                                right: 10,
+                                bottom: 10,
+                                child: _buildYoutubeOverlayBadge(),
+                              ),
+                          ],
+                        ),
+                      ),
+                    )
+                  : Container(
+                      height: 110,
+                      color: Colors.grey[200],
+                      child: Stack(
+                        children: [
+                          Center(
                             child: Icon(
                               video.esYoutube
-                                  ? Icons.play_circle_outline
-                                  : Icons.play_arrow,
-                              color: Colors.white,
-                              size: 40,
+                                  ? Icons.smart_display_outlined
+                                  : Icons.play_circle_outline,
+                              size: 52,
+                              color: Colors.grey[400],
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                  )
-                : Container(
-                    height: 110,
-                    color: Colors.grey[200],
-                    child: Center(
-                      child: Icon(
-                        video.esYoutube
-                            ? Icons.smart_display_outlined
-                            : Icons.play_circle_outline,
-                        size: 52,
-                        color: Colors.grey[400],
+                          if (video.esYoutube)
+                            Positioned(
+                              right: 10,
+                              bottom: 10,
+                              child: _buildYoutubeOverlayBadge(),
+                            ),
+                        ],
                       ),
                     ),
-                  ),
-            // Title
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
-              child: Text(
-                video.titulo,
-                style:
-                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
             ),
-            if ((video.descripcion ?? '').isNotEmpty)
-              Builder(
-                builder: (context) {
-                  final shortDescription =
-                      _shortDescription(video.descripcion ?? '');
-                  if (shortDescription.isEmpty) {
-                    return const SizedBox.shrink();
-                  }
-                  return Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-                    child: Text(
-                      shortDescription,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style:
-                          const TextStyle(fontSize: 13, color: Colors.black87),
-                    ),
-                  );
-                },
-              ),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(12, 6, 12, 0),
-              child: Text(
-                'Toca para ver detalle completo y reproducir',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.blueGrey,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-            ),
-            // Action bar
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-              child: Row(
+          ),
+          InkWell(
+            onTap: () => _openVideoDetail(video),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    icon: Icon(
-                      video.meGusta == 'S'
-                          ? Icons.favorite
-                          : Icons.favorite_border,
-                      color: video.meGusta == 'S' ? Colors.red : null,
+                  Text(
+                    video.titulo,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
                     ),
-                    onPressed: () => _toggleLike(video),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  Text('${video.totalLikes}',
-                      style: const TextStyle(fontSize: 13)),
-                  const SizedBox(width: 4),
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    icon: Icon(
-                      video.favorito == 'S'
-                          ? Icons.bookmark
-                          : Icons.bookmark_border,
-                      color: video.favorito == 'S' ? Colors.amber : null,
+                  if ((video.descripcion ?? '').isNotEmpty)
+                    Builder(
+                      builder: (context) {
+                        final shortDescription =
+                            _shortDescription(video.descripcion ?? '');
+                        if (shortDescription.isEmpty) {
+                          return const SizedBox.shrink();
+                        }
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(
+                            shortDescription,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Colors.black87,
+                            ),
+                          ),
+                        );
+                      },
                     ),
-                    onPressed: () => _toggleFavorito(video),
-                  ),
-                  const Spacer(),
                   Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: Chip(
-                      label: Text(
-                        video.esYoutube
-                            ? 'YouTube'
-                            : video.esGif
-                                ? 'GIF'
-                                : 'Vídeo',
-                        style: const TextStyle(fontSize: 11),
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      isPreviewMode
+                          ? 'Toca la portada para reproducir. El detalle está disponible, la reproducción completa es Premium'
+                          : 'Toca la portada para reproducir o el contenido para ver el detalle',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color:
+                            isPreviewMode ? Colors.deepOrange : Colors.blueGrey,
+                        fontStyle: FontStyle.italic,
+                        fontWeight:
+                            isPreviewMode ? FontWeight.w600 : FontWeight.normal,
                       ),
-                      avatar: Icon(
-                        video.esYoutube
-                            ? Icons.smart_display
-                            : video.esGif
-                                ? Icons.gif
-                                : Icons.play_circle,
-                        size: 14,
-                      ),
-                      visualDensity: VisualDensity.compact,
                     ),
                   ),
                 ],
               ),
             ),
-          ],
-        ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            child: Row(
+              children: [
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(
+                    video.meGusta == 'S'
+                        ? Icons.favorite
+                        : Icons.favorite_border,
+                    color: video.meGusta == 'S' ? Colors.red : null,
+                  ),
+                  onPressed: () => _toggleLike(video),
+                ),
+                Text('${video.totalLikes}',
+                    style: const TextStyle(fontSize: 13)),
+                const SizedBox(width: 4),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(
+                    video.favorito == 'S'
+                        ? Icons.bookmark
+                        : Icons.bookmark_border,
+                    color: video.favorito == 'S' ? Colors.amber : null,
+                  ),
+                  onPressed: () => _toggleFavorito(video),
+                ),
+                const Spacer(),
+                if (!video.esYoutube)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Chip(
+                      label: Text(
+                        video.esGif ? 'GIF' : 'Vídeo',
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      avatar: Icon(
+                        video.esGif ? Icons.gif : Icons.play_circle,
+                        size: 14,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildTabContent(List<VideoEjercicio> filtered, bool isLoading) {
+    final isPreviewMode = _isPreviewMode;
     if (isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -937,23 +1178,47 @@ class _VideosEjerciciosPacienteScreenState
     return RefreshIndicator(
       onRefresh: () async {
         await _loadVideos();
-        await _loadFavoritos();
+        if (!isPreviewMode) {
+          await _loadFavoritos();
+        }
       },
       child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
-        itemCount: filtered.length,
-        itemBuilder: (_, i) => _buildVideoCard(filtered[i]),
+        itemCount: isPreviewMode ? filtered.length + 1 : filtered.length,
+        itemBuilder: (_, i) {
+          if (isPreviewMode && i == filtered.length) {
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 18),
+              child: PremiumUpsellCard(
+                title: AppLocalizations.of(context)!.videosPremiumTitle,
+                subtitle: AppLocalizations.of(context)!.videosPremiumSubtitle,
+                subtitleHighlight:
+                    AppLocalizations.of(context)!.videosPremiumPreviewHighlight(
+                  _catalogHighlightCount(_videos.length),
+                ),
+                onPressed: () => Navigator.pushNamed(context, '/premium_info'),
+              ),
+            );
+          }
+          return _buildVideoCard(filtered[i]);
+        },
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final filteredTodos = _filteredAndSorted(_videos);
-    final filteredFavoritos = _filteredAndSorted(_favoritos);
-    final badgeCount = _tabController.index == 0
-        ? filteredTodos.length
-        : filteredFavoritos.length;
+    final isPreviewMode = _isPreviewMode;
+    final filteredTodos = isPreviewMode
+        ? _buildPreviewVideos(_videos, _nonPremiumPreviewCodes)
+        : _filteredAndSorted(_videos);
+    final filteredFavoritos =
+        isPreviewMode ? <VideoEjercicio>[] : _filteredAndSorted(_favoritos);
+    final badgeCount = isPreviewMode
+        ? _videos.length
+        : _tabController.index == 0
+            ? filteredTodos.length
+            : filteredFavoritos.length;
 
     return Scaffold(
       appBar: AppBar(
@@ -983,7 +1248,9 @@ class _VideosEjerciciosPacienteScreenState
           IconButton(
             icon: Icon(_isSearchVisible ? Icons.search_off : Icons.search),
             tooltip: _isSearchVisible ? 'Ocultar buscar' : 'Buscar',
-            onPressed: _toggleSearchVisibility,
+            onPressed: isPreviewMode
+                ? () => _showPremiumRequiredForVideosTools(context)
+                : _toggleSearchVisibility,
           ),
           Stack(
             alignment: Alignment.center,
@@ -991,7 +1258,9 @@ class _VideosEjerciciosPacienteScreenState
               IconButton(
                 icon: const Icon(Icons.filter_alt),
                 tooltip: 'Filtrar ejercicios',
-                onPressed: _showCategoriaFilterDialog,
+                onPressed: isPreviewMode
+                    ? () => _showPremiumRequiredForVideosTools(context)
+                    : _showCategoriaFilterDialog,
               ),
               if (_selectedCategoriaIds.isNotEmpty)
                 Positioned(
@@ -1022,6 +1291,10 @@ class _VideosEjerciciosPacienteScreenState
           PopupMenuButton<String>(
             tooltip: 'Opciones',
             onSelected: (value) async {
+              if (isPreviewMode) {
+                await _showPremiumRequiredForVideosTools(context);
+                return;
+              }
               if (value == 'buscar') {
                 _toggleSearchVisibility();
                 return;
@@ -1166,6 +1439,14 @@ class _VideosEjerciciosPacienteScreenState
         ],
         bottom: TabBar(
           controller: _tabController,
+          onTap: (index) {
+            if (isPreviewMode && index == 1) {
+              Future.microtask(
+                () => _showPremiumRequiredForVideosTools(context),
+              );
+              _tabController.animateTo(0);
+            }
+          },
           tabs: const [
             Tab(text: 'Todos'),
             Tab(text: 'Favoritos'),
@@ -1174,7 +1455,7 @@ class _VideosEjerciciosPacienteScreenState
       ),
       body: Column(
         children: [
-          if (_isSearchVisible)
+          if (_isSearchVisible && !isPreviewMode)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
               child: TextField(
@@ -1218,7 +1499,9 @@ class _VideosEjerciciosPacienteScreenState
                 },
               ),
             ),
-          if (_activeFilterInfo != null && _activeFilterInfo!.isNotEmpty)
+          if (!isPreviewMode &&
+              _activeFilterInfo != null &&
+              _activeFilterInfo!.isNotEmpty)
             Container(
               width: double.infinity,
               margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
@@ -1262,6 +1545,8 @@ class _VideosEjerciciosPacienteScreenState
           Expanded(
             child: TabBarView(
               controller: _tabController,
+              physics:
+                  isPreviewMode ? const NeverScrollableScrollPhysics() : null,
               children: [
                 _buildTabContent(filteredTodos, _isLoading),
                 _buildTabContent(filteredFavoritos, _isLoadingFavoritos),

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:nutri_app/models/suplemento.dart';
 import 'package:nutri_app/services/api_service.dart';
+import 'package:nutri_app/widgets/description_link_insert_dialog.dart';
 import 'package:nutri_app/widgets/unsaved_changes_dialog.dart';
 
 class SuplementoEditScreen extends StatefulWidget {
@@ -25,6 +26,7 @@ class _SuplementoEditScreenState extends State<SuplementoEditScreen> {
   bool _activo = true;
   bool _saving = false;
   bool _hasChanges = false;
+  bool _descripcionExpanded = true;
 
   String _friendlyApiError(
     Object error, {
@@ -70,282 +72,54 @@ class _SuplementoEditScreenState extends State<SuplementoEditScreen> {
     super.dispose();
   }
 
-  Future<List<Map<String, dynamic>>> _loadLinkItems(String type) async {
-    final api = context.read<ApiService>();
-    String endpoint;
-    switch (type) {
-      case 'consejo':
-        endpoint = 'api/consejos.php';
-        break;
-      case 'receta':
-        endpoint = 'api/recetas.php';
-        break;
-      case 'sustitucion_saludable':
-        endpoint = 'api/sustituciones_saludables.php';
-        break;
-      case 'suplemento':
-        endpoint = 'api/suplementos.php';
-        break;
-      default:
-        return <Map<String, dynamic>>[];
-    }
-
-    final response = await api.get(endpoint);
-    if (response.statusCode != 200) {
-      throw Exception('HTTP ${response.statusCode}');
-    }
-
-    final decoded = jsonDecode(response.body);
-    if (decoded is! List) return <Map<String, dynamic>>[];
-
-    final items = decoded
-        .whereType<Map>()
-        .map((raw) => Map<String, dynamic>.from(raw))
-        .where(
-            (item) => int.tryParse((item['codigo'] ?? '').toString()) != null)
-        .where((item) {
-      if (type != 'suplemento') return true;
-      final currentCodigo = widget.suplemento?.codigo;
-      if (currentCodigo == null) return true;
-      final codigo = int.tryParse((item['codigo'] ?? '').toString());
-      return codigo == null || codigo != currentCodigo;
-    }).toList(growable: false);
-
-    items.sort((a, b) {
-      final ta = (a['titulo'] ?? '').toString().toLowerCase();
-      final tb = (b['titulo'] ?? '').toString().toLowerCase();
-      return ta.compareTo(tb);
-    });
-    return items;
-  }
-
   Future<void> _showInsertLinkDialog() async {
     final initialSelection = _descripcionCtrl.selection;
     final baseOffset = initialSelection.isValid
         ? initialSelection.start.clamp(0, _descripcionCtrl.text.length)
         : _descripcionCtrl.text.length;
 
-    String selectedType = 'consejo';
-    String query = '';
-    bool loading = true;
-    String? loadError;
-    List<Map<String, dynamic>> allItems = <Map<String, dynamic>>[];
-    int? selectedCodigo;
-    var initialLoadTriggered = false;
-
-    Future<void> reload(StateSetter setS) async {
-      setS(() {
-        loading = true;
-        loadError = null;
-        selectedCodigo = null;
-      });
-
-      try {
-        final items = await _loadLinkItems(selectedType);
-        setS(() {
-          allItems = items;
-          loading = false;
-        });
-      } catch (_) {
-        setS(() {
-          loading = false;
-          loadError =
-              'No se pudo cargar la lista. Revisa conexión e inténtalo de nuevo.';
-        });
-      }
-    }
-
-    if (!mounted) return;
-    await showDialog<void>(
+    final token = await showDescriptionLinkInsertDialog(
       context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (ctx, setS) {
-            final normalizedQuery = query.trim().toLowerCase();
-            final visible = normalizedQuery.isEmpty
-                ? allItems
-                : allItems.where((item) {
-                    final title =
-                        (item['titulo'] ?? '').toString().toLowerCase();
-                    final code = (item['codigo'] ?? '').toString();
-                    return title.contains(normalizedQuery) ||
-                        code.contains(normalizedQuery);
-                  }).toList(growable: false);
-
-            if (!initialLoadTriggered &&
-                loading &&
-                allItems.isEmpty &&
-                loadError == null) {
-              initialLoadTriggered = true;
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                reload(setS);
-              });
-            }
-
-            return AlertDialog(
-              title: const Text('Insertar enlace en descripción'),
-              content: SizedBox(
-                width: 640,
-                height: 460,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        ChoiceChip(
-                          label: const Text('Consejo'),
-                          selected: selectedType == 'consejo',
-                          onSelected: (v) {
-                            if (!v) return;
-                            setS(() {
-                              selectedType = 'consejo';
-                              query = '';
-                            });
-                            reload(setS);
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('Receta'),
-                          selected: selectedType == 'receta',
-                          onSelected: (v) {
-                            if (!v) return;
-                            setS(() {
-                              selectedType = 'receta';
-                              query = '';
-                            });
-                            reload(setS);
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('Sustitución saludable'),
-                          selected: selectedType == 'sustitucion_saludable',
-                          onSelected: (v) {
-                            if (!v) return;
-                            setS(() {
-                              selectedType = 'sustitucion_saludable';
-                              query = '';
-                            });
-                            reload(setS);
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('Suplemento'),
-                          selected: selectedType == 'suplemento',
-                          onSelected: (v) {
-                            if (!v) return;
-                            setS(() {
-                              selectedType = 'suplemento';
-                              query = '';
-                            });
-                            reload(setS);
-                          },
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      decoration: const InputDecoration(
-                        labelText: 'Buscar por título o código',
-                        prefixIcon: Icon(Icons.search),
-                        border: OutlineInputBorder(),
-                      ),
-                      onChanged: (v) => setS(() => query = v),
-                    ),
-                    const SizedBox(height: 10),
-                    Expanded(
-                      child: loading
-                          ? const Center(child: CircularProgressIndicator())
-                          : loadError != null
-                              ? Center(
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(
-                                        loadError!,
-                                        textAlign: TextAlign.center,
-                                      ),
-                                      const SizedBox(height: 8),
-                                      OutlinedButton.icon(
-                                        onPressed: () => reload(setS),
-                                        icon: const Icon(Icons.refresh),
-                                        label: const Text('Reintentar'),
-                                      ),
-                                    ],
-                                  ),
-                                )
-                              : visible.isEmpty
-                                  ? const Center(
-                                      child: Text(
-                                          'No hay elementos para mostrar.'),
-                                    )
-                                  : ListView.separated(
-                                      itemCount: visible.length,
-                                      separatorBuilder: (_, __) =>
-                                          const Divider(height: 1),
-                                      itemBuilder: (_, index) {
-                                        final item = visible[index];
-                                        final codigo = int.tryParse(
-                                          (item['codigo'] ?? '').toString(),
-                                        );
-                                        if (codigo == null) {
-                                          return const SizedBox.shrink();
-                                        }
-                                        final title =
-                                            (item['titulo'] ?? '').toString();
-                                        return RadioListTile<int>(
-                                          dense: true,
-                                          value: codigo,
-                                          groupValue: selectedCodigo,
-                                          onChanged: (v) =>
-                                              setS(() => selectedCodigo = v),
-                                          title: Text(
-                                            title.isEmpty
-                                                ? 'Sin título (#$codigo)'
-                                                : title,
-                                          ),
-                                          subtitle: Text('Código: $codigo'),
-                                        );
-                                      },
-                                    ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('Cancelar'),
-                ),
-                FilledButton.icon(
-                  onPressed: selectedCodigo == null
-                      ? null
-                      : () {
-                          final token =
-                              '[[Véase enlace_${selectedType}_$selectedCodigo]]';
-                          final text = _descripcionCtrl.text;
-                          final safeOffset = baseOffset.clamp(0, text.length);
-                          final nextText =
-                              '${text.substring(0, safeOffset)}$token${text.substring(safeOffset)}';
-                          _descripcionCtrl.value = TextEditingValue(
-                            text: nextText,
-                            selection: TextSelection.collapsed(
-                              offset: safeOffset + token.length,
-                            ),
-                          );
-                          _descripcionFocus.requestFocus();
-                          _markChanged();
-                          Navigator.pop(dialogContext);
-                        },
-                  icon: const Icon(Icons.link),
-                  label: const Text('Insertar enlace'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      apiService: context.read<ApiService>(),
+      linkTypes: [
+        const DescriptionLinkTypeOption(
+          key: 'consejo',
+          label: 'Consejo',
+          endpoint: 'api/consejos.php',
+        ),
+        const DescriptionLinkTypeOption(
+          key: 'receta',
+          label: 'Receta',
+          endpoint: 'api/recetas.php',
+        ),
+        const DescriptionLinkTypeOption(
+          key: 'sustitucion_saludable',
+          label: 'Sustitución saludable',
+          endpoint: 'api/sustituciones_saludables.php',
+        ),
+        DescriptionLinkTypeOption(
+          key: 'suplemento',
+          label: 'Suplemento',
+          endpoint: 'api/suplementos.php',
+          excludeCodigo: widget.suplemento?.codigo,
+        ),
+      ],
+      initialTypeKey: 'consejo',
     );
+    if (token == null || !mounted) return;
+
+    final text = _descripcionCtrl.text;
+    final safeOffset = baseOffset.clamp(0, text.length);
+    final nextText =
+        '${text.substring(0, safeOffset)}$token${text.substring(safeOffset)}';
+    _descripcionCtrl.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(
+        offset: safeOffset + token.length,
+      ),
+    );
+    _descripcionFocus.requestFocus();
+    _markChanged();
   }
 
   void _markChanged() {
@@ -474,6 +248,103 @@ class _SuplementoEditScreenState extends State<SuplementoEditScreen> {
     }
   }
 
+  Widget _buildCountBoxBadge(int count) {
+    final color = count > 0 ? Colors.green : Colors.grey;
+    return Container(
+      constraints: const BoxConstraints(minWidth: 32),
+      height: 22,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Center(
+        child: Text(
+          '$count',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDescripcionCard() {
+    return Card(
+      child: Column(
+        children: [
+          InkWell(
+            onTap: () =>
+                setState(() => _descripcionExpanded = !_descripcionExpanded),
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Row(
+                      children: [
+                        const Flexible(
+                          child: Text(
+                            'Descripción',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        _buildCountBoxBadge(
+                          _descripcionCtrl.text.trim().length,
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: _showInsertLinkDialog,
+                    icon: const Icon(Icons.link),
+                    tooltip: 'Añadir enlace (Consejo/Receta/Sustitución)',
+                  ),
+                  IconButton(
+                    onPressed: () => setState(
+                        () => _descripcionExpanded = !_descripcionExpanded),
+                    icon: Icon(
+                      _descripcionExpanded
+                          ? Icons.expand_less
+                          : Icons.expand_more,
+                    ),
+                    tooltip: _descripcionExpanded ? 'Plegar' : 'Desplegar',
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_descripcionExpanded) const Divider(height: 1),
+          if (_descripcionExpanded)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: TextFormField(
+                controller: _descripcionCtrl,
+                focusNode: _descripcionFocus,
+                decoration: const InputDecoration(
+                  labelText: 'Descripción',
+                  border: OutlineInputBorder(),
+                  alignLabelWithHint: true,
+                ),
+                maxLines: null,
+                minLines: 10,
+                keyboardType: TextInputType.multiline,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -526,26 +397,7 @@ class _SuplementoEditScreenState extends State<SuplementoEditScreen> {
                       const SizedBox(height: 16),
 
                       // ── Descripción ─────────────────────────────────────────
-                      TextFormField(
-                        controller: _descripcionCtrl,
-                        focusNode: _descripcionFocus,
-                        decoration: const InputDecoration(
-                          labelText: 'Descripción',
-                          border: OutlineInputBorder(),
-                          alignLabelWithHint: true,
-                        ),
-                        maxLines: null,
-                        minLines: 10,
-                        keyboardType: TextInputType.multiline,
-                      ),
-                      const SizedBox(height: 8),
-                      OutlinedButton.icon(
-                        onPressed: _showInsertLinkDialog,
-                        icon: const Icon(Icons.link),
-                        label: const Text(
-                          'Añadir enlace (Consejo/Receta/Sustitución)',
-                        ),
-                      ),
+                      _buildDescripcionCard(),
                       const SizedBox(height: 16),
 
                       // ── Activo toggle ───────────────────────────────────────

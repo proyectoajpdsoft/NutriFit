@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/screens/chat_screen.dart';
@@ -85,6 +86,79 @@ class _ContactoNutricionistaScreenState
     }
   }
 
+  String _normalizeWhatsAppPhone(String rawPhone) {
+    final trimmed = rawPhone.trim();
+    if (trimmed.isEmpty) return '';
+
+    final digits = trimmed.replaceAll(RegExp(r'[^\d]'), '');
+    if (digits.isEmpty) return '';
+
+    if (trimmed.startsWith('+')) {
+      return '+$digits';
+    }
+
+    if (digits.startsWith('00')) {
+      return '+${digits.substring(2)}';
+    }
+
+    if (digits.startsWith('34')) {
+      return '+$digits';
+    }
+
+    return '+34$digits';
+  }
+
+  Future<void> _copyPhoneNumber(String phoneNumber) async {
+    final normalized = phoneNumber.trim();
+    if (normalized.isEmpty) return;
+
+    await Clipboard.setData(ClipboardData(text: normalized));
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content:
+            Text(AppLocalizations.of(context)!.contactDietitianPhoneCopied),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  Future<void> _launchWhatsApp(String phoneNumber) async {
+    final normalized = _normalizeWhatsAppPhone(phoneNumber);
+    if (normalized.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context)!.contactDietitianWhatsappInvalidPhone,
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final digitsOnly = normalized.replaceAll(RegExp(r'[^\d]'), '');
+    final url = 'https://wa.me/$digitsOnly';
+
+    try {
+      await _launchExternalUrl(url);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context)!.contactDietitianWhatsappOpenError(
+              e.toString(),
+            ),
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   // URL Launcher disabled - feature temporarily disabled
   // Future<void> _launchUrl(String url) async {
   //   if (url.isEmpty) return;
@@ -149,54 +223,6 @@ class _ContactoNutricionistaScreenState
   //   }
   // }
 
-  Future<void> _addToContacts(String phoneNumber) async {
-    try {
-      // Mostrar un diálogo con instrucciones sobre cómo agregar el contacto
-      if (!mounted) return;
-
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Dietista agregado'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Para contactar por WhatsApp:'),
-              const SizedBox(height: 12),
-              const Text(
-                'Por favor, agrega al dietista manualmente a tus contactos:',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Nombre: Dietista Online - NutriFit',
-                style: TextStyle(color: Colors.grey.shade700),
-              ),
-              Text(
-                'Teléfono: $phoneNumber',
-                style: TextStyle(color: Colors.grey.shade700),
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'Una vez agregado, podrás enviarle mensajes por WhatsApp.',
-                style: TextStyle(fontStyle: FontStyle.italic),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
-    } catch (e) {
-      // debugPrint('Error al agregar contacto: $e');
-    }
-  }
-
   Future<void> _launchExternalUrl(String url) async {
     try {
       await launchUrlString(url, mode: LaunchMode.externalApplication);
@@ -229,17 +255,16 @@ class _ContactoNutricionistaScreenState
   }
 
   void _showChatGuestDialog() {
+    final l10n = AppLocalizations.of(context)!;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Registro requerido'),
-        content: const Text(
-          'Para chatear con tu dietista online, por favor, regístrate (es gratis).',
-        ),
+        title: Text(l10n.drawerRegistrationRequiredTitle),
+        content: Text(l10n.drawerRegistrationRequiredChatMessage),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
+            child: Text(l10n.commonClose),
           ),
           ElevatedButton(
             onPressed: () {
@@ -247,7 +272,7 @@ class _ContactoNutricionistaScreenState
               Navigator.pop(context); // Cerrar pantalla de contacto
               Navigator.pushNamed(context, '/register');
             },
-            child: const Text('Iniciar registro'),
+            child: Text(l10n.navStartRegistration),
           ),
         ],
       ),
@@ -256,13 +281,15 @@ class _ContactoNutricionistaScreenState
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: const Text('Contactar con Dietista'),
+        title: Text(l10n.patientContactDietitianTrainer),
       ),
       body: SafeArea(
         child: _isLoading
@@ -273,7 +300,7 @@ class _ContactoNutricionistaScreenState
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Formas de contacto',
+                      l10n.contactDietitianMethodsTitle,
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                     const SizedBox(height: 16),
@@ -281,7 +308,7 @@ class _ContactoNutricionistaScreenState
                       child: ListTile(
                         leading: Icon(Icons.mark_chat_unread_outlined,
                             color: Theme.of(context).colorScheme.primary),
-                        title: const Text('Chat con dietista'),
+                        title: Text(l10n.navChatWithDietitian),
                         trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                         onTap: () {
                           if (_authService.isGuestMode) {
@@ -300,7 +327,7 @@ class _ContactoNutricionistaScreenState
                     // Email
                     _buildContactItem(
                       Icons.email,
-                      'Email',
+                      l10n.contactDietitianEmailLabel,
                       _contactInfo['email'] ?? '',
                       () => _launchExternalUrl(
                         'mailto:${_contactInfo['email'] ?? ''}',
@@ -309,7 +336,7 @@ class _ContactoNutricionistaScreenState
                     // Teléfono
                     _buildContactItem(
                       Icons.phone,
-                      'Llamar',
+                      l10n.contactDietitianCallLabel,
                       _contactInfo['telefono'] ?? '',
                       () => _launchExternalUrl(
                         'tel:${_contactInfo['telefono'] ?? ''}',
@@ -321,7 +348,7 @@ class _ContactoNutricionistaScreenState
                         child: ListTile(
                           leading: Icon(Icons.chat,
                               color: Theme.of(context).colorScheme.primary),
-                          title: const Text('WhatsApp'),
+                          title: Text(l10n.contactDietitianWhatsappLabel),
                           subtitle: Text(_contactInfo['whatsapp'] ?? '',
                               maxLines: 1, overflow: TextOverflow.ellipsis),
                           trailing:
@@ -329,26 +356,88 @@ class _ContactoNutricionistaScreenState
                           onTap: () {
                             showDialog(
                               context: context,
-                              builder: (context) => AlertDialog(
-                                title: const Text('Contactar por WhatsApp'),
-                                content: const Text(
-                                  'Para contactar al dietista por WhatsApp, '
-                                  'necesitas agregarlo como contacto primero.',
+                              builder: (dialogContext) => AlertDialog(
+                                titlePadding: const EdgeInsets.fromLTRB(
+                                  20,
+                                  18,
+                                  12,
+                                  0,
                                 ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(context),
-                                    child: const Text('Cancelar'),
-                                  ),
-                                  ElevatedButton(
-                                    onPressed: () {
-                                      _addToContacts(
-                                          _contactInfo['whatsapp'] ?? '');
-                                      Navigator.pop(context);
-                                    },
-                                    child: const Text('Agregar a contactos'),
-                                  ),
-                                ],
+                                contentPadding: const EdgeInsets.fromLTRB(
+                                  20,
+                                  12,
+                                  20,
+                                  20,
+                                ),
+                                title: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        l10n.contactDietitianWhatsappDialogTitle,
+                                        style: Theme.of(dialogContext)
+                                            .textTheme
+                                            .titleMedium,
+                                      ),
+                                    ),
+                                    IconButton(
+                                      onPressed: () =>
+                                          Navigator.pop(dialogContext),
+                                      icon: const Icon(Icons.close),
+                                      tooltip: l10n.commonCancel,
+                                      style: IconButton.styleFrom(
+                                        shape: const CircleBorder(),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                content: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      l10n.contactDietitianWhatsappDialogBody(
+                                        _contactInfo['whatsapp'] ?? '',
+                                      ),
+                                    ),
+                                    const SizedBox(height: 18),
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        TextButton(
+                                          onPressed: () {
+                                            _copyPhoneNumber(
+                                              _contactInfo['whatsapp'] ?? '',
+                                            );
+                                          },
+                                          child: Text(
+                                            l10n.contactDietitianCopyPhone,
+                                          ),
+                                        ),
+                                        ElevatedButton(
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor:
+                                                Colors.green.shade600,
+                                            foregroundColor: Colors.white,
+                                            textStyle: const TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                          onPressed: () {
+                                            Navigator.pop(dialogContext);
+                                            _launchWhatsApp(
+                                              _contactInfo['whatsapp'] ?? '',
+                                            );
+                                          },
+                                          child: Text(
+                                            l10n.contactDietitianOpenWhatsapp,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
                               ),
                             );
                           },
@@ -357,7 +446,7 @@ class _ContactoNutricionistaScreenState
                     // Telegram
                     _buildContactItem(
                       Icons.send,
-                      'Telegram',
+                      l10n.contactDietitianTelegramLabel,
                       _contactInfo['telegram'] ?? '',
                       () => _launchExternalUrl(
                         'https://t.me/${(_contactInfo['telegram'] ?? '').replaceAll('@', '')}',
@@ -365,7 +454,7 @@ class _ContactoNutricionistaScreenState
                     ),
                     const SizedBox(height: 24),
                     Text(
-                      'Síguenos en redes sociales',
+                      l10n.contactDietitianSocialTitle,
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                     const SizedBox(height: 16),
@@ -393,7 +482,7 @@ class _ContactoNutricionistaScreenState
                     // Web
                     _buildContactItem(
                       Icons.language,
-                      'Sitio Web',
+                      l10n.contactDietitianWebsiteLabel,
                       _contactInfo['web'] ?? '',
                       () => _launchExternalUrl(_contactInfo['web'] ?? ''),
                     ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:nutri_app/models/medicion.dart';
 import 'package:nutri_app/models/usuario.dart';
 import 'package:nutri_app/screens/contacto_nutricionista_screen.dart';
@@ -205,10 +206,28 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
   }
 
   String _getPeriodoLabel(String key) {
+    final l10n = AppLocalizations.of(context)!;
     if (key == 'ultimos_dias') {
-      return 'Últimos $_ultimosDiasFiltro días';
+      return l10n.weightControlLastDaysLabel(_ultimosDiasFiltro);
     }
-    return _periodosFiltro[key] ?? key;
+    switch (key) {
+      case 'mes_actual':
+        return l10n.weightControlCurrentMonth;
+      case 'mes_anterior':
+        return l10n.weightControlPreviousMonth;
+      case 'trimestre':
+        return l10n.weightControlQuarter;
+      case 'semestre':
+        return l10n.weightControlSemester;
+      case 'anio_actual':
+        return l10n.weightControlCurrentYear;
+      case 'anio_anterior':
+        return l10n.weightControlPreviousYear;
+      case 'siempre':
+        return l10n.weightControlAllTime;
+      default:
+        return _periodosFiltro[key] ?? key;
+    }
   }
 
   Future<int?> _showUltimosDiasDialog() async {
@@ -2664,6 +2683,7 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final authService = context.watch<AuthService>();
     final isGuest = authService.isGuestMode;
     final canViewEvolutionCharts = authService.isPremium;
@@ -2671,11 +2691,11 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
-          tooltip: 'Volver',
+          tooltip: l10n.weightControlBack,
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.maybePop(context),
         ),
-        title: const Text('Control de peso'),
+        title: Text(l10n.navWeightControl),
         actions: isGuest
             ? []
             : [
@@ -2683,7 +2703,7 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
                   onPressed: () => _showPesoObjetivoDialog(
                     valorInicial: _pesoObjetivo ?? _pesoObjetivoSugerido,
                   ),
-                  tooltip: 'Cambiar peso objetivo',
+                  tooltip: l10n.weightControlChangeTarget,
                   icon: const Icon(Icons.flag_outlined),
                 ),
                 IconButton(
@@ -2694,8 +2714,8 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
                     _saveFiltroPreferences();
                   },
                   tooltip: _mostrarFiltroPeriodo
-                      ? 'Ocultar filtro'
-                      : 'Mostrar filtro',
+                      ? l10n.weightControlHideFilter
+                      : l10n.weightControlShowFilter,
                   icon: Icon(
                     _mostrarFiltroPeriodo
                         ? Icons.filter_alt_off
@@ -2704,7 +2724,7 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
                 ),
                 IconButton(
                   onPressed: _refresh,
-                  tooltip: 'Actualizar',
+                  tooltip: l10n.shoppingListRefresh,
                   icon: const Icon(Icons.refresh),
                 ),
               ],
@@ -2737,8 +2757,8 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
                   children: [
                     const Icon(Icons.lock_outline, size: 48),
                     const SizedBox(height: 12),
-                    const Text(
-                      'Para poder gestionar tu control de pesos debes registrarte (es gratis).',
+                    Text(
+                      l10n.weightControlGuestMessage,
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 16),
@@ -2746,7 +2766,7 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
                       onPressed: () =>
                           Navigator.pushNamed(context, '/register'),
                       icon: const Icon(Icons.app_registration),
-                      label: const Text('Iniciar registro'),
+                      label: Text(l10n.navStartRegistration),
                     ),
                   ],
                 ),
@@ -2764,7 +2784,7 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
                     child: Padding(
                       padding: const EdgeInsets.all(20),
                       child: Text(
-                        'Error cargando mediciones: ${snapshot.error}',
+                        l10n.weightControlLoadError('${snapshot.error}'),
                         textAlign: TextAlign.center,
                       ),
                     ),
@@ -2798,7 +2818,7 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
                           ),
                           const SizedBox(height: 10),
                           Text(
-                            'Todavía no hay mediciones registradas.',
+                            l10n.weightControlNoMeasurementsTitle,
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontWeight: FontWeight.w700,
@@ -2807,7 +2827,7 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            'Empieza añadiendo tu primera medición para ver tu evolución.',
+                            l10n.weightControlNoMeasurementsBody,
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               color: Colors.purple.shade700,
@@ -2818,7 +2838,7 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
                           ElevatedButton.icon(
                             onPressed: _showAddPesoDialog,
                             icon: const Icon(Icons.add),
-                            label: const Text('Añadir medición'),
+                            label: Text(l10n.weightControlAddMeasurement),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.purple,
                               foregroundColor: Colors.white,
@@ -2841,14 +2861,20 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
                           medicionesFiltradas.isEmpty
                               ? Center(
                                   child: Text(
-                                    'No hay pesos para ${_getPeriodoLabel(_periodoFiltro).toLowerCase()}.',
+                                    l10n.weightControlNoWeightsForPeriod(
+                                      _getPeriodoLabel(_periodoFiltro)
+                                          .toLowerCase(),
+                                    ),
                                   ),
                                 )
                               : _buildListaPesos(medicionesFiltradas),
                           medicionesFiltradas.isEmpty
                               ? Center(
                                   child: Text(
-                                    'No hay mediciones para ${_getPeriodoLabel(_periodoFiltro).toLowerCase()}.',
+                                    l10n.weightControlNoMeasurementsForPeriod(
+                                      _getPeriodoLabel(_periodoFiltro)
+                                          .toLowerCase(),
+                                    ),
                                   ),
                                 )
                               : _buildCalendarPesos(medicionesFiltradas),
@@ -2861,18 +2887,23 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
                               ? (canViewEvolutionCharts
                                   ? Center(
                                       child: Text(
-                                        'No hay mediciones para ${_getPeriodoLabel(_periodoFiltro).toLowerCase()}.',
+                                        l10n.weightControlNoMeasurementsForPeriod(
+                                          _getPeriodoLabel(_periodoFiltro)
+                                              .toLowerCase(),
+                                        ),
                                       ),
                                     )
                                   : _buildPremiumChartsRequired(
-                                      titulo: 'Evolución de perímetros Premium',
+                                      titulo: l10n
+                                          .weightControlPremiumPerimetersTitle,
                                     ))
                               : (canViewEvolutionCharts
                                   ? _buildGraficaPerimetros(
                                       medicionesFiltradas,
                                     )
                                   : _buildPremiumChartsRequired(
-                                      titulo: 'Evolución de perímetros Premium',
+                                      titulo: l10n
+                                          .weightControlPremiumPerimetersTitle,
                                     )),
                         ],
                       ),
@@ -2885,9 +2916,20 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
   }
 
   Widget _buildPremiumChartsRequired({required String titulo}) {
-    return Center(
+    final l10n = AppLocalizations.of(context)!;
+    final media = MediaQuery.of(context);
+    final isCompact = media.size.height < 740 || media.size.width < 380;
+    final bottomPadding = (isCompact ? 16.0 : 24.0) + media.padding.bottom;
+
+    return Align(
+      alignment: Alignment.topCenter,
       child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+        padding: EdgeInsets.fromLTRB(
+          24,
+          isCompact ? 12 : 18,
+          24,
+          bottomPadding,
+        ),
         child: Container(
           constraints: const BoxConstraints(maxWidth: 560),
           padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 30),
@@ -2937,7 +2979,7 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
               ),
               const SizedBox(height: 14),
               Text(
-                'Esta gráfica está disponible solo para usuarios Premium. Activa tu cuenta para ver tu evolución completa con indicadores visuales avanzados.',
+                l10n.weightControlPremiumChartBody,
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 16,
@@ -2949,7 +2991,7 @@ class _PesosUsuarioScreenState extends State<PesosUsuarioScreen>
               ElevatedButton.icon(
                 onPressed: () => Navigator.pushNamed(context, '/premium_info'),
                 icon: const Icon(Icons.workspace_premium),
-                label: const Text('Hazte premium'),
+                label: Text(l10n.navPremium),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.purple,
                   foregroundColor: Colors.white,

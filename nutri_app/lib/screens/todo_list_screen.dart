@@ -1,10 +1,20 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:add_2_calendar/add_2_calendar.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:nutri_app/mixins/auth_error_handler_mixin.dart';
 import 'package:nutri_app/models/todo_item.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
+import 'package:nutri_app/services/menu_visibility_premium_service.dart';
 import 'package:nutri_app/services/user_settings_service.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:nutri_app/widgets/premium_feature_dialog_helper.dart';
+import 'package:nutri_app/widgets/premium_upsell_card.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:table_calendar/table_calendar.dart';
@@ -19,14 +29,35 @@ class TodoListScreen extends StatefulWidget {
 class _TodoListScreenState extends State<TodoListScreen>
     with SingleTickerProviderStateMixin, AuthErrorHandlerMixin {
   static const _viewPrefsKey = 'todo_list_default_view';
+  static const _defaultNonPremiumTaskLimit = 3;
+  static const _todoSearchVisibleKey = 'todo_list_search_visible';
+  static const _todoFilterVisibleKey = 'todo_list_filter_visible';
+  static const _todoSortModeKey = 'todo_list_sort_mode';
+  static const _todoSortAscendingKey = 'todo_list_sort_ascending';
+  static const _todoDialogPriorityExpandedKey = 'todo_dialog_priority_expanded';
+  static const _todoDialogStatusExpandedKey = 'todo_dialog_status_expanded';
+  static const _todoDialogDescriptionExpandedKey =
+      'todo_dialog_description_expanded';
+
+  AppLocalizations get l10n => AppLocalizations.of(context)!;
 
   late final TabController _tabController;
+  final TextEditingController _searchController = TextEditingController();
   final ApiService _apiService = ApiService();
 
   List<TodoItem> _items = [];
   bool _isLoading = true;
   bool _isCalendarView = false;
   String _settingsScope = 'guest';
+  bool _isMenuPremiumEnabled = false;
+  int _nonPremiumTaskLimit = _defaultNonPremiumTaskLimit;
+  bool _isSearchVisible = false;
+  bool _isFilterVisible = false;
+  String _searchQuery = '';
+  final Set<String> _selectedStatusFilters = <String>{};
+  final Set<String> _selectedPriorityFilters = <String>{};
+  String _sortMode = 'fecha';
+  bool _sortAscending = false;
 
   DateTime _focusedDay = DateTime.now();
   DateTime _selectedDay = DateTime.now();
@@ -62,6 +93,149 @@ class _TodoListScreenState extends State<TodoListScreen>
     );
   }
 
+  bool get _isDesktop =>
+      Platform.isWindows || Platform.isLinux || Platform.isMacOS;
+
+  String _icsDateTime(DateTime dateTime) {
+    final utc = dateTime.toUtc();
+    return '${utc.year.toString().padLeft(4, '0')}'
+        '${utc.month.toString().padLeft(2, '0')}'
+        '${utc.day.toString().padLeft(2, '0')}'
+        'T'
+        '${utc.hour.toString().padLeft(2, '0')}'
+        '${utc.minute.toString().padLeft(2, '0')}'
+        '${utc.second.toString().padLeft(2, '0')}'
+        'Z';
+  }
+
+  String _icsEscape(String text) => text
+      .replaceAll('\\', '\\\\')
+      .replaceAll('\n', '\\n')
+      .replaceAll(',', '\\,')
+      .replaceAll(';', '\\;');
+
+  String _calendarDescriptionForTask(TodoItem item) {
+    final l10n = AppLocalizations.of(context)!;
+    final description = (item.descripcion ?? '').trim();
+    final prioridad = switch (item.prioridad.toUpperCase()) {
+      'A' => l10n.todoPriorityHigh,
+      'B' => l10n.todoPriorityLow,
+      _ => l10n.todoPriorityMedium,
+    };
+    final estado =
+        item.isResuelta ? l10n.todoStatusResolved : l10n.todoStatusPending;
+
+    final lines = <String>[
+      if (description.isNotEmpty) description,
+      l10n.todoCalendarPriority(prioridad),
+      l10n.todoCalendarStatus(estado),
+    ];
+
+    return lines.join('\n');
+  }
+
+  Future<void> _exportarTareaIcs(TodoItem item) async {
+    final fecha = item.fechaTarea;
+    if (fecha == null) {
+      return;
+    }
+
+    final inicio = DateTime(fecha.year, fecha.month, fecha.day, 9);
+    final fin = inicio.add(const Duration(hours: 1));
+    final uid = 'tarea-${item.codigo}@nutrifit';
+    final stamp = _icsDateTime(DateTime.now());
+    final descripcion = _calendarDescriptionForTask(item);
+
+    final ics = StringBuffer()
+      ..writeln('BEGIN:VCALENDAR')
+      ..writeln('VERSION:2.0')
+      ..writeln('PRODID:-//NutriFit//NutriFit App//ES')
+      ..writeln('CALSCALE:GREGORIAN')
+      ..writeln('METHOD:PUBLISH')
+      ..writeln('BEGIN:VEVENT')
+      ..writeln('UID:$uid')
+      ..writeln('DTSTAMP:$stamp')
+      ..writeln('DTSTART:${_icsDateTime(inicio)}')
+      ..writeln('DTEND:${_icsDateTime(fin)}')
+      ..writeln('SUMMARY:${_icsEscape(item.titulo)}')
+      ..writeln('DESCRIPTION:${_icsEscape(descripcion)}')
+      ..writeln('END:VEVENT')
+      ..writeln('END:VCALENDAR');
+
+    try {
+      final dir = await getTemporaryDirectory();
+      final fileName =
+          'tarea_${item.codigo}_${DateFormat('yyyyMMdd').format(fecha)}.ics';
+      final file = File('${dir.path}${Platform.pathSeparator}$fileName');
+      await file.writeAsString(ics.toString(), encoding: utf8);
+      final result = await OpenFilex.open(file.path, type: 'text/calendar');
+      if (result.type != ResultType.done && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'No se pudo abrir el fichero .ics (${result.message}). Guardado en: ${file.path}',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      final l10n = AppLocalizations.of(context)!;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.todoExportError(e.toString())),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _addTaskToDeviceCalendar(TodoItem item) async {
+    final l10n = AppLocalizations.of(context)!;
+    final fecha = item.fechaTarea;
+    if (fecha == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.todoDateRequiredForCalendar),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    if (_isDesktop) {
+      await _exportarTareaIcs(item);
+      return;
+    }
+
+    final inicio = DateTime(fecha.year, fecha.month, fecha.day, 9);
+    final fin = inicio.add(const Duration(hours: 1));
+    final event = Event(
+      title: item.titulo,
+      description: _calendarDescriptionForTask(item),
+      startDate: inicio,
+      endDate: fin,
+      allDay: false,
+    );
+
+    try {
+      await Add2Calendar.addEvent2Cal(event);
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.todoAddToCalendarError(e.toString())),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -77,18 +251,24 @@ class _TodoListScreenState extends State<TodoListScreen>
       _loadItems();
     });
     _loadUiStateAndData();
+    _loadMenuPremiumConfig();
   }
 
   @override
   void dispose() {
+    _searchController.dispose();
     _tabController.dispose();
     super.dispose();
   }
 
   Future<void> _loadUiStateAndData() async {
+    final authService = context.read<AuthService>();
     final prefs = await SharedPreferences.getInstance();
     final defaultView = prefs.getString(_viewPrefsKey) ?? 'list';
-    final authService = context.read<AuthService>();
+    final searchVisible = prefs.getBool(_todoSearchVisibleKey) ?? false;
+    final filterVisible = prefs.getBool(_todoFilterVisibleKey) ?? false;
+    final sortMode = prefs.getString(_todoSortModeKey) ?? 'fecha';
+    final sortAscending = prefs.getBool(_todoSortAscendingKey) ?? false;
     final isGuest = authService.isGuestMode;
     final scope = UserSettingsService.buildScopeKey(
       isGuestMode: authService.isGuestMode,
@@ -106,6 +286,10 @@ class _TodoListScreenState extends State<TodoListScreen>
     setState(() {
       _settingsScope = scope;
       _isCalendarView = defaultView == 'calendar';
+      _isSearchVisible = searchVisible;
+      _isFilterVisible = filterVisible;
+      _sortMode = sortMode;
+      _sortAscending = sortAscending;
       _calendarFormat = _modeToCalendarFormat(selectedCalendarMode);
       if (isGuest) {
         _isLoading = false;
@@ -117,6 +301,253 @@ class _TodoListScreenState extends State<TodoListScreen>
     }
 
     await _loadItems();
+  }
+
+  bool get _canAccessFullTasks {
+    final authService = context.read<AuthService>();
+    if (!_isMenuPremiumEnabled) {
+      return true;
+    }
+    return authService.isPremium ||
+        MenuVisibilityPremiumService.isPrivilegedUserType(
+          authService.userType,
+        );
+  }
+
+  bool get _isPreviewMode => !_canAccessFullTasks;
+
+  int get _effectiveNonPremiumTaskLimit {
+    return _nonPremiumTaskLimit > 0
+        ? _nonPremiumTaskLimit
+        : _defaultNonPremiumTaskLimit;
+  }
+
+  Future<void> _loadMenuPremiumConfig() async {
+    try {
+      final apiService = context.read<ApiService>();
+      final config = await MenuVisibilityPremiumService.loadConfig(
+        apiService: apiService,
+        forceRefresh: true,
+      );
+      final taskLimitRaw = await apiService.getParametroValor(
+        'numero_tareas_no_premium',
+      );
+      final parsedTaskLimit = int.tryParse((taskLimitRaw ?? '').trim());
+      final taskLimit = parsedTaskLimit != null && parsedTaskLimit > 0
+          ? parsedTaskLimit
+          : _defaultNonPremiumTaskLimit;
+      final premiumEnabled = MenuVisibilityPremiumService.isPremium(
+        config,
+        MenuVisibilityPremiumService.tareas,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isMenuPremiumEnabled = premiumEnabled;
+        _nonPremiumTaskLimit = taskLimit;
+      });
+      if (!context.read<AuthService>().isGuestMode) {
+        await _loadItems();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _showTasksPremiumLimitMessage() {
+    final limit = _effectiveNonPremiumTaskLimit;
+    final l10n = AppLocalizations.of(context)!;
+    return PremiumFeatureDialogHelper.show(
+      context,
+      message: l10n.todoPremiumLimitMessage(limit),
+    );
+  }
+
+  String _priorityLabel(String value) {
+    final l10n = AppLocalizations.of(context)!;
+    switch (value.toUpperCase()) {
+      case 'A':
+        return l10n.todoPriorityHigh;
+      case 'B':
+        return l10n.todoPriorityLow;
+      case 'M':
+      default:
+        return l10n.todoPriorityMedium;
+    }
+  }
+
+  Color _priorityColor(BuildContext context, String value) {
+    switch (value.toUpperCase()) {
+      case 'A':
+        return Colors.red.shade600;
+      case 'B':
+        return Colors.green.shade700;
+      case 'M':
+      default:
+        return Theme.of(context).colorScheme.primary;
+    }
+  }
+
+  String _statusLabel(String value) {
+    final l10n = AppLocalizations.of(context)!;
+    return value.toUpperCase() == 'R'
+        ? l10n.todoStatusResolved
+        : l10n.todoStatusPending;
+  }
+
+  Color _statusColor(BuildContext context, String value) {
+    return value.toUpperCase() == 'R'
+        ? Colors.green.shade700
+        : Theme.of(context).colorScheme.secondary;
+  }
+
+  String _nextPriorityValue(String current) {
+    switch (current.toUpperCase()) {
+      case 'B':
+        return 'M';
+      case 'M':
+        return 'A';
+      case 'A':
+      default:
+        return 'B';
+    }
+  }
+
+  String _nextStatusValue(String current) {
+    return current.toUpperCase() == 'R' ? 'P' : 'R';
+  }
+
+  Future<void> _saveToolbarState() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_todoSearchVisibleKey, _isSearchVisible);
+    await prefs.setBool(_todoFilterVisibleKey, _isFilterVisible);
+    await prefs.setString(_todoSortModeKey, _sortMode);
+    await prefs.setBool(_todoSortAscendingKey, _sortAscending);
+  }
+
+  void _toggleSearchVisibility() {
+    setState(() {
+      _isSearchVisible = !_isSearchVisible;
+      if (!_isSearchVisible) {
+        _searchQuery = '';
+        _searchController.clear();
+      }
+    });
+    _saveToolbarState();
+  }
+
+  void _toggleFilterVisibility() {
+    setState(() {
+      _isFilterVisible = !_isFilterVisible;
+    });
+    _saveToolbarState();
+  }
+
+  int get _activeFilterCount =>
+      _selectedStatusFilters.length + _selectedPriorityFilters.length;
+
+  bool _matchesTodoSearch(TodoItem item) {
+    final query = _searchQuery.trim().toLowerCase();
+    if (query.isEmpty) {
+      return true;
+    }
+
+    return item.titulo.toLowerCase().contains(query) ||
+        (item.descripcion ?? '').toLowerCase().contains(query);
+  }
+
+  bool _matchesTodoFilter(TodoItem item) {
+    final statusMatches = _selectedStatusFilters.isEmpty ||
+        _selectedStatusFilters.contains(item.estado.toUpperCase());
+    final priorityMatches = _selectedPriorityFilters.isEmpty ||
+        _selectedPriorityFilters.contains(item.prioridad.toUpperCase());
+    return statusMatches && priorityMatches;
+  }
+
+  int _priorityWeight(String value) {
+    switch (value.toUpperCase()) {
+      case 'A':
+        return 3;
+      case 'M':
+        return 2;
+      case 'B':
+      default:
+        return 1;
+    }
+  }
+
+  List<TodoItem> _applySearchFilterSort(List<TodoItem> source) {
+    final items = source
+        .where(_matchesTodoSearch)
+        .where(_matchesTodoFilter)
+        .toList(growable: false);
+
+    final sorted = List<TodoItem>.from(items);
+    sorted.sort((a, b) {
+      switch (_sortMode) {
+        case 'titulo':
+          final titleCompare =
+              a.titulo.toLowerCase().compareTo(b.titulo.toLowerCase());
+          if (titleCompare != 0) {
+            return _sortAscending ? titleCompare : -titleCompare;
+          }
+          break;
+        case 'prioridad':
+          final priorityCompare = _priorityWeight(a.prioridad)
+              .compareTo(_priorityWeight(b.prioridad));
+          if (priorityCompare != 0) {
+            return _sortAscending ? priorityCompare : -priorityCompare;
+          }
+          break;
+        case 'fecha':
+        default:
+          final dateA = a.fechaTarea ?? a.fecham ?? a.fechaa ?? DateTime(1970);
+          final dateB = b.fechaTarea ?? b.fecham ?? b.fechaa ?? DateTime(1970);
+          final dateCompare = dateA.compareTo(dateB);
+          if (dateCompare != 0) {
+            return _sortAscending ? dateCompare : -dateCompare;
+          }
+          break;
+      }
+
+      return a.codigo.compareTo(b.codigo);
+    });
+
+    return sorted;
+  }
+
+  void _applySortSelection(String mode) {
+    setState(() {
+      if (_sortMode == mode) {
+        _sortAscending = !_sortAscending;
+      } else {
+        _sortMode = mode;
+        _sortAscending = mode == 'titulo';
+      }
+    });
+    _saveToolbarState();
+  }
+
+  Future<void> _handleAppBarMenuAction(String action) async {
+    switch (action) {
+      case 'search':
+        _toggleSearchVisibility();
+        break;
+      case 'filter':
+        _toggleFilterVisibility();
+        break;
+      case 'refresh':
+        await _loadItems();
+        break;
+      case 'sort_title':
+        _applySortSelection('titulo');
+        break;
+      case 'sort_date':
+        _applySortSelection('fecha');
+        break;
+      case 'sort_priority':
+        _applySortSelection('prioridad');
+        break;
+    }
   }
 
   Future<void> _saveViewState() async {
@@ -154,8 +585,9 @@ class _TodoListScreenState extends State<TodoListScreen>
     });
 
     try {
-      final items =
-          await _apiService.getTodoItems(estado: _estadoFiltroActual());
+      final items = await _apiService.getTodoItems(
+        estado: _isPreviewMode ? null : _estadoFiltroActual(),
+      );
 
       if (!mounted) {
         return;
@@ -193,10 +625,270 @@ class _TodoListScreenState extends State<TodoListScreen>
   }
 
   List<TodoItem> _itemsForDay(DateTime day) {
-    return _items
+    return _applySearchFilterSort(_items)
         .where((item) =>
             item.fechaTarea != null && _sameDay(item.fechaTarea!, day))
         .toList();
+  }
+
+  void _toggleStatusFilter(String status) {
+    setState(() {
+      if (_selectedStatusFilters.contains(status)) {
+        _selectedStatusFilters.remove(status);
+      } else {
+        _selectedStatusFilters.add(status);
+      }
+    });
+  }
+
+  void _togglePriorityFilter(String priority) {
+    setState(() {
+      if (_selectedPriorityFilters.contains(priority)) {
+        _selectedPriorityFilters.remove(priority);
+      } else {
+        _selectedPriorityFilters.add(priority);
+      }
+    });
+  }
+
+  void _clearFilters() {
+    setState(() {
+      _selectedStatusFilters.clear();
+      _selectedPriorityFilters.clear();
+    });
+  }
+
+  Widget _buildFilterCountBadge({
+    required int count,
+    double minSize = 18,
+    double fontSize = 10,
+    EdgeInsets padding = const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+  }) {
+    return Container(
+      constraints: BoxConstraints(minWidth: minSize, minHeight: minSize),
+      padding: padding,
+      decoration: const BoxDecoration(
+        color: Colors.blue,
+        shape: BoxShape.circle,
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        '$count',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: fontSize,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMenuLeadingIcon(IconData icon, {int? badgeCount}) {
+    if (badgeCount == null || badgeCount <= 0) {
+      return Icon(icon, size: 18);
+    }
+
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        const SizedBox(width: 18, height: 18),
+        Icon(icon, size: 18),
+        Positioned(
+          right: -2,
+          top: -2,
+          child: _buildFilterCountBadge(
+            count: badgeCount,
+            minSize: 14,
+            fontSize: 8,
+            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+          ),
+        ),
+      ],
+    );
+  }
+
+  PopupMenuItem<String> _buildMenuItem({
+    required String value,
+    required IconData icon,
+    required String label,
+    bool checked = false,
+    bool? ascending,
+    int? badgeCount,
+  }) {
+    Widget trailing = const SizedBox.shrink();
+    if (checked) {
+      trailing = Icon(
+        ascending == true ? Icons.arrow_upward : Icons.arrow_downward,
+        size: 18,
+        color: Theme.of(context).colorScheme.primary,
+      );
+    }
+
+    return PopupMenuItem<String>(
+      value: value,
+      child: Row(
+        children: [
+          _buildMenuLeadingIcon(icon, badgeCount: badgeCount),
+          const SizedBox(width: 10),
+          Expanded(child: Text(label)),
+          trailing,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchPanel() {
+    final l10n = AppLocalizations.of(context)!;
+    if (!_isSearchVisible) {
+      return const SizedBox.shrink();
+    }
+
+    if (_searchController.text != _searchQuery) {
+      _searchController.value = TextEditingValue(
+        text: _searchQuery,
+        selection: TextSelection.collapsed(offset: _searchQuery.length),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      child: Card(
+        margin: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: TextField(
+            controller: _searchController,
+            autofocus: true,
+            decoration: InputDecoration(
+              prefixIcon: IconButton(
+                tooltip: _searchQuery.isEmpty
+                    ? l10n.commonSearch
+                    : l10n.todoClearSearch,
+                icon: Icon(
+                  _searchQuery.isEmpty ? Icons.search : Icons.clear,
+                ),
+                onPressed: _searchQuery.isEmpty
+                    ? null
+                    : () {
+                        _searchController.clear();
+                        setState(() {
+                          _searchQuery = '';
+                        });
+                      },
+              ),
+              hintText: l10n.todoSearchHint,
+              border: InputBorder.none,
+              suffixIcon: IconButton(
+                tooltip: l10n.commonHideSearch,
+                onPressed: _toggleSearchVisibility,
+                icon: const Icon(Icons.visibility_off_outlined),
+              ),
+            ),
+            onChanged: (value) {
+              setState(() {
+                _searchQuery = value;
+              });
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFilterPanel() {
+    final l10n = AppLocalizations.of(context)!;
+    if (!_isFilterVisible) {
+      return const SizedBox.shrink();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      child: Card(
+        margin: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    l10n.commonFilter,
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const Spacer(),
+                  if (_activeFilterCount > 0)
+                    TextButton.icon(
+                      onPressed: _clearFilters,
+                      icon: const Icon(Icons.filter_alt_off, size: 18),
+                      label: Text(l10n.commonClear),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                l10n.todoStatusTitle,
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilterChip(
+                    label: Text(l10n.todoStatusPending),
+                    selected: _selectedStatusFilters.contains('P'),
+                    onSelected: (_) => _toggleStatusFilter('P'),
+                  ),
+                  FilterChip(
+                    label: Text(l10n.todoStatusResolved),
+                    selected: _selectedStatusFilters.contains('R'),
+                    onSelected: (_) => _toggleStatusFilter('R'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                l10n.todoPriorityTitle,
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilterChip(
+                    label: Text(l10n.todoPriorityHigh),
+                    selected: _selectedPriorityFilters.contains('A'),
+                    onSelected: (_) => _togglePriorityFilter('A'),
+                  ),
+                  FilterChip(
+                    label: Text(l10n.todoPriorityMedium),
+                    selected: _selectedPriorityFilters.contains('M'),
+                    onSelected: (_) => _togglePriorityFilter('M'),
+                  ),
+                  FilterChip(
+                    label: Text(l10n.todoPriorityLow),
+                    selected: _selectedPriorityFilters.contains('B'),
+                    onSelected: (_) => _togglePriorityFilter('B'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContentWithToolbar(Widget child) {
+    return Column(
+      children: [
+        _buildSearchPanel(),
+        _buildFilterPanel(),
+        Expanded(child: child),
+      ],
+    );
   }
 
   Future<void> _toggleEstado(TodoItem item) async {
@@ -234,21 +926,22 @@ class _TodoListScreenState extends State<TodoListScreen>
   }
 
   Future<void> _deleteItem(TodoItem item) async {
+    final l10n = AppLocalizations.of(context)!;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Eliminar tarea'),
-        content: Text('¿Deseas eliminar la tarea "${item.titulo}"?'),
+        title: Text(l10n.todoDeleteTitle),
+        content: Text(l10n.todoDeleteConfirm(item.titulo)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
+            child: Text(l10n.commonCancel),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text(
-              'Eliminar',
-              style: TextStyle(color: Colors.red),
+            child: Text(
+              l10n.commonDelete,
+              style: const TextStyle(color: Colors.red),
             ),
           ),
         ],
@@ -265,8 +958,8 @@ class _TodoListScreenState extends State<TodoListScreen>
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Tarea eliminada correctamente'),
+        SnackBar(
+          content: Text(l10n.todoDeletedSuccess),
           backgroundColor: Colors.green,
         ),
       );
@@ -286,9 +979,66 @@ class _TodoListScreenState extends State<TodoListScreen>
     }
   }
 
+  Widget _buildTaskDescription(String description) {
+    final textStyle = TextStyle(
+      fontSize: 12,
+      color: Colors.grey.shade700,
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.maxWidth;
+        if (maxWidth <= 0) {
+          return Text(description, style: textStyle, maxLines: 3);
+        }
+
+        final painter = TextPainter(
+          text: TextSpan(text: description, style: textStyle),
+          textDirection: Directionality.of(context),
+          maxLines: 3,
+        )..layout(maxWidth: maxWidth);
+
+        if (!painter.didExceedMaxLines) {
+          return Text(
+            description,
+            maxLines: 3,
+            style: textStyle,
+          );
+        }
+
+        var low = 0;
+        var high = description.length;
+        var best = '...';
+
+        while (low <= high) {
+          final mid = (low + high) ~/ 2;
+          final candidate = '${description.substring(0, mid).trimRight()}...';
+          painter
+            ..text = TextSpan(text: candidate, style: textStyle)
+            ..layout(maxWidth: maxWidth);
+
+          if (painter.didExceedMaxLines) {
+            high = mid - 1;
+          } else {
+            best = candidate;
+            low = mid + 1;
+          }
+        }
+
+        return Text(
+          best,
+          maxLines: 3,
+          overflow: TextOverflow.clip,
+          style: textStyle,
+        );
+      },
+    );
+  }
+
   Widget _buildTaskTile(TodoItem item, {bool showStatusTag = true}) {
+    final l10n = AppLocalizations.of(context)!;
     final dateLabel = item.fechaTarea == null
-        ? 'Sin fecha'
+        ? l10n.todoNoDate
         : DateFormat('dd/MM/yyyy').format(item.fechaTarea!);
     final statusColor = item.isResuelta ? Colors.green : Colors.orange;
     final statusLabel = item.isResuelta ? 'R' : 'P';
@@ -307,10 +1057,10 @@ class _TodoListScreenState extends State<TodoListScreen>
             ? Colors.green
             : Colors.orange;
     final priorityTooltip = prioridadAlta
-        ? 'Prioridad Alta'
+        ? l10n.todoPriorityHighTooltip
         : prioridadBaja
-            ? 'Prioridad Baja'
-            : 'Prioridad Media';
+            ? l10n.todoPriorityLowTooltip
+            : l10n.todoPriorityMediumTooltip;
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -329,13 +1079,7 @@ class _TodoListScreenState extends State<TodoListScreen>
             ),
             if (description.isNotEmpty) ...[
               const SizedBox(height: 4),
-              Text(
-                description,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey.shade700,
-                ),
-              ),
+              _buildTaskDescription(description),
             ],
             const SizedBox(height: 8),
             Wrap(
@@ -373,8 +1117,9 @@ class _TodoListScreenState extends State<TodoListScreen>
                 ),
                 if (showStatusTag)
                   Tooltip(
-                    message:
-                        item.isResuelta ? 'Realizada (R)' : 'Pendiente (P)',
+                    message: item.isResuelta
+                        ? l10n.todoStatusResolvedShort
+                        : l10n.todoStatusPendingShort,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 4),
@@ -422,8 +1167,8 @@ class _TodoListScreenState extends State<TodoListScreen>
                   child: IconButton(
                     onPressed: () => _toggleEstado(item),
                     tooltip: item.isResuelta
-                        ? 'Marcar pendiente'
-                        : 'Marcar resuelta',
+                        ? l10n.todoMarkPending
+                        : l10n.todoMarkResolved,
                     iconSize: 18,
                     visualDensity: VisualDensity.compact,
                     padding: EdgeInsets.zero,
@@ -441,12 +1186,35 @@ class _TodoListScreenState extends State<TodoListScreen>
                 ),
                 Container(
                   decoration: BoxDecoration(
+                    border: Border.all(color: Colors.teal.shade200),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: IconButton(
+                    onPressed: item.fechaTarea == null
+                        ? null
+                        : () => _addTaskToDeviceCalendar(item),
+                    tooltip: l10n.todoAddToDeviceCalendar,
+                    iconSize: 18,
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 34,
+                      height: 34,
+                    ),
+                    icon: const Icon(
+                      Icons.event_available_outlined,
+                      color: Colors.teal,
+                    ),
+                  ),
+                ),
+                Container(
+                  decoration: BoxDecoration(
                     border: Border.all(color: Colors.blue.shade200),
                     borderRadius: BorderRadius.circular(18),
                   ),
                   child: IconButton(
                     onPressed: () => _showTodoDialog(item: item),
-                    tooltip: 'Editar',
+                    tooltip: l10n.todoEditAction,
                     iconSize: 18,
                     visualDensity: VisualDensity.compact,
                     padding: EdgeInsets.zero,
@@ -464,7 +1232,7 @@ class _TodoListScreenState extends State<TodoListScreen>
                   ),
                   child: IconButton(
                     onPressed: () => _deleteItem(item),
-                    tooltip: 'Eliminar',
+                    tooltip: l10n.commonDelete,
                     iconSize: 18,
                     visualDensity: VisualDensity.compact,
                     padding: EdgeInsets.zero,
@@ -487,6 +1255,17 @@ class _TodoListScreenState extends State<TodoListScreen>
       {TodoItem? item, DateTime? preselectedDay}) async {
     final isEditing = item != null;
 
+    if (!isEditing && _isPreviewMode) {
+      final allItems = await _apiService.getTodoItems();
+      if (allItems.length >= _effectiveNonPremiumTaskLimit) {
+        if (!mounted) {
+          return;
+        }
+        await _showTasksPremiumLimitMessage();
+        return;
+      }
+    }
+
     final titleController = TextEditingController(text: item?.titulo ?? '');
     final descriptionController =
         TextEditingController(text: item?.descripcion ?? '');
@@ -498,18 +1277,270 @@ class _TodoListScreenState extends State<TodoListScreen>
         (!isEditing ? DateTime(today.year, today.month, today.day) : null);
 
     final formKey = GlobalKey<FormState>();
+    final prefs = await SharedPreferences.getInstance();
+    var priorityExpanded =
+        prefs.getBool(_todoDialogPriorityExpandedKey) ?? true;
+    var statusExpanded = prefs.getBool(_todoDialogStatusExpandedKey) ?? true;
+    var descriptionExpanded =
+        prefs.getBool(_todoDialogDescriptionExpandedKey) ?? true;
+
+    if (!mounted) {
+      return;
+    }
 
     final save = await showDialog<bool>(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            Future<void> setExpandedState(String key, bool value) async {
+              await prefs.setBool(key, value);
+            }
+
             final fechaTexto = fechaTarea == null
-                ? 'Sin fecha'
+                ? l10n.todoNoDate
                 : DateFormat('dd/MM/yyyy').format(fechaTarea!);
+            final prioridadTexto = _priorityLabel(prioridad);
+            final prioridadChipColor = _priorityColor(context, prioridad);
+            final estadoTexto = _statusLabel(estado);
+            final estadoChipColor = _statusColor(context, estado);
+
+            Widget buildSummaryChip(
+              String text,
+              Color color, {
+              VoidCallback? onTap,
+            }) {
+              final chip = Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: color.withValues(alpha: 0.35)),
+                ),
+                child: Text(
+                  text,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: color,
+                  ),
+                ),
+              );
+
+              if (onTap == null) {
+                return chip;
+              }
+
+              return Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(999),
+                  onTap: onTap,
+                  child: chip,
+                ),
+              );
+            }
+
+            Widget buildExpandableCard({
+              required String title,
+              required bool expanded,
+              required VoidCallback onToggle,
+              required Widget child,
+              Widget? summary,
+              Widget? titleSuffix,
+              List<Widget> headerActions = const [],
+            }) {
+              return Card(
+                margin: EdgeInsets.zero,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: InkWell(
+                              borderRadius:
+                                  const BorderRadius.all(Radius.circular(8)),
+                              onTap: onToggle,
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 6),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        title,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    if (titleSuffix != null) ...[
+                                      const SizedBox(width: 6),
+                                      titleSuffix,
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          ...headerActions,
+                          if (summary != null) ...[
+                            const SizedBox(width: 8),
+                            summary,
+                          ],
+                          IconButton(
+                            onPressed: onToggle,
+                            tooltip: expanded ? 'Plegar' : 'Desplegar',
+                            visualDensity: VisualDensity.compact,
+                            icon: Icon(
+                              expanded ? Icons.expand_less : Icons.expand_more,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (expanded)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                        child: child,
+                      ),
+                  ],
+                ),
+              );
+            }
+
+            final descriptionLength = descriptionController.text.trim().length;
+            final descriptionIndicatorColor = descriptionLength > 0
+                ? Colors.green.shade700
+                : Colors.grey.shade500;
+            final descriptionIndicator = Container(
+              width: 22,
+              height: 22,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: descriptionIndicatorColor.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: descriptionIndicatorColor.withValues(alpha: 0.35),
+                ),
+              ),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Padding(
+                  padding: const EdgeInsets.all(2),
+                  child: Text(
+                    '$descriptionLength',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: descriptionIndicatorColor,
+                    ),
+                  ),
+                ),
+              ),
+            );
+
+            Widget buildDateCard() {
+              return Card(
+                margin: EdgeInsets.zero,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          fechaTexto,
+                          style:
+                              Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    color: fechaTarea == null
+                                        ? null
+                                        : Theme.of(context).colorScheme.primary,
+                                  ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: fechaTarea ?? DateTime.now(),
+                            firstDate: DateTime(2020),
+                            lastDate: DateTime(2100),
+                          );
+                          if (picked == null) {
+                            return;
+                          }
+                          setDialogState(() {
+                            fechaTarea = DateTime(
+                              picked.year,
+                              picked.month,
+                              picked.day,
+                            );
+                          });
+                        },
+                        tooltip: l10n.todoSelectDate,
+                        visualDensity: VisualDensity.compact,
+                        iconSize: 18,
+                        constraints: const BoxConstraints.tightFor(
+                          width: 32,
+                          height: 32,
+                        ),
+                        icon: const Icon(Icons.calendar_month),
+                      ),
+                      IconButton(
+                        onPressed: fechaTarea == null
+                            ? null
+                            : () {
+                                setDialogState(() {
+                                  fechaTarea = null;
+                                });
+                              },
+                        tooltip: l10n.todoRemoveDate,
+                        visualDensity: VisualDensity.compact,
+                        iconSize: 18,
+                        constraints: const BoxConstraints.tightFor(
+                          width: 32,
+                          height: 32,
+                        ),
+                        icon: const Icon(Icons.clear),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
 
             return AlertDialog(
-              title: Text(isEditing ? 'Editar tarea' : 'Nueva tarea'),
+              titlePadding: const EdgeInsets.fromLTRB(20, 18, 10, 0),
+              title: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      isEditing
+                          ? l10n.todoEditTaskTitle
+                          : l10n.todoNewTaskTitle,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  IconButton.filledTonal(
+                    onPressed: () => Navigator.pop(context, false),
+                    tooltip: l10n.commonCancel,
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
               content: SizedBox(
                 width: 420,
                 child: Form(
@@ -520,141 +1551,152 @@ class _TodoListScreenState extends State<TodoListScreen>
                       children: [
                         TextFormField(
                           controller: titleController,
-                          decoration: const InputDecoration(
-                            labelText: 'Título',
-                            border: OutlineInputBorder(),
+                          decoration: InputDecoration(
+                            labelText: l10n.todoTitleLabel,
+                            border: const OutlineInputBorder(),
                           ),
                           validator: (value) {
                             if ((value ?? '').trim().isEmpty) {
-                              return 'El título es obligatorio';
+                              return l10n.todoTitleRequired;
                             }
                             return null;
                           },
                         ),
                         const SizedBox(height: 12),
-                        TextFormField(
-                          controller: descriptionController,
-                          maxLines: 3,
-                          decoration: const InputDecoration(
-                            labelText: 'Descripción (opcional)',
-                            border: OutlineInputBorder(),
+                        buildExpandableCard(
+                          title: l10n.todoDescriptionTitle,
+                          titleSuffix: descriptionIndicator,
+                          expanded: descriptionExpanded,
+                          onToggle: () {
+                            setDialogState(() {
+                              descriptionExpanded = !descriptionExpanded;
+                            });
+                            setExpandedState(
+                              _todoDialogDescriptionExpandedKey,
+                              descriptionExpanded,
+                            );
+                          },
+                          child: TextFormField(
+                            controller: descriptionController,
+                            maxLines: 4,
+                            onChanged: (_) => setDialogState(() {}),
+                            decoration: InputDecoration(
+                              labelText: l10n.todoDescriptionOptionalLabel,
+                              border: const OutlineInputBorder(),
+                            ),
                           ),
                         ),
                         const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Expanded(
-                              flex: 4,
-                              child: DropdownButtonFormField<String>(
-                                initialValue: prioridad,
-                                isExpanded: true,
-                                decoration: const InputDecoration(
-                                  labelText: 'Prioridad',
-                                  border: OutlineInputBorder(),
-                                ),
-                                items: const [
-                                  DropdownMenuItem(
-                                      value: 'A', child: Text('Alta')),
-                                  DropdownMenuItem(
-                                      value: 'M', child: Text('Media')),
-                                  DropdownMenuItem(
-                                      value: 'B', child: Text('Baja')),
-                                ],
-                                onChanged: (value) {
+                        buildExpandableCard(
+                          title: l10n.todoPriorityTitle,
+                          expanded: priorityExpanded,
+                          onToggle: () {
+                            setDialogState(() {
+                              priorityExpanded = !priorityExpanded;
+                            });
+                            setExpandedState(
+                              _todoDialogPriorityExpandedKey,
+                              priorityExpanded,
+                            );
+                          },
+                          summary: buildSummaryChip(
+                            prioridadTexto,
+                            prioridadChipColor,
+                            onTap: () {
+                              setDialogState(() {
+                                prioridad = _nextPriorityValue(prioridad);
+                              });
+                            },
+                          ),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              ChoiceChip(
+                                label: Text(l10n.todoPriorityHigh),
+                                selected: prioridad == 'A',
+                                onSelected: (_) {
                                   setDialogState(() {
-                                    prioridad = value ?? 'M';
+                                    prioridad = 'A';
                                   });
                                 },
                               ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              flex: 6,
-                              child: DropdownButtonFormField<String>(
-                                initialValue: estado,
-                                isExpanded: true,
-                                decoration: const InputDecoration(
-                                  labelText: 'Estado',
-                                  border: OutlineInputBorder(),
-                                ),
-                                items: const [
-                                  DropdownMenuItem(
-                                      value: 'P', child: Text('Pendiente')),
-                                  DropdownMenuItem(
-                                      value: 'R', child: Text('Resuelta')),
-                                ],
-                                onChanged: (value) {
+                              ChoiceChip(
+                                label: Text(l10n.todoPriorityMedium),
+                                selected: prioridad == 'M',
+                                onSelected: (_) {
                                   setDialogState(() {
-                                    estado = value ?? 'P';
+                                    prioridad = 'M';
                                   });
                                 },
                               ),
-                            ),
-                          ],
+                              ChoiceChip(
+                                label: Text(l10n.todoPriorityLow),
+                                selected: prioridad == 'B',
+                                onSelected: (_) {
+                                  setDialogState(() {
+                                    prioridad = 'B';
+                                  });
+                                },
+                              ),
+                            ],
+                          ),
                         ),
                         const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            OutlinedButton(
-                              onPressed: () async {
-                                final picked = await showDatePicker(
-                                  context: context,
-                                  initialDate: fechaTarea ?? DateTime.now(),
-                                  firstDate: DateTime(2020),
-                                  lastDate: DateTime(2100),
-                                );
-                                if (picked == null) {
-                                  return;
-                                }
-                                setDialogState(() {
-                                  fechaTarea = DateTime(
-                                    picked.year,
-                                    picked.month,
-                                    picked.day,
-                                  );
-                                });
-                              },
-                              style: OutlinedButton.styleFrom(
-                                minimumSize: const Size(40, 40),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 8,
-                                ),
+                        buildExpandableCard(
+                          title: l10n.todoStatusTitle,
+                          expanded: statusExpanded,
+                          onToggle: () {
+                            setDialogState(() {
+                              statusExpanded = !statusExpanded;
+                            });
+                            setExpandedState(
+                              _todoDialogStatusExpandedKey,
+                              statusExpanded,
+                            );
+                          },
+                          summary: buildSummaryChip(
+                            estadoTexto,
+                            estadoChipColor,
+                            onTap: () {
+                              setDialogState(() {
+                                estado = _nextStatusValue(estado);
+                              });
+                            },
+                          ),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              ChoiceChip(
+                                label: Text(l10n.todoStatusPending),
+                                selected: estado == 'P',
+                                onSelected: (_) {
+                                  setDialogState(() {
+                                    estado = 'P';
+                                  });
+                                },
                               ),
-                              child: const Icon(Icons.calendar_month),
-                            ),
-                            const SizedBox(width: 8),
-                            OutlinedButton(
-                              onPressed: fechaTarea == null
-                                  ? null
-                                  : () {
-                                      setDialogState(() {
-                                        fechaTarea = null;
-                                      });
-                                    },
-                              style: OutlinedButton.styleFrom(
-                                minimumSize: const Size(40, 40),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 8,
-                                ),
+                              ChoiceChip(
+                                label: Text(l10n.todoStatusResolved),
+                                selected: estado == 'R',
+                                onSelected: (_) {
+                                  setDialogState(() {
+                                    estado = 'R';
+                                  });
+                                },
                               ),
-                              child: const Icon(Icons.clear),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(child: Text(fechaTexto)),
-                          ],
+                            ],
+                          ),
                         ),
+                        const SizedBox(height: 12),
+                        buildDateCard(),
                       ],
                     ),
                   ),
                 ),
               ),
               actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Cancelar'),
-                ),
                 ElevatedButton.icon(
                   onPressed: () {
                     if (!(formKey.currentState?.validate() ?? false)) {
@@ -663,7 +1705,7 @@ class _TodoListScreenState extends State<TodoListScreen>
                     Navigator.pop(context, true);
                   },
                   icon: const Icon(Icons.save),
-                  label: const Text('Guardar'),
+                  label: Text(l10n.commonSave),
                 ),
               ],
             );
@@ -748,20 +1790,23 @@ class _TodoListScreenState extends State<TodoListScreen>
                     color: Theme.of(context).colorScheme.primary,
                   ),
                   const SizedBox(height: 12),
-                  const Text(
-                    'Registro requerido',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  Text(
+                    l10n.todoGuestTitle,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 8),
-                  const Text(
-                    'Para poder usar Tareas, debes registrarte (es gratis).',
+                  Text(
+                    l10n.todoGuestBody,
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 16),
                   ElevatedButton.icon(
                     onPressed: () => Navigator.pushNamed(context, '/register'),
                     icon: const Icon(Icons.app_registration),
-                    label: const Text('Iniciar registro'),
+                    label: Text(l10n.navStartRegistration),
                   ),
                 ],
               ),
@@ -864,15 +1909,15 @@ class _TodoListScreenState extends State<TodoListScreen>
               TextButton.icon(
                 onPressed: () => _showTodoDialog(preselectedDay: _selectedDay),
                 icon: const Icon(Icons.add),
-                label: const Text('Nueva'),
+                label: Text(l10n.todoNewShort),
               ),
             ],
           ),
         ),
         Expanded(
           child: selectedItems.isEmpty
-              ? const Center(
-                  child: Text('No hay tareas para el día seleccionado.'),
+              ? Center(
+                  child: Text(l10n.todoNoTasksSelectedDay),
                 )
               : ListView.builder(
                   itemCount: selectedItems.length,
@@ -887,20 +1932,71 @@ class _TodoListScreenState extends State<TodoListScreen>
   }
 
   Widget _buildListContent() {
+    final visibleItems = _applySearchFilterSort(_items);
+
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (_items.isEmpty) {
-      return const Center(child: Text('No hay tareas para mostrar.'));
+    if (visibleItems.isEmpty) {
+      return Center(child: Text(l10n.todoNoTasksToShow));
     }
 
     final showStatusTag = _tabController.index == 2;
 
     return ListView.builder(
-      itemCount: _items.length,
+      itemCount: visibleItems.length,
       itemBuilder: (context, index) =>
-          _buildTaskTile(_items[index], showStatusTag: showStatusTag),
+          _buildTaskTile(visibleItems[index], showStatusTag: showStatusTag),
+    );
+  }
+
+  List<TodoItem> _buildPreviewItems() {
+    final preview = _applySearchFilterSort(_items);
+    return preview.take(_effectiveNonPremiumTaskLimit).toList(growable: false);
+  }
+
+  Widget _buildPreviewContent() {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final previewItems = _buildPreviewItems();
+
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 88),
+      itemCount: previewItems.length + 1,
+      itemBuilder: (context, index) {
+        if (index == previewItems.length) {
+          final limit = _effectiveNonPremiumTaskLimit;
+          return Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: PremiumUpsellCard(
+              title: l10n.todoPremiumTitle,
+              subtitle: l10n.todoPremiumPreviewSubtitle(limit),
+              subtitleHighlight: _items.length > limit
+                  ? l10n.todoPremiumPreviewHighlight(_items.length)
+                  : null,
+              subtitleHighlightColor: Colors.pink.shade700,
+              onPressed: () => Navigator.pushNamed(context, '/premium_info'),
+            ),
+          );
+        }
+
+        if (previewItems.isEmpty) {
+          return Padding(
+            padding: const EdgeInsets.only(top: 32),
+            child: Center(
+              child: Text(
+                'Todavía no tienes tareas registradas.',
+                style: TextStyle(color: Colors.grey.shade600),
+              ),
+            ),
+          );
+        }
+
+        return _buildTaskTile(previewItems[index]);
+      },
     );
   }
 
@@ -908,24 +2004,64 @@ class _TodoListScreenState extends State<TodoListScreen>
   Widget build(BuildContext context) {
     final authService = context.watch<AuthService>();
     final isGuest = authService.isGuestMode;
+    final isPreviewMode = _isPreviewMode;
+
+    final body = isGuest
+        ? _buildGuestContent()
+        : isPreviewMode
+            ? _buildPreviewContent()
+            : _isCalendarView
+                ? _buildCalendarView()
+                : _buildListContent();
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Tareas'),
-        bottom: isGuest
+        title: Text(l10n.todoScreenTitle),
+        bottom: isGuest || isPreviewMode
             ? null
             : TabBar(
                 controller: _tabController,
-                tabs: const [
-                  Tab(text: 'Pendientes'),
-                  Tab(text: 'Resueltas'),
-                  Tab(text: 'Todas'),
+                tabs: [
+                  Tab(text: l10n.todoTabPending),
+                  Tab(text: l10n.todoTabResolved),
+                  Tab(text: l10n.todoTabAll),
                 ],
               ),
         actions: [
           if (!isGuest)
             IconButton(
-              tooltip: _isCalendarView ? 'Ver lista' : 'Ver calendario',
+              tooltip:
+                  _isSearchVisible ? l10n.commonHideSearch : l10n.commonSearch,
+              onPressed: _toggleSearchVisibility,
+              icon: Icon(
+                _isSearchVisible ? Icons.search_off : Icons.search,
+              ),
+            ),
+          if (!isGuest)
+            Stack(
+              alignment: Alignment.center,
+              children: [
+                IconButton(
+                  tooltip: _isFilterVisible
+                      ? l10n.todoHideFilters
+                      : l10n.commonFilter,
+                  onPressed: _toggleFilterVisibility,
+                  icon: const Icon(Icons.filter_alt),
+                ),
+                if (_activeFilterCount > 0)
+                  Positioned(
+                    right: 6,
+                    top: 6,
+                    child: _buildFilterCountBadge(
+                      count: _activeFilterCount,
+                    ),
+                  ),
+              ],
+            ),
+          if (!isGuest && !isPreviewMode)
+            IconButton(
+              tooltip:
+                  _isCalendarView ? l10n.todoViewList : l10n.todoViewCalendar,
               onPressed: () async {
                 setState(() {
                   _isCalendarView = !_isCalendarView;
@@ -938,13 +2074,54 @@ class _TodoListScreenState extends State<TodoListScreen>
                     : Icons.calendar_month,
               ),
             ),
+          if (!isGuest)
+            PopupMenuButton<String>(
+              tooltip: l10n.commonMoreOptions,
+              onSelected: (value) => _handleAppBarMenuAction(value),
+              itemBuilder: (context) => [
+                _buildMenuItem(
+                  value: 'search',
+                  icon: _isSearchVisible ? Icons.search_off : Icons.search,
+                  label: l10n.commonSearch,
+                ),
+                _buildMenuItem(
+                  value: 'filter',
+                  icon: Icons.filter_alt,
+                  label: l10n.commonFilter,
+                  badgeCount: _activeFilterCount,
+                ),
+                _buildMenuItem(
+                  value: 'refresh',
+                  icon: Icons.refresh,
+                  label: l10n.commonRefresh,
+                ),
+                const PopupMenuDivider(),
+                _buildMenuItem(
+                  value: 'sort_title',
+                  icon: Icons.sort_by_alpha,
+                  label: l10n.commonSortByTitle,
+                  checked: _sortMode == 'titulo',
+                  ascending: _sortAscending,
+                ),
+                _buildMenuItem(
+                  value: 'sort_date',
+                  icon: Icons.event,
+                  label: l10n.todoSortByDate,
+                  checked: _sortMode == 'fecha',
+                  ascending: _sortAscending,
+                ),
+                _buildMenuItem(
+                  value: 'sort_priority',
+                  icon: Icons.flag_outlined,
+                  label: l10n.todoSortByPriority,
+                  checked: _sortMode == 'prioridad',
+                  ascending: _sortAscending,
+                ),
+              ],
+            ),
         ],
       ),
-      body: isGuest
-          ? _buildGuestContent()
-          : _isCalendarView
-              ? _buildCalendarView()
-              : _buildListContent(),
+      body: isGuest ? body : _buildContentWithToolbar(body),
       floatingActionButton: isGuest
           ? null
           : FloatingActionButton(

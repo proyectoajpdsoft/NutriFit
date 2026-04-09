@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -12,9 +13,11 @@ import 'package:open_filex/open_filex.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import '../services/consejo_receta_pdf_service.dart';
+import '../services/menu_visibility_premium_service.dart';
 import '../models/consejo.dart';
 import '../models/consejo_documento.dart';
 import '../widgets/image_viewer_dialog.dart';
+import '../widgets/premium_upsell_card.dart';
 import '../widgets/restricted_access_dialog_helper.dart';
 
 bool _canUseConsejosCopyPdf(AuthService authService) {
@@ -24,12 +27,12 @@ bool _canUseConsejosCopyPdf(AuthService authService) {
 }
 
 Future<void> _showPremiumRequiredForConsejosCopyPdf(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
   return RestrictedAccessDialogHelper.show(
     context,
-    title: 'Función Premium',
-    message:
-        'Para poder Copiar y pasar a PDF las Recetas y Consejos, debes ser usuario Premium.',
-    primaryActionLabel: 'Hazte Premium',
+    title: l10n.commonPremiumFeatureTitle,
+    message: l10n.commonRecipesAndTipsPremiumCopyPdfMessage,
+    primaryActionLabel: l10n.navPremium,
     primaryActionIcon: Icons.workspace_premium,
     primaryRouteName: '/premium_info',
   );
@@ -58,7 +61,9 @@ class ConsejosPacienteScreen extends StatefulWidget {
 
 class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
     with SingleTickerProviderStateMixin {
-  static const int _pageSize = 10;
+  static const int _defaultPageSize = 6;
+
+  AppLocalizations get l10n => AppLocalizations.of(context)!;
 
   List<Consejo> _consejos = [];
   List<Consejo> _consejosPortada = [];
@@ -84,24 +89,33 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
   String _searchQuery = '';
   String _sortMode = 'fecha';
   bool _sortAscending = false;
-  int _totalPersonalizados = 0;
-  int _totalPortada = 0;
-  int _totalConsejos = 0;
-  int _totalFavoritos = 0;
+  int _currentTabFilteredTotal = 0;
+  int _countRequestId = 0;
   bool _categoriasLoading = false;
   List<Map<String, dynamic>> _categoriasCatalogo = [];
   List<int> _selectedCategoriaIds = [];
   bool _categoriaMatchAll = false;
+  bool _isMenuPremiumEnabled = false;
+  List<int>? _nonPremiumPreviewCodes;
+  int _pageSize = _defaultPageSize;
   final Map<String, MemoryImage> _coverImageProviderCache = {};
 
   String _buildCoverCacheKey(Consejo consejo) {
-    final raw = (consejo.imagenPortada ?? '').trim();
+    final raw = _resolveListCoverBase64(consejo);
     if (raw.isEmpty) return '';
     return '${consejo.codigo ?? 'noid'}:${raw.hashCode}:${raw.length}';
   }
 
+  String _resolveListCoverBase64(Consejo consejo) {
+    final portada = (consejo.imagenPortada ?? '').trim();
+    if (portada.isNotEmpty) {
+      return portada;
+    }
+    return (consejo.imagenMiniatura ?? '').trim();
+  }
+
   ImageProvider? _getCachedCoverProvider(Consejo consejo) {
-    final raw = (consejo.imagenPortada ?? '').trim();
+    final raw = _resolveListCoverBase64(consejo);
     if (raw.isEmpty) return null;
 
     final key = _buildCoverCacheKey(consejo);
@@ -117,6 +131,289 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
     }
   }
 
+  String? _primaryCategoriaLabel(List<String> categorias) {
+    for (final categoria in categorias) {
+      final normalized = categoria.trim();
+      if (normalized.isNotEmpty) {
+        return normalized;
+      }
+    }
+    return null;
+  }
+
+  List<MapEntry<int, String>> _visibleCategoryTags(
+    List<int> categoriaIds,
+    List<String> categoriaNombres,
+  ) {
+    final tags = <MapEntry<int, String>>[];
+    final total = categoriaIds.length < categoriaNombres.length
+        ? categoriaIds.length
+        : categoriaNombres.length;
+
+    for (var index = 0; index < total; index++) {
+      final id = categoriaIds[index];
+      final label = categoriaNombres[index].trim();
+      if (id <= 0 || label.isEmpty) {
+        continue;
+      }
+      if (tags.any((tag) => tag.key == id)) {
+        continue;
+      }
+      tags.add(MapEntry(id, label));
+      if (tags.length == 2) {
+        break;
+      }
+    }
+
+    return tags;
+  }
+
+  Widget _buildCategoryBadge({
+    required String label,
+    required IconData icon,
+    required VoidCallback onTap,
+  }) {
+    final isLongTag = label.trim().length > 13;
+    final backgroundOpacity = isLongTag ? 0.46 : 0.72;
+    final borderOpacity = isLongTag ? 0.56 : 0.9;
+    final foregroundOpacity = isLongTag ? 0.82 : 1.0;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(backgroundOpacity),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: Colors.white.withOpacity(borderOpacity)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 14,
+                color: Colors.teal.shade700.withOpacity(foregroundOpacity),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: Colors.teal.shade900.withOpacity(foregroundOpacity),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _applyCategoryFilterFromCard(int categoryId) {
+    if (_selectedCategoriaIds.length == 1 &&
+        _selectedCategoriaIds.first == categoryId) {
+      return;
+    }
+
+    setState(() {
+      _selectedCategoriaIds = [categoryId];
+    });
+    _savePreferences();
+    _refreshCurrentTabFilteredTotal();
+  }
+
+  Widget _buildConsejoCardHeader(
+    Consejo consejo,
+    ImageProvider? coverProvider, {
+    required bool showUnreadBadge,
+    required String unreadBadgeText,
+  }) {
+    final categoryTags = _visibleCategoryTags(
+      consejo.categoriaIds,
+      consejo.categoriaNombres,
+    );
+
+    return SizedBox(
+      height: 170,
+      width: double.infinity,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.teal.shade50,
+                    Colors.cyan.shade50,
+                    Colors.blueGrey.shade50,
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: -26,
+            right: -18,
+            child: Container(
+              width: 96,
+              height: 96,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withOpacity(0.3),
+              ),
+            ),
+          ),
+          Positioned(
+            left: -24,
+            bottom: -34,
+            child: Container(
+              width: 112,
+              height: 112,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.teal.shade100.withOpacity(0.35),
+              ),
+            ),
+          ),
+          Center(
+            child: Container(
+              width: 132,
+              height: 112,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.9),
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: Colors.white.withOpacity(0.95)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.teal.shade100.withOpacity(0.45),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: coverProvider != null
+                  ? RepaintBoundary(
+                      child: Image(
+                        image: coverProvider,
+                        fit: BoxFit.contain,
+                        gaplessPlayback: true,
+                      ),
+                    )
+                  : Icon(
+                      Icons.article_outlined,
+                      size: 44,
+                      color: Colors.teal.shade300,
+                    ),
+            ),
+          ),
+          if (categoryTags.isNotEmpty)
+            Positioned(
+              left: 14,
+              bottom: 12,
+              child: _buildCategoryBadge(
+                label: categoryTags.first.value,
+                icon: Icons.local_offer_outlined,
+                onTap: () =>
+                    _applyCategoryFilterFromCard(categoryTags.first.key),
+              ),
+            ),
+          if (categoryTags.length > 1)
+            Positioned(
+              right: 14,
+              bottom: 12,
+              child: _buildCategoryBadge(
+                label: categoryTags[1].value,
+                icon: Icons.sell_outlined,
+                onTap: () => _applyCategoryFilterFromCard(categoryTags[1].key),
+              ),
+            ),
+          if (showUnreadBadge && consejo.leido == 'N')
+            Positioned(
+              top: 12,
+              right: 12,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.red,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.3),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.fiber_new, color: Colors.white, size: 16),
+                    const SizedBox(width: 4),
+                    Text(
+                      unreadBadgeText,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<int> _loadConfiguredPageSize() async {
+    try {
+      final raw = await context.read<ApiService>().getParametroValor(
+            'numero_consejos_cargar_paginacion',
+          );
+      final parsed = int.tryParse((raw ?? '').trim());
+      if (parsed == null || parsed <= 0) {
+        return _defaultPageSize;
+      }
+      return parsed > 50 ? 50 : parsed;
+    } catch (_) {
+      return _defaultPageSize;
+    }
+  }
+
+  void _showGenericLoadError() {
+    if (!mounted) {
+      return;
+    }
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(l10n.privacyDeleteConnectionError),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  List<Consejo> _parseConsejosResponse(String responseBody) {
+    final decoded = json.decode(responseBody);
+    if (decoded is! List) {
+      throw const FormatException('Respuesta inválida');
+    }
+    return decoded
+        .map((item) => Consejo.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -125,33 +422,45 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
     _userCode = authService.userCode;
     _isGuestMode = authService.isGuestMode;
 
-    // Inicializar TabController: 4 tabs si tiene paciente (Personales, Destacados, Todos, Favoritos)
-    // 3 tabs si no (Destacados, Todos, Favoritos)
     final hasPatient = (_patientCode ?? '').isNotEmpty;
     final tabCount = hasPatient ? 4 : 3;
     _tabController = TabController(length: tabCount, vsync: this);
     _tabController.addListener(() {
       if (!_tabController.indexIsChanging && mounted) {
         _loadPreferences();
+        _refreshCurrentTabFilteredTotal();
         setState(() {});
       }
     });
 
-    // Cargar argumentos (para abrir tab específico)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final args =
           ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
       if (args != null) {
         if (args['openPersonalizados'] == true && hasPatient) {
-          _tabController.animateTo(0); // Tab Personales
+          _tabController.animateTo(0);
         } else if (args['openDestacados'] == true) {
-          // Si tiene paciente: Destacados=1, si no: Destacados=0
-          _tabController.animateTo(hasPatient ? 1 : 0); // Tab Destacados
+          _tabController.animateTo(hasPatient ? 1 : 0);
         } else if (args['openTodos'] == true) {
-          // Si tiene paciente: Todos=2, si no: Todos=1
-          _tabController.animateTo(hasPatient ? 2 : 1); // Tab Todos
+          _tabController.animateTo(hasPatient ? 2 : 1);
         }
       }
+    });
+
+    _initializeScreen(hasPatient);
+    _loadCategorias();
+    _loadPreferences();
+    _refreshCurrentTabFilteredTotal();
+    _loadMenuPremiumConfig();
+  }
+
+  Future<void> _initializeScreen(bool hasPatient) async {
+    final configuredPageSize = await _loadConfiguredPageSize();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _pageSize = configuredPageSize;
     });
 
     _loadConsejosPortada(reset: true);
@@ -160,120 +469,277 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       _loadConsejosPersonalizados(reset: true);
     }
     _loadConsejosFavoritos(reset: true);
-    _loadCategorias();
-    _loadPreferences();
-    _loadTotals();
   }
 
-  Future<void> _loadTotals() async {
-    final hasPatient = (_patientCode ?? '').isNotEmpty;
-    final futures = <Future<void>>[
-      _loadPortadaTotal(),
-      _loadConsejosTotal(),
-      _loadFavoritosTotal(),
-    ];
-    if (hasPatient) {
-      futures.insert(0, _loadPersonalizadosTotal());
+  bool get _canAccessFullCatalog {
+    final authService = context.read<AuthService>();
+    if (!_isMenuPremiumEnabled) {
+      return true;
     }
-    await Future.wait<void>(futures);
+    return authService.isPremium ||
+        MenuVisibilityPremiumService.isPrivilegedUserType(
+          authService.userType,
+        );
   }
 
-  Future<void> _loadPersonalizadosTotal() async {
-    try {
-      final patientParam = (_patientCode != null && _patientCode!.isNotEmpty)
-          ? _patientCode!
-          : '0';
-      final apiService = context.read<ApiService>();
-      final url =
-          'api/consejos.php?get_consejos_personalizados=1&paciente=$patientParam&total=1';
-      final response = await apiService.get(url);
-      if (response.statusCode != 200 || !mounted) return;
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final total = int.tryParse((data['total'] ?? '0').toString()) ?? 0;
-      setState(() => _totalPersonalizados = total);
-    } catch (_) {}
-  }
+  bool get _isPreviewMode => !_canAccessFullCatalog;
 
-  Future<void> _loadPortadaTotal() async {
+  Future<void> _loadMenuPremiumConfig() async {
     try {
       final apiService = context.read<ApiService>();
-      final url = 'api/consejos.php?get_consejos_portada=1&total=1';
-      final response = await apiService.get(url);
-      if (response.statusCode != 200 || !mounted) return;
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final total = int.tryParse((data['total'] ?? '0').toString()) ?? 0;
-      setState(() => _totalPortada = total);
-    } catch (_) {}
-  }
-
-  Future<void> _loadConsejosTotal() async {
-    try {
-      final apiService = context.read<ApiService>();
-      final url =
-          'api/consejos.php?get_consejos_publicos=1&total=1&q=$_searchQuery';
-      final response = await apiService.get(url);
-      if (response.statusCode != 200 || !mounted) return;
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final total = int.tryParse((data['total'] ?? '0').toString()) ?? 0;
-      setState(() => _totalConsejos = total);
-    } catch (_) {}
-  }
-
-  Future<void> _loadFavoritosTotal() async {
-    try {
-      final userCode = _userCode;
-      if (userCode == null || userCode.isEmpty || _isGuestMode) {
-        if (mounted) {
-          setState(() => _totalFavoritos = 0);
-        }
+      final config = await MenuVisibilityPremiumService.loadConfig(
+        apiService: apiService,
+        forceRefresh: true,
+      );
+      final premiumEnabled = MenuVisibilityPremiumService.isPremium(
+        config,
+        MenuVisibilityPremiumService.consejos,
+      );
+      List<int>? previewCodes;
+      if (premiumEnabled) {
+        final raw = await apiService.getParametroValor(
+          'codigos_consejos_no_premium',
+        );
+        previewCodes = _parsePreviewCodes(raw);
+      }
+      if (!mounted) {
         return;
       }
-      final patientParam = (_patientCode != null && _patientCode!.isNotEmpty)
-          ? _patientCode!
-          : '0';
-      final apiService = context.read<ApiService>();
-      final url =
-          'api/consejos.php?get_consejos_favoritos=1&paciente=$patientParam&codigo_usuario=$userCode&total=1';
-      final response = await apiService.get(url);
-      if (response.statusCode != 200 || !mounted) return;
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final total = int.tryParse((data['total'] ?? '0').toString()) ?? 0;
-      setState(() => _totalFavoritos = total);
+      setState(() {
+        _isMenuPremiumEnabled = premiumEnabled;
+        _nonPremiumPreviewCodes = previewCodes;
+      });
     } catch (_) {}
   }
 
-  String _getPreferenceKeyPrefix() {
+  List<int>? _parsePreviewCodes(String? rawValue) {
+    final raw =
+        (rawValue ?? '').trim().replaceAll(';', ',').replaceAll('|', ',');
+    if (raw.isEmpty) {
+      return null;
+    }
+
+    final codes = raw
+        .split(',')
+        .map((item) => int.tryParse(item.trim()))
+        .whereType<int>()
+        .where((value) => value > 0)
+        .toList(growable: false);
+
+    return codes.isEmpty ? null : codes;
+  }
+
+  List<Consejo> _allLoadedConsejos() {
+    final byKey = <String, Consejo>{};
+
+    void addItems(List<Consejo> items) {
+      for (final item in items) {
+        final key = item.codigo?.toString() ??
+            '${item.titulo.trim().toLowerCase()}|${item.texto.hashCode}';
+        byKey.putIfAbsent(key, () => item);
+      }
+    }
+
+    addItems(_consejosPersonalizados);
+    addItems(_consejosPortada);
+    addItems(_consejos);
+    addItems(_consejosFavoritos);
+    return byKey.values.toList(growable: false);
+  }
+
+  List<Consejo> _buildPreviewConsejos() {
+    final all = _allLoadedConsejos();
+    final configuredCodes = _nonPremiumPreviewCodes;
+    if (configuredCodes != null && configuredCodes.isNotEmpty) {
+      final byCode = <int, Consejo>{
+        for (final item in all)
+          if (item.codigo != null) item.codigo!: item,
+      };
+      final configuredItems = configuredCodes
+          .map((code) => byCode[code])
+          .whereType<Consejo>()
+          .toList(growable: false);
+      if (configuredItems.isNotEmpty) {
+        return configuredItems.take(3).toList(growable: false);
+      }
+    }
+
+    final preview = List<Consejo>.from(all);
+    preview.sort((a, b) {
+      final dateA = a.fechaInicio ?? a.fechaa ?? DateTime(1970);
+      final dateB = b.fechaInicio ?? b.fechaa ?? DateTime(1970);
+      final byDate = dateB.compareTo(dateA);
+      if (byDate != 0) {
+        return byDate;
+      }
+      return a.titulo.toLowerCase().compareTo(b.titulo.toLowerCase());
+    });
+    return preview.take(3).toList(growable: false);
+  }
+
+  Widget _buildPreviewBody(double listBottomPadding) {
+    final l10n = AppLocalizations.of(context)!;
+    final previewItems = _buildPreviewConsejos();
+    final totalConsejos = _allLoadedConsejos().length;
+
+    return ListView.builder(
+      padding: EdgeInsets.fromLTRB(16, 12, 16, listBottomPadding),
+      itemCount: previewItems.length + 1,
+      itemBuilder: (context, index) {
+        if (index == previewItems.length) {
+          return Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: PremiumUpsellCard(
+              title: l10n.tipsPremiumPreviewTitle,
+              subtitle: l10n.tipsPremiumPreviewSubtitle,
+              subtitleHighlight: totalConsejos > 3
+                  ? l10n.tipsPreviewAvailableCount(totalConsejos)
+                  : null,
+              subtitleHighlightColor: Colors.pink.shade700,
+              onPressed: () => Navigator.pushNamed(context, '/premium_info'),
+            ),
+          );
+        }
+
+        return _buildConsejoCard(
+          previewItems[index],
+          allowSocialActions: false,
+          showUnreadBadge: false,
+          allowCopyAndPdf: false,
+          isPreviewMode: true,
+        );
+      },
+    );
+  }
+
+  Future<List<Consejo>> _fetchAllConsejosPersonalizados() async {
     final hasPatient = (_patientCode ?? '').isNotEmpty;
-    final isPersonalizadosTab = hasPatient && _tabController.index == 0;
-    return isPersonalizadosTab ? 'consejos_personalizados' : 'consejos';
+    if (!hasPatient ||
+        _isGuestMode ||
+        _userCode == null ||
+        _userCode!.isEmpty) {
+      return <Consejo>[];
+    }
+
+    final apiService = context.read<ApiService>();
+    final response = await apiService.get(
+      'api/consejo_pacientes.php?personalizados_paciente=1&paciente=$_userCode',
+    );
+    if (response.statusCode != 200) return <Consejo>[];
+
+    final List<dynamic> data = json.decode(response.body);
+    return data.map((item) => Consejo.fromJson(item)).toList();
+  }
+
+  Future<List<Consejo>> _fetchAllConsejosForCurrentTab() async {
+    final apiService = context.read<ApiService>();
+    final hasPatient = (_patientCode ?? '').isNotEmpty;
+    final tabIndex = _tabController.index;
+
+    if (hasPatient && tabIndex == 0) {
+      return _fetchAllConsejosPersonalizados();
+    }
+
+    if ((hasPatient && tabIndex == 1) || (!hasPatient && tabIndex == 0)) {
+      final patientParam = _patientCode ?? '0';
+      var url = 'api/consejos.php?portada=S&paciente_codigo=$patientParam';
+      if (_userCode != null && !_isGuestMode) {
+        url += '&codigo_usuario=$_userCode';
+      }
+
+      final response = await apiService.get(url);
+      if (response.statusCode != 200) return <Consejo>[];
+
+      final List<dynamic> data = json.decode(response.body);
+      var items = data.map((item) => Consejo.fromJson(item)).toList();
+
+      if (hasPatient) {
+        final personalizados = await _fetchAllConsejosPersonalizados();
+        final personalesCodigos =
+            personalizados.map((c) => c.codigo).whereType<int>().toSet();
+        items = items
+            .where((c) =>
+                c.codigo == null || !personalesCodigos.contains(c.codigo))
+            .toList(growable: false);
+      }
+
+      return items;
+    }
+
+    if ((hasPatient && tabIndex == 2) || (!hasPatient && tabIndex == 1)) {
+      final userParam =
+          (_isGuestMode || _userCode == null || _userCode!.isEmpty)
+              ? '0'
+              : _userCode!;
+      final response = await apiService.get(
+        'api/consejo_pacientes.php?todos_paciente=1&paciente=$userParam',
+      );
+      if (response.statusCode != 200) return <Consejo>[];
+
+      final List<dynamic> data = json.decode(response.body);
+      return data.map((item) => Consejo.fromJson(item)).toList();
+    }
+
+    if (_isGuestMode || _userCode == null || _userCode!.isEmpty) {
+      return <Consejo>[];
+    }
+
+    final response = await apiService.get(
+      'api/consejo_usuarios.php?favoritos=1&usuario=$_userCode',
+    );
+    if (response.statusCode != 200) return <Consejo>[];
+
+    final List<dynamic> data = json.decode(response.body);
+    final parsed = <Consejo>[];
+    for (final item in data) {
+      try {
+        parsed.add(Consejo.fromJson(item));
+      } catch (_) {}
+    }
+    return parsed;
+  }
+
+  Future<void> _refreshCurrentTabFilteredTotal() async {
+    final requestId = ++_countRequestId;
+    try {
+      final items = await _fetchAllConsejosForCurrentTab();
+      final total = _applySearchAndSort(items).length;
+      if (!mounted || requestId != _countRequestId) return;
+      setState(() {
+        _currentTabFilteredTotal = total;
+      });
+    } catch (_) {
+      if (!mounted || requestId != _countRequestId) return;
+      setState(() {
+        _currentTabFilteredTotal = _getFilteredTabCount();
+      });
+    }
   }
 
   Future<void> _loadPreferences() async {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
-    final prefix = _getPreferenceKeyPrefix();
     setState(() {
-      _sortMode = prefs.getString('${prefix}_sortMode') ?? 'fecha';
-      _sortAscending = prefs.getBool('${prefix}_sortAscending') ?? false;
+      _sortMode = prefs.getString('consejos_sortMode') ?? 'fecha';
+      _sortAscending = prefs.getBool('consejos_sortAscending') ?? false;
       _selectedCategoriaIds = prefs
-              .getStringList('${prefix}_categoriaIds')
+              .getStringList('consejos_categoriaIds')
               ?.map(int.parse)
               .toList() ??
           <int>[];
-      _categoriaMatchAll =
-          prefs.getBool('${prefix}_categoriaMatchAll') ?? false;
+      _categoriaMatchAll = prefs.getBool('consejos_categoriaMatchAll') ?? false;
     });
+    _refreshCurrentTabFilteredTotal();
   }
 
   Future<void> _savePreferences() async {
     final prefs = await SharedPreferences.getInstance();
-    final prefix = _getPreferenceKeyPrefix();
     await Future.wait([
-      prefs.setString('${prefix}_sortMode', _sortMode),
-      prefs.setBool('${prefix}_sortAscending', _sortAscending),
-      prefs.setStringList('${prefix}_categoriaIds',
+      prefs.setString('consejos_sortMode', _sortMode),
+      prefs.setBool('consejos_sortAscending', _sortAscending),
+      prefs.setStringList('consejos_categoriaIds',
           _selectedCategoriaIds.map((e) => e.toString()).toList()),
-      prefs.setBool('${prefix}_categoriaMatchAll', _categoriaMatchAll),
+      prefs.setBool('consejos_categoriaMatchAll', _categoriaMatchAll),
     ]);
   }
 
@@ -311,6 +777,7 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
   }
 
   Future<void> _showCategoriaFilterDialog() async {
+    final l10n = AppLocalizations.of(context)!;
     if (_categoriasCatalogo.isEmpty && !_categoriasLoading) {
       await _loadCategorias();
     }
@@ -326,14 +793,17 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
             titlePadding: const EdgeInsets.fromLTRB(12, 8, 8, 0),
             title: Row(
               children: [
-                const Expanded(
+                Expanded(
                   child: Text(
-                    'Filtrar por categorías',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                    l10n.commonFilterByCategories,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
                 IconButton(
-                  tooltip: 'Cerrar',
+                  tooltip: l10n.commonClose,
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(Icons.close, size: 18),
                   style: IconButton.styleFrom(
@@ -397,8 +867,8 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
                         tempMatchAll = value;
                       });
                     },
-                    title: const Text('Coincidir todas'),
-                    subtitle: const Text('Si esta activo, requiere todas'),
+                    title: Text(l10n.commonMatchAll),
+                    subtitle: Text(l10n.commonRequireAllSelected),
                   ),
                 ],
               ),
@@ -411,9 +881,10 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
                     _categoriaMatchAll = false;
                   });
                   _savePreferences();
+                  _refreshCurrentTabFilteredTotal();
                   Navigator.pop(context);
                 },
-                child: const Text('Limpiar'),
+                child: Text(l10n.commonClear),
               ),
               ElevatedButton(
                 onPressed: () {
@@ -422,12 +893,13 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
                     _categoriaMatchAll = tempMatchAll;
                   });
                   _savePreferences();
+                  _refreshCurrentTabFilteredTotal();
                   Navigator.pop(context);
                 },
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text('Aplicar'),
+                    Text(l10n.commonApply),
                     const SizedBox(width: 8),
                     Container(
                       width: 20,
@@ -533,30 +1005,7 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
   }
 
   int _currentTabCount() {
-    final currentItemsCount = _applySearchAndSort(_currentTabSource()).length;
-    final hasPatient = (_patientCode ?? '').isNotEmpty;
-    final tabIndex = _tabController.index;
-    if (hasPatient) {
-      if (tabIndex == 0) {
-        return _totalPersonalizados > 0
-            ? _totalPersonalizados
-            : currentItemsCount;
-      }
-      if (tabIndex == 1) {
-        return _totalPortada > 0 ? _totalPortada : currentItemsCount;
-      }
-      if (tabIndex == 2) {
-        return _totalConsejos > 0 ? _totalConsejos : currentItemsCount;
-      }
-      return _totalFavoritos > 0 ? _totalFavoritos : currentItemsCount;
-    }
-    if (tabIndex == 0) {
-      return _totalPortada > 0 ? _totalPortada : currentItemsCount;
-    }
-    if (tabIndex == 1) {
-      return _totalConsejos > 0 ? _totalConsejos : currentItemsCount;
-    }
-    return _totalFavoritos > 0 ? _totalFavoritos : currentItemsCount;
+    return _currentTabFilteredTotal;
   }
 
   int _getFilteredTabCount() {
@@ -570,6 +1019,7 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
         _searchQuery = '';
       }
     });
+    _refreshCurrentTabFilteredTotal();
   }
 
   List<Consejo> _applySearchAndSort(List<Consejo> source) {
@@ -675,6 +1125,7 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
   }
 
   Future<void> _loadConsejos({bool reset = false}) async {
+    final l10n = AppLocalizations.of(context)!;
     if (!reset && (_isLoading || _isLoadingMore || !_hasMoreConsejos)) {
       return;
     }
@@ -702,34 +1153,23 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       // Usar el endpoint correcto: consejo_pacientes.php?todos_paciente=1&paciente=X
       // Esto obtendrá tanto los consejos asignados al paciente como los visible_para_todos
       String url =
-          'api/consejo_pacientes.php?todos_paciente=1&paciente=$userParam&limit=$_pageSize&offset=$offset';
+          'api/consejo_pacientes.php?todos_paciente=1&paciente=$userParam&limit=$_pageSize&offset=$offset&include_images=0';
 
       final response = await apiService.get(url);
 
       if (response.statusCode == 200) {
-        final List<dynamic> data = json.decode(response.body);
-        final parsed = data.map((item) => Consejo.fromJson(item)).toList();
+        final parsed = _parseConsejosResponse(response.body);
         if (mounted) {
           setState(() {
             _consejos = reset ? parsed : [..._consejos, ...parsed];
             _hasMoreConsejos = parsed.length >= _pageSize;
           });
         }
-      } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al cargar consejos: ${response.statusCode}'),
-          ),
-        );
+      } else {
+        _showGenericLoadError();
       }
-    } catch (e) {
-      if (mounted) {
-        final errorMessage = e.toString().replaceFirst('Exception: ', '');
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(
-            SnackBar(content: Text('Error al cargar consejos. $errorMessage')));
-      }
+    } catch (_) {
+      _showGenericLoadError();
     } finally {
       if (mounted) {
         setState(() {
@@ -765,7 +1205,7 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
 
       // Construir URL con codigo_usuario si está disponible (para obtener estado de favorito)
       String url =
-          'api/consejos.php?portada=S&paciente_codigo=$patientParam&limit=$_pageSize&offset=$offset';
+          'api/consejos.php?portada=S&paciente_codigo=$patientParam&limit=$_pageSize&offset=$offset&include_images=0';
       if (_userCode != null && !_isGuestMode) {
         url += '&codigo_usuario=$_userCode';
       }
@@ -773,8 +1213,7 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       final response = await apiService.get(url);
 
       if (response.statusCode == 200) {
-        final List<dynamic> data = json.decode(response.body);
-        final parsed = data.map((item) => Consejo.fromJson(item)).toList();
+        final parsed = _parseConsejosResponse(response.body);
         if (mounted) {
           setState(() {
             _consejosPortada =
@@ -783,10 +1222,10 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
           });
         }
       } else {
-        // debugPrint('Error loading portada: ${response.statusCode}');
+        _showGenericLoadError();
       }
-    } catch (e) {
-      // debugPrint('Exception loading portada: $e');
+    } catch (_) {
+      _showGenericLoadError();
     } finally {
       if (mounted) {
         setState(() {
@@ -827,29 +1266,24 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
 
       // Obtener SOLO los consejos asignados a este paciente (personalizados, sin visible_para_todos)
       String url =
-          'api/consejo_pacientes.php?personalizados_paciente=1&paciente=$_userCode&limit=$_pageSize&offset=$offset';
+          'api/consejo_pacientes.php?personalizados_paciente=1&paciente=$_userCode&limit=$_pageSize&offset=$offset&include_images=0';
 
       final response = await apiService.get(url);
 
       if (response.statusCode == 200) {
-        try {
-          final List<dynamic> data = json.decode(response.body);
-          final parsed = data.map((item) => Consejo.fromJson(item)).toList();
-          if (mounted) {
-            setState(() {
-              _consejosPersonalizados =
-                  reset ? parsed : [..._consejosPersonalizados, ...parsed];
-              _hasMorePersonalizados = parsed.length >= _pageSize;
-            });
-          }
-        } catch (parseError) {
-          // debugPrint('Error al parsear consejos personalizados: $parseError');
+        final parsed = _parseConsejosResponse(response.body);
+        if (mounted) {
+          setState(() {
+            _consejosPersonalizados =
+                reset ? parsed : [..._consejosPersonalizados, ...parsed];
+            _hasMorePersonalizados = parsed.length >= _pageSize;
+          });
         }
       } else {
-        // debugPrint('Error loading personalizados: ${response.statusCode}');
+        _showGenericLoadError();
       }
-    } catch (e) {
-      // debugPrint('Exception loading personalizados: $e');
+    } catch (_) {
+      _showGenericLoadError();
     } finally {
       if (mounted) {
         setState(() {
@@ -904,17 +1338,11 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
     try {
       final apiService = Provider.of<ApiService>(context, listen: false);
       final response = await apiService.get(
-        'api/consejo_usuarios.php?favoritos=1&usuario=$_userCode&limit=$_pageSize&offset=$offset',
+        'api/consejo_usuarios.php?favoritos=1&usuario=$_userCode&limit=$_pageSize&offset=$offset&include_images=0',
       );
 
       if (response.statusCode == 200) {
-        final List<dynamic> data = json.decode(response.body);
-        final parsed = <Consejo>[];
-        for (final item in data) {
-          try {
-            parsed.add(Consejo.fromJson(item));
-          } catch (_) {}
-        }
+        final parsed = _parseConsejosResponse(response.body);
         if (mounted) {
           setState(() {
             _consejosFavoritos =
@@ -922,13 +1350,11 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
             _hasMoreFavoritos = parsed.length >= _pageSize;
           });
         }
+      } else {
+        _showGenericLoadError();
       }
     } catch (_) {
-      if (mounted) {
-        setState(() {
-          _consejosFavoritos = [];
-        });
-      }
+      _showGenericLoadError();
     } finally {
       if (mounted) {
         setState(() {
@@ -940,14 +1366,15 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
   }
 
   Future<void> _toggleLike(Consejo consejo) async {
+    final l10n = AppLocalizations.of(context)!;
     // debugPrint('_toggleLike called for consejo: ${consejo.codigo}');
 
     if (_isGuestMode) {
       // debugPrint('Guest mode - cannot like');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Debes iniciar sesión para dar me gusta'),
+          SnackBar(
+            content: Text(l10n.commonSignInToLike),
             backgroundColor: Colors.orange,
           ),
         );
@@ -959,8 +1386,8 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
     if (_userCode == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Error: No se pudo identificar el usuario'),
+          SnackBar(
+            content: Text(l10n.commonCouldNotIdentifyUser),
             backgroundColor: Colors.red,
           ),
         );
@@ -1005,19 +1432,20 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(
-          SnackBar(content: Text('Error al cambiar me gusta. $errorMessage')));
+          SnackBar(content: Text(l10n.commonLikeChangeError(errorMessage))));
     }
   }
 
   Future<void> _toggleFavorito(Consejo consejo) async {
+    final l10n = AppLocalizations.of(context)!;
     // debugPrint('_toggleFavorito called for consejo: ${consejo.codigo}');
 
     if (_isGuestMode) {
       // debugPrint('Guest mode - cannot save favorites');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Debes iniciar sesión para guardar favoritos'),
+          SnackBar(
+            content: Text(l10n.commonSignInToSaveFavorites),
             backgroundColor: Colors.orange,
           ),
         );
@@ -1029,8 +1457,8 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
     if (_userCode == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Error: No se pudo identificar el usuario'),
+          SnackBar(
+            content: Text(l10n.commonCouldNotIdentifyUser),
             backgroundColor: Colors.red,
           ),
         );
@@ -1065,18 +1493,23 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       final errorMessage = e.toString().replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(
-          SnackBar(content: Text('Error al cambiar favorito. $errorMessage')));
+      ).showSnackBar(SnackBar(
+          content: Text(l10n.commonFavoriteChangeError(errorMessage))));
     }
   }
 
-  void _viewConsejoDetail(Consejo consejo, {bool allowSocialActions = true}) {
+  void _viewConsejoDetail(
+    Consejo consejo, {
+    bool allowSocialActions = true,
+    bool isPreviewMode = false,
+  }) {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => ConsejoDetailScreen(
           consejo: consejo,
           onFavoritoChanged: _onDetailConsejoUpdated,
+          isPreviewMode: isPreviewMode,
           allowSocialActions: allowSocialActions,
         ),
       ),
@@ -1092,7 +1525,9 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
   Widget _buildConsejoCard(Consejo consejo,
       {String unreadBadgeText = 'NUEVO',
       bool allowSocialActions = true,
-      bool showUnreadBadge = true}) {
+      bool showUnreadBadge = true,
+      bool allowCopyAndPdf = true,
+      bool isPreviewMode = false}) {
     final coverProvider = _getCachedCoverProvider(consejo);
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1101,70 +1536,16 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
         onTap: () => _viewConsejoDetail(
           consejo,
           allowSocialActions: allowSocialActions,
+          isPreviewMode: isPreviewMode,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Imagen de portada
-            Stack(
-              children: [
-                if (coverProvider != null)
-                  RepaintBoundary(
-                    child: Image(
-                      image: coverProvider,
-                      height: 250,
-                      width: double.infinity,
-                      fit: BoxFit.contain,
-                      gaplessPlayback: true,
-                    ),
-                  )
-                else
-                  Container(
-                    height: 250,
-                    width: double.infinity,
-                    color: Colors.grey[300],
-                    child:
-                        const Icon(Icons.article, size: 64, color: Colors.grey),
-                  ),
-
-                // Badge "NUEVO" para consejos no leídos
-                if (showUnreadBadge && consejo.leido == 'N')
-                  Positioned(
-                    top: 12,
-                    right: 12,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.red,
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.3),
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.fiber_new,
-                              color: Colors.white, size: 16),
-                          const SizedBox(width: 4),
-                          Text(
-                            unreadBadgeText,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-              ],
+            _buildConsejoCardHeader(
+              consejo,
+              coverProvider,
+              showUnreadBadge: showUnreadBadge,
+              unreadBadgeText: unreadBadgeText,
             ),
 
             // Acciones (like, favorito, copiar, pdf)
@@ -1198,16 +1579,18 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
                     ),
                   ],
                   const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.copy, size: 18),
-                    onPressed: () => _copyConsejoToClipboard(consejo),
-                    tooltip: 'Copiar',
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.picture_as_pdf, size: 18),
-                    onPressed: () => _generateConsejoPdfFromCard(consejo),
-                    tooltip: 'PDF',
-                  ),
+                  if (allowCopyAndPdf) ...[
+                    IconButton(
+                      icon: const Icon(Icons.copy, size: 18),
+                      onPressed: () => _copyConsejoToClipboard(consejo),
+                      tooltip: 'Copiar',
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.picture_as_pdf, size: 18),
+                      onPressed: () => _generateConsejoPdfFromCard(consejo),
+                      tooltip: 'PDF',
+                    ),
+                  ],
                   if (consejo.mostrarPortada == 'S')
                     const Icon(Icons.star, color: Colors.amber, size: 20),
                 ],
@@ -1270,7 +1653,7 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
             ),
             const SizedBox(height: 10),
             Text(
-              'Para poder marcar $tipo como favoritos, debes registrarte (es gratis).',
+              l10n.commonGuestFavoritesRequiresRegistration(tipo),
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontWeight: FontWeight.w700,
@@ -1281,7 +1664,7 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
             ElevatedButton.icon(
               onPressed: () => Navigator.pushNamed(context, '/register'),
               icon: const Icon(Icons.app_registration),
-              label: const Text('Iniciar registro'),
+              label: Text(l10n.navStartRegistration),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.purple,
                 foregroundColor: Colors.white,
@@ -1295,8 +1678,10 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final listBottomPadding = 88.0 + MediaQuery.of(context).padding.bottom;
     final hasPatient = (_patientCode ?? '').isNotEmpty;
+    final canAccessFullCatalog = _canAccessFullCatalog;
 
     return Scaffold(
       appBar: AppBar(
@@ -1307,9 +1692,9 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Flexible(
+            Flexible(
               child: Text(
-                'Consejos',
+                l10n.navTips,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -1332,372 +1717,367 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
           ],
         ),
         actions: [
-          if (!_isSearchVisible)
+          if (canAccessFullCatalog && !_isSearchVisible)
             IconButton(
-              tooltip: 'Buscar',
+              tooltip: l10n.commonSearch,
               icon: const Icon(Icons.search),
               onPressed: _toggleSearchVisibility,
             ),
-          IconButton(
-            tooltip: _selectedCategoriaIds.isEmpty
-                ? 'Filtrar categorias'
-                : 'Filtrar categorias (${_selectedCategoriaIds.length})',
-            icon: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                const Icon(Icons.filter_alt_outlined),
-                if (_selectedCategoriaIds.isNotEmpty)
-                  Positioned(
-                    right: -8,
-                    top: -6,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 5,
-                        vertical: 1,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.blue,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        '${_selectedCategoriaIds.length}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
+          if (canAccessFullCatalog)
+            IconButton(
+              tooltip: _selectedCategoriaIds.isEmpty
+                  ? l10n.commonFilterByCategories
+                  : l10n.commonFilterByCategoriesCount(
+                      _selectedCategoriaIds.length,
+                    ),
+              icon: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  const Icon(Icons.filter_alt_outlined),
+                  if (_selectedCategoriaIds.isNotEmpty)
+                    Positioned(
+                      right: -8,
+                      top: -6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.blue,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          '${_selectedCategoriaIds.length}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-              ],
-            ),
-            onPressed: _showCategoriaFilterDialog,
-          ),
-          PopupMenuButton<String>(
-            tooltip: 'Más opciones',
-            icon: const Icon(Icons.more_vert),
-            onSelected: (value) {
-              _handleAppBarMenuAction(value);
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'search',
-                child: Row(
-                  children: [
-                    Icon(Icons.search, size: 18),
-                    SizedBox(width: 10),
-                    Text('Buscar'),
-                  ],
-                ),
+                ],
               ),
-              PopupMenuItem(
-                value: 'filter',
-                child: ListTile(
-                  leading: Stack(
-                    alignment: Alignment.center,
+              onPressed: _showCategoriaFilterDialog,
+            ),
+          if (canAccessFullCatalog)
+            PopupMenuButton<String>(
+              tooltip: l10n.commonMoreOptions,
+              icon: const Icon(Icons.more_vert),
+              onSelected: (value) {
+                _handleAppBarMenuAction(value);
+              },
+              itemBuilder: (context) => [
+                PopupMenuItem(
+                  value: 'search',
+                  child: Row(
                     children: [
-                      const SizedBox(width: 18, height: 18),
-                      const Icon(Icons.filter_alt, size: 18),
-                      if (_selectedCategoriaIds.isNotEmpty)
-                        Positioned(
-                          right: -2,
-                          top: -2,
-                          child: Container(
-                            constraints: const BoxConstraints(
-                              minWidth: 14,
-                              minHeight: 14,
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 3,
-                              vertical: 1,
-                            ),
-                            decoration: const BoxDecoration(
-                              color: Colors.blue,
-                              shape: BoxShape.circle,
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(
-                              '${_selectedCategoriaIds.length}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 8,
-                                fontWeight: FontWeight.w700,
+                      const Icon(Icons.search, size: 18),
+                      const SizedBox(width: 10),
+                      Text(l10n.commonSearch),
+                    ],
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'filter',
+                  child: ListTile(
+                    leading: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        const SizedBox(width: 18, height: 18),
+                        const Icon(Icons.filter_alt, size: 18),
+                        if (_selectedCategoriaIds.isNotEmpty)
+                          Positioned(
+                            right: -2,
+                            top: -2,
+                            child: Container(
+                              constraints: const BoxConstraints(
+                                minWidth: 14,
+                                minHeight: 14,
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 3,
+                                vertical: 1,
+                              ),
+                              decoration: const BoxDecoration(
+                                color: Colors.blue,
+                                shape: BoxShape.circle,
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(
+                                '${_selectedCategoriaIds.length}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ),
                           ),
+                      ],
+                    ),
+                    title: Text(l10n.commonFilter),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'refresh',
+                  child: Row(
+                    children: [
+                      const Icon(Icons.refresh, size: 18),
+                      const SizedBox(width: 10),
+                      Text(l10n.commonRefresh),
+                    ],
+                  ),
+                ),
+                const PopupMenuDivider(),
+                CheckedPopupMenuItem<String>(
+                  value: 'sort_title',
+                  checked: _sortMode == 'titulo',
+                  child: Row(
+                    children: [
+                      Expanded(child: Text(l10n.commonSortByTitle)),
+                      if (_sortMode == 'titulo')
+                        Icon(
+                          _sortAscending
+                              ? Icons.arrow_upward
+                              : Icons.arrow_downward,
+                          size: 18,
                         ),
                     ],
                   ),
-                  title: const Text('Filtrar'),
-                  contentPadding: EdgeInsets.zero,
                 ),
-              ),
-              const PopupMenuItem(
-                value: 'refresh',
-                child: Row(
-                  children: [
-                    Icon(Icons.refresh, size: 18),
-                    SizedBox(width: 10),
-                    Text('Actualizar'),
-                  ],
+                CheckedPopupMenuItem<String>(
+                  value: 'sort_recent',
+                  checked: _sortMode == 'fecha',
+                  child: Row(
+                    children: [
+                      Expanded(child: Text(l10n.commonSortByRecent)),
+                      if (_sortMode == 'fecha')
+                        Icon(
+                          _sortAscending
+                              ? Icons.arrow_upward
+                              : Icons.arrow_downward,
+                          size: 18,
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-              const PopupMenuDivider(),
-              CheckedPopupMenuItem<String>(
-                value: 'sort_title',
-                checked: _sortMode == 'titulo',
-                child: Row(
-                  children: [
-                    const Expanded(child: Text('Ordenar Título')),
-                    if (_sortMode == 'titulo')
-                      Icon(
-                        _sortAscending
-                            ? Icons.arrow_upward
-                            : Icons.arrow_downward,
-                        size: 18,
-                      ),
-                  ],
+                CheckedPopupMenuItem<String>(
+                  value: 'sort_popular',
+                  checked: _sortMode == 'popular',
+                  child: Row(
+                    children: [
+                      Expanded(child: Text(l10n.commonSortByPopular)),
+                      if (_sortMode == 'popular')
+                        Icon(
+                          _sortAscending
+                              ? Icons.arrow_upward
+                              : Icons.arrow_downward,
+                          size: 18,
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-              CheckedPopupMenuItem<String>(
-                value: 'sort_recent',
-                checked: _sortMode == 'fecha',
-                child: Row(
-                  children: [
-                    const Expanded(child: Text('Ordenar Recientes')),
-                    if (_sortMode == 'fecha')
-                      Icon(
-                        _sortAscending
-                            ? Icons.arrow_upward
-                            : Icons.arrow_downward,
-                        size: 18,
-                      ),
-                  ],
-                ),
-              ),
-              CheckedPopupMenuItem<String>(
-                value: 'sort_popular',
-                checked: _sortMode == 'popular',
-                child: Row(
-                  children: [
-                    const Expanded(child: Text('Ordenar Populares')),
-                    if (_sortMode == 'popular')
-                      Icon(
-                        _sortAscending
-                            ? Icons.arrow_upward
-                            : Icons.arrow_downward,
-                        size: 18,
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(kToolbarHeight),
-          child: Scrollbar(
-            thumbVisibility: true,
-            child: TabBar(
-              controller: _tabController,
-              tabs: [
-                if (hasPatient)
-                  const Tab(icon: Icon(Icons.person), text: 'Personales'),
-                const Tab(icon: Icon(Icons.star), text: 'Destacados'),
-                const Tab(icon: Icon(Icons.article), text: 'Todos'),
-                const Tab(icon: Icon(Icons.bookmark), text: 'Favoritos'),
               ],
             ),
-          ),
-        ),
-      ),
-      body: Column(
-        children: [
-          if (_isSearchVisible)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: TextField(
-                decoration: InputDecoration(
-                  labelText: 'Buscar consejos',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: IconButton(
-                    tooltip: 'Ocultar búsqueda',
-                    icon: const Icon(Icons.close),
-                    onPressed: _toggleSearchVisibility,
+        ],
+        bottom: canAccessFullCatalog
+            ? PreferredSize(
+                preferredSize: const Size.fromHeight(kToolbarHeight),
+                child: Scrollbar(
+                  thumbVisibility: true,
+                  child: TabBar(
+                    controller: _tabController,
+                    tabs: [
+                      if (hasPatient)
+                        Tab(
+                          icon: const Icon(Icons.person),
+                          text: l10n.commonPersonalTab,
+                        ),
+                      Tab(
+                        icon: const Icon(Icons.star),
+                        text: l10n.commonFeaturedTab,
+                      ),
+                      Tab(
+                        icon: const Icon(Icons.article),
+                        text: l10n.commonAllTab,
+                      ),
+                      Tab(
+                        icon: const Icon(Icons.bookmark),
+                        text: l10n.commonFavoritesTab,
+                      ),
+                    ],
                   ),
-                  border: const OutlineInputBorder(),
                 ),
-                onChanged: (value) {
-                  setState(() {
-                    _searchQuery = value;
-                  });
-                },
-              ),
-            ),
-          if (_selectedCategoriaIds.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _selectedCategoriaIds.map((id) {
-                  final match = _categoriasCatalogo.firstWhere(
-                    (cat) => int.parse(cat['codigo'].toString()) == id,
-                    orElse: () => {'nombre': 'Categoría $id'},
-                  );
-                  return Chip(
-                    label: Text(match['nombre'].toString()),
-                    onDeleted: () {
-                      setState(() {
-                        _selectedCategoriaIds.remove(id);
-                      });
-                    },
-                  );
-                }).toList(),
-              ),
-            ),
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
+              )
+            : null,
+      ),
+      body: _isPreviewMode
+          ? _buildPreviewBody(listBottomPadding)
+          : Column(
               children: [
-                if (hasPatient)
-                  Builder(
-                    builder: (context) {
-                      if (_isLoadingPersonalizados) {
-                        return const Center(child: CircularProgressIndicator());
-                      }
-                      final items =
-                          _applySearchAndSort(_consejosPersonalizados);
-                      if (items.isEmpty) {
-                        return Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Text(
-                                'No tiene recomendaciones personalizadas',
-                                style: TextStyle(fontSize: 16),
-                              ),
-                              const SizedBox(height: 16),
-                              ElevatedButton(
-                                onPressed: () => _tabController.animateTo(1),
-                                child: const Text('Ver consejos generales'),
-                              ),
-                            ],
-                          ),
+                if (_isSearchVisible)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: TextField(
+                      decoration: InputDecoration(
+                        labelText: l10n.tipsSearchLabel,
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: IconButton(
+                          tooltip: l10n.commonHideSearch,
+                          icon: const Icon(Icons.close),
+                          onPressed: _toggleSearchVisibility,
+                        ),
+                        border: const OutlineInputBorder(),
+                      ),
+                      onChanged: (value) {
+                        setState(() {
+                          _searchQuery = value;
+                        });
+                        _refreshCurrentTabFilteredTotal();
+                      },
+                    ),
+                  ),
+                if (_selectedCategoriaIds.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _selectedCategoriaIds.map((id) {
+                        final match = _categoriasCatalogo.firstWhere(
+                          (cat) => int.parse(cat['codigo'].toString()) == id,
+                          orElse: () => {
+                            'nombre': l10n.commonCategoryFallback(id),
+                          },
                         );
-                      }
-                      return NotificationListener<ScrollNotification>(
-                        onNotification: (notification) {
-                          if (_hasMorePersonalizados &&
-                              !_isLoadingMorePersonalizados &&
-                              notification.metrics.pixels >=
-                                  notification.metrics.maxScrollExtent - 300) {
-                            _loadConsejosPersonalizados();
-                          }
-                          return false;
-                        },
-                        child: ListView.builder(
-                          padding: EdgeInsets.only(bottom: listBottomPadding),
-                          itemCount: items.length +
-                              (_isLoadingMorePersonalizados ? 1 : 0),
-                          itemBuilder: (context, index) {
-                            if (index >= items.length) {
-                              return const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 20),
-                                child:
-                                    Center(child: CircularProgressIndicator()),
+                        return Chip(
+                          label: Text(match['nombre'].toString()),
+                          onDeleted: () {
+                            setState(() {
+                              _selectedCategoriaIds.remove(id);
+                            });
+                            _savePreferences();
+                            _refreshCurrentTabFilteredTotal();
+                          },
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      if (hasPatient)
+                        Builder(
+                          builder: (context) {
+                            if (_isLoadingPersonalizados) {
+                              return const Center(
+                                  child: CircularProgressIndicator());
+                            }
+                            final items =
+                                _applySearchAndSort(_consejosPersonalizados);
+                            if (items.isEmpty) {
+                              return Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      l10n.tipsNoPersonalizedRecommendations,
+                                      style: TextStyle(fontSize: 16),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    ElevatedButton(
+                                      onPressed: () =>
+                                          _tabController.animateTo(1),
+                                      child: Text(l10n.tipsViewGeneralTips),
+                                    ),
+                                  ],
+                                ),
                               );
                             }
-                            return _buildConsejoCard(
-                              items[index],
-                              unreadBadgeText: 'No leído',
-                              allowSocialActions: false,
-                              showUnreadBadge: true,
+                            return NotificationListener<ScrollNotification>(
+                              onNotification: (notification) {
+                                if (_hasMorePersonalizados &&
+                                    !_isLoadingMorePersonalizados &&
+                                    notification.metrics.pixels >=
+                                        notification.metrics.maxScrollExtent -
+                                            300) {
+                                  _loadConsejosPersonalizados();
+                                }
+                                return false;
+                              },
+                              child: ListView.builder(
+                                padding:
+                                    EdgeInsets.only(bottom: listBottomPadding),
+                                itemCount: items.length +
+                                    (_isLoadingMorePersonalizados ? 1 : 0),
+                                itemBuilder: (context, index) {
+                                  if (index >= items.length) {
+                                    return const Padding(
+                                      padding:
+                                          EdgeInsets.symmetric(vertical: 20),
+                                      child: Center(
+                                          child: CircularProgressIndicator()),
+                                    );
+                                  }
+                                  return _buildConsejoCard(
+                                    items[index],
+                                    unreadBadgeText: l10n.tipsUnreadBadge,
+                                    allowSocialActions: false,
+                                    showUnreadBadge: true,
+                                  );
+                                },
+                              ),
                             );
                           },
                         ),
-                      );
-                    },
-                  ),
-                Builder(
-                  builder: (context) {
-                    if (_isLoadingPortada) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    final personalesCodigos = hasPatient
-                        ? _consejosPersonalizados
-                            .map((c) => c.codigo)
-                            .whereType<int>()
-                            .toSet()
-                        : <int>{};
-
-                    final destacadosSinDuplicados = hasPatient
-                        ? _consejosPortada
-                            .where((c) =>
-                                c.codigo == null ||
-                                !personalesCodigos.contains(c.codigo))
-                            .toList()
-                        : _consejosPortada;
-
-                    final items = _applySearchAndSort(destacadosSinDuplicados);
-                    if (items.isEmpty) {
-                      return const Center(
-                        child: Text('No hay consejos destacados'),
-                      );
-                    }
-                    return NotificationListener<ScrollNotification>(
-                      onNotification: (notification) {
-                        if (_hasMorePortada &&
-                            !_isLoadingMorePortada &&
-                            notification.metrics.pixels >=
-                                notification.metrics.maxScrollExtent - 300) {
-                          _loadConsejosPortada();
-                        }
-                        return false;
-                      },
-                      child: ListView.builder(
-                        padding: EdgeInsets.only(bottom: listBottomPadding),
-                        itemCount:
-                            items.length + (_isLoadingMorePortada ? 1 : 0),
-                        itemBuilder: (context, index) {
-                          if (index >= items.length) {
-                            return const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 20),
-                              child: Center(child: CircularProgressIndicator()),
-                            );
-                          }
-                          return _buildConsejoCard(items[index]);
-                        },
-                      ),
-                    );
-                  },
-                ),
-                _isLoading
-                    ? const Center(child: CircularProgressIndicator())
-                    : Builder(
+                      Builder(
                         builder: (context) {
-                          final items = _applySearchAndSort(_consejos);
-                          if (items.isEmpty) {
+                          if (_isLoadingPortada) {
                             return const Center(
-                              child: Text('No hay consejos disponibles'),
+                                child: CircularProgressIndicator());
+                          }
+                          final personalesCodigos = hasPatient
+                              ? _consejosPersonalizados
+                                  .map((c) => c.codigo)
+                                  .whereType<int>()
+                                  .toSet()
+                              : <int>{};
+
+                          final destacadosSinDuplicados = hasPatient
+                              ? _consejosPortada
+                                  .where((c) =>
+                                      c.codigo == null ||
+                                      !personalesCodigos.contains(c.codigo))
+                                  .toList()
+                              : _consejosPortada;
+
+                          final items =
+                              _applySearchAndSort(destacadosSinDuplicados);
+                          if (items.isEmpty) {
+                            return Center(
+                              child: Text(l10n.tipsNoFeaturedAvailable),
                             );
                           }
                           return NotificationListener<ScrollNotification>(
                             onNotification: (notification) {
-                              if (_hasMoreConsejos &&
-                                  !_isLoadingMore &&
+                              if (_hasMorePortada &&
+                                  !_isLoadingMorePortada &&
                                   notification.metrics.pixels >=
                                       notification.metrics.maxScrollExtent -
                                           300) {
-                                _loadConsejos();
+                                _loadConsejosPortada();
                               }
                               return false;
                             },
                             child: ListView.builder(
                               padding:
                                   EdgeInsets.only(bottom: listBottomPadding),
-                              itemCount:
-                                  items.length + (_isLoadingMore ? 1 : 0),
+                              itemCount: items.length +
+                                  (_isLoadingMorePortada ? 1 : 0),
                               itemBuilder: (context, index) {
                                 if (index >= items.length) {
                                   return const Padding(
@@ -1706,78 +2086,127 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
                                         child: CircularProgressIndicator()),
                                   );
                                 }
-                                final consejo = items[index];
-                                final isPersonalNoLeido =
-                                    consejo.visibleParaTodos != 'S' &&
-                                        consejo.leido == 'N';
-                                final isPersonalizado =
-                                    consejo.visibleParaTodos != 'S';
+                                return _buildConsejoCard(items[index]);
+                              },
+                            ),
+                          );
+                        },
+                      ),
+                      _isLoading
+                          ? const Center(child: CircularProgressIndicator())
+                          : Builder(
+                              builder: (context) {
+                                final items = _applySearchAndSort(_consejos);
+                                if (items.isEmpty) {
+                                  return Center(
+                                    child: Text(l10n.tipsNoTipsAvailable),
+                                  );
+                                }
+                                return NotificationListener<ScrollNotification>(
+                                  onNotification: (notification) {
+                                    if (_hasMoreConsejos &&
+                                        !_isLoadingMore &&
+                                        notification.metrics.pixels >=
+                                            notification
+                                                    .metrics.maxScrollExtent -
+                                                300) {
+                                      _loadConsejos();
+                                    }
+                                    return false;
+                                  },
+                                  child: ListView.builder(
+                                    padding: EdgeInsets.only(
+                                        bottom: listBottomPadding),
+                                    itemCount:
+                                        items.length + (_isLoadingMore ? 1 : 0),
+                                    itemBuilder: (context, index) {
+                                      if (index >= items.length) {
+                                        return const Padding(
+                                          padding: EdgeInsets.symmetric(
+                                              vertical: 20),
+                                          child: Center(
+                                              child:
+                                                  CircularProgressIndicator()),
+                                        );
+                                      }
+                                      final consejo = items[index];
+                                      final isPersonalNoLeido =
+                                          consejo.visibleParaTodos != 'S' &&
+                                              consejo.leido == 'N';
+                                      final isPersonalizado =
+                                          consejo.visibleParaTodos != 'S';
+                                      return _buildConsejoCard(
+                                        consejo,
+                                        unreadBadgeText: l10n.tipsUnreadBadge,
+                                        showUnreadBadge: isPersonalNoLeido,
+                                        allowSocialActions: !isPersonalizado,
+                                      );
+                                    },
+                                  ),
+                                );
+                              },
+                            ),
+                      Builder(
+                        builder: (context) {
+                          if (_isLoadingFavoritos) {
+                            return const Center(
+                                child: CircularProgressIndicator());
+                          }
+                          final items = _applySearchAndSort(_consejosFavoritos);
+                          final isWithoutCredentials =
+                              _isGuestMode || (_userCode ?? '').isEmpty;
+                          if (items.isEmpty) {
+                            if (isWithoutCredentials) {
+                              return _buildGuestFavoritosEmptyCard(
+                                  tipo: 'consejos');
+                            }
+                            return Center(
+                              child: Text(l10n.tipsNoFavoriteTips),
+                            );
+                          }
+                          return NotificationListener<ScrollNotification>(
+                            onNotification: (notification) {
+                              if (_hasMoreFavoritos &&
+                                  !_isLoadingMoreFavoritos &&
+                                  notification.metrics.pixels >=
+                                      notification.metrics.maxScrollExtent -
+                                          300) {
+                                _loadConsejosFavoritos();
+                              }
+                              return false;
+                            },
+                            child: ListView.builder(
+                              padding:
+                                  EdgeInsets.only(bottom: listBottomPadding),
+                              itemCount: items.length +
+                                  (_isLoadingMoreFavoritos ? 1 : 0),
+                              itemBuilder: (context, index) {
+                                if (index >= items.length) {
+                                  return const Padding(
+                                    padding: EdgeInsets.symmetric(vertical: 20),
+                                    child: Center(
+                                        child: CircularProgressIndicator()),
+                                  );
+                                }
                                 return _buildConsejoCard(
-                                  consejo,
-                                  unreadBadgeText: 'No leído',
-                                  showUnreadBadge: isPersonalNoLeido,
-                                  allowSocialActions: !isPersonalizado,
+                                  items[index],
+                                  showUnreadBadge: false,
                                 );
                               },
                             ),
                           );
                         },
                       ),
-                Builder(
-                  builder: (context) {
-                    if (_isLoadingFavoritos) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    final items = _applySearchAndSort(_consejosFavoritos);
-                    final isWithoutCredentials =
-                        _isGuestMode || (_userCode ?? '').isEmpty;
-                    if (items.isEmpty) {
-                      if (isWithoutCredentials) {
-                        return _buildGuestFavoritosEmptyCard(tipo: 'consejos');
-                      }
-                      return const Center(
-                        child: Text('No tienes consejos favoritos'),
-                      );
-                    }
-                    return NotificationListener<ScrollNotification>(
-                      onNotification: (notification) {
-                        if (_hasMoreFavoritos &&
-                            !_isLoadingMoreFavoritos &&
-                            notification.metrics.pixels >=
-                                notification.metrics.maxScrollExtent - 300) {
-                          _loadConsejosFavoritos();
-                        }
-                        return false;
-                      },
-                      child: ListView.builder(
-                        padding: EdgeInsets.only(bottom: listBottomPadding),
-                        itemCount:
-                            items.length + (_isLoadingMoreFavoritos ? 1 : 0),
-                        itemBuilder: (context, index) {
-                          if (index >= items.length) {
-                            return const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 20),
-                              child: Center(child: CircularProgressIndicator()),
-                            );
-                          }
-                          return _buildConsejoCard(
-                            items[index],
-                            showUnreadBadge: false,
-                          );
-                        },
-                      ),
-                    );
-                  },
+                    ],
+                  ),
                 ),
               ],
             ),
-          ),
-        ],
-      ),
     );
   }
 
   Future<void> _copyConsejoToClipboard(Consejo consejo) async {
+    final l10n = AppLocalizations.of(context)!;
     final authService = Provider.of<AuthService>(context, listen: false);
     if (!_canUseConsejosCopyPdf(authService)) {
       await _showPremiumRequiredForConsejosCopyPdf(context);
@@ -1790,8 +2219,8 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       await Clipboard.setData(ClipboardData(text: textToCopy));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Copiado al portapapeles'),
+          SnackBar(
+            content: Text(l10n.commonCopiedToClipboard),
             duration: Duration(seconds: 2),
           ),
         );
@@ -1800,7 +2229,7 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al copiar: ${e.toString()}'),
+            content: Text(l10n.commonCopyError(e.toString())),
             backgroundColor: Colors.red,
           ),
         );
@@ -1809,6 +2238,7 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
   }
 
   Future<void> _generateConsejoPdfFromCard(Consejo consejo) async {
+    final l10n = AppLocalizations.of(context)!;
     final authService = Provider.of<AuthService>(context, listen: false);
     if (!_canUseConsejosCopyPdf(authService)) {
       await _showPremiumRequiredForConsejosCopyPdf(context);
@@ -1854,7 +2284,7 @@ class _ConsejosPacienteScreenState extends State<ConsejosPacienteScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al generar PDF: ${e.toString()}'),
+            content: Text(l10n.commonGeneratePdfError(e.toString())),
             backgroundColor: Colors.red,
           ),
         );
@@ -1892,6 +2322,9 @@ class ConsejoDetailScreen extends StatefulWidget {
 class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
   static const MethodChannel _externalUrlChannel =
       MethodChannel('nutri_app/external_url');
+
+  AppLocalizations get l10n => AppLocalizations.of(context)!;
+
   static final RegExp _contentTokenRegex =
       RegExp(r'\[\[(img|documento|enlace):(\d+)\]\]');
   static final RegExp _genericTokenRegex = RegExp(r'\[\[([^\[\]]+)\]\]');
@@ -1959,11 +2392,44 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
   void initState() {
     super.initState();
     _consejo = widget.consejo;
+    _loadConsejoDetalleSiHaceFalta();
     _loadDocumentos();
     _loadRelacionados();
     if (!widget.isPreviewMode) {
       _marcarComoLeido();
     }
+  }
+
+  Future<void> _loadConsejoDetalleSiHaceFalta() async {
+    final codigo = _consejo.codigo;
+    if (codigo == null) {
+      return;
+    }
+    if ((_consejo.imagenPortada ?? '').trim().isNotEmpty) {
+      return;
+    }
+
+    try {
+      final apiService = context.read<ApiService>();
+      final response = await apiService.get('api/consejos.php?codigo=$codigo');
+      if (response.statusCode != 200) {
+        return;
+      }
+      final detalle = Consejo.fromJson(
+        json.decode(response.body) as Map<String, dynamic>,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _consejo.imagenPortada =
+            detalle.imagenPortada ?? _consejo.imagenPortada;
+        _consejo.imagenMiniatura =
+            detalle.imagenMiniatura ?? _consejo.imagenMiniatura;
+        _consejo.imagenPortadaNombre =
+            detalle.imagenPortadaNombre ?? _consejo.imagenPortadaNombre;
+      });
+    } catch (_) {}
   }
 
   @override
@@ -2352,6 +2818,7 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
   }
 
   Future<void> _toggleLike() async {
+    final l10n = AppLocalizations.of(context)!;
     // debugPrint('Detail _toggleLike called for consejo: ${_consejo.codigo}');
     if (widget.isPreviewMode) {
       // debugPrint('Preview mode, skipping');
@@ -2365,8 +2832,8 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
       // debugPrint('Guest mode - cannot like');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Debes iniciar sesión para dar me gusta'),
+          SnackBar(
+            content: Text(l10n.commonSignInToLike),
             backgroundColor: Colors.orange,
           ),
         );
@@ -2378,8 +2845,8 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
     if (userCode == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Error: No se pudo identificar el usuario'),
+          SnackBar(
+            content: Text(l10n.commonCouldNotIdentifyUser),
             backgroundColor: Colors.red,
           ),
         );
@@ -2419,7 +2886,7 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(
-          SnackBar(content: Text('Error al cambiar me gusta. $errorMessage')));
+          SnackBar(content: Text(l10n.commonLikeChangeError(errorMessage))));
     }
   }
 
@@ -2439,6 +2906,7 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
   }
 
   Future<void> _launchUrl(String url) async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       await launchUrlString(url, mode: LaunchMode.externalApplication);
     } on PlatformException catch (e) {
@@ -2450,13 +2918,14 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al abrir enlace: ${e.toString()}')),
+          SnackBar(content: Text(l10n.commonOpenLinkError(e.toString()))),
         );
       }
     }
   }
 
   Future<void> _openDocumento(ConsejoDocumento doc) async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       // Mostrar loading
       showDialog(
@@ -2500,8 +2969,7 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
-                  'Error al cargar documento: ${response.statusCode}',
-                ),
+                    l10n.commonOpenDocumentError('${response.statusCode}')),
               ),
             );
           }
@@ -2514,7 +2982,7 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
         if (mounted) Navigator.of(context).pop();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('El documento no está disponible')),
+            SnackBar(content: Text(l10n.commonDocumentUnavailable)),
           );
         }
         return;
@@ -2526,9 +2994,8 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(
-                'Error: Documento inválido (tamaño: ${documentoBase64.length})',
-              ),
+              content: Text(l10n.commonOpenDocumentError(
+                  'Documento inválido (${documentoBase64.length})')),
             ),
           );
         }
@@ -2552,7 +3019,7 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
           if (mounted) Navigator.of(context).pop();
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Error al decodificar: ${e2.toString()}')),
+              SnackBar(content: Text(l10n.commonDecodeError(e2.toString()))),
             );
           }
           return;
@@ -2578,9 +3045,7 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
         if (mounted) Navigator.of(context).pop();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Error: No se pudo guardar el documento'),
-            ),
+            SnackBar(content: Text(l10n.commonSaveDocumentError)),
           );
         }
         return;
@@ -2595,7 +3060,7 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
       if (result.type != ResultType.done && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al abrir documento: ${result.message}'),
+            content: Text(l10n.commonOpenDocumentError(result.message)),
           ),
         );
       }
@@ -2605,7 +3070,7 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al abrir documento: ${e.toString()}')),
+          SnackBar(content: Text(l10n.commonOpenDocumentError(e.toString()))),
         );
       }
     }
@@ -2848,7 +3313,7 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
             child: OutlinedButton.icon(
               onPressed: () => _openDocumento(doc),
               icon: const Icon(Icons.download),
-              label: const Text('Descargar documento'),
+              label: Text(l10n.commonDownloadDocument),
             ),
           ),
         ],
@@ -3016,8 +3481,8 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
       // debugPrint('Guest mode - cannot save favorites');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Debes iniciar sesión para guardar favoritos'),
+          SnackBar(
+            content: Text(l10n.commonSignInToSaveFavorites),
             backgroundColor: Colors.orange,
           ),
         );
@@ -3029,8 +3494,8 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
     if (userCode == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Error: No se pudo identificar el usuario'),
+          SnackBar(
+            content: Text(l10n.commonCouldNotIdentifyUser),
             backgroundColor: Colors.red,
           ),
         );
@@ -3070,8 +3535,9 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
         final errorMessage = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(
-            content: Text('Error al cambiar favorito. $errorMessage')));
+        ).showSnackBar(
+          SnackBar(content: Text(l10n.commonFavoriteChangeError(errorMessage))),
+        );
       }
     }
   }
@@ -3094,8 +3560,8 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
       await Clipboard.setData(ClipboardData(text: textToCopy));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Copiado al portapapeles'),
+          SnackBar(
+            content: Text(l10n.commonCopiedToClipboard),
             duration: Duration(seconds: 2),
           ),
         );
@@ -3104,7 +3570,7 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al copiar: ${e.toString()}'),
+            content: Text(l10n.commonCopyError(e.toString())),
             backgroundColor: Colors.red,
           ),
         );
@@ -3148,7 +3614,7 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al generar PDF: ${e.toString()}'),
+            content: Text(l10n.commonGeneratePdfError(e.toString())),
             backgroundColor: Colors.red,
           ),
         );
@@ -3158,9 +3624,13 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final documentosYEnlaces =
         _documentos.where((doc) => doc.tipo != 'imagen').toList();
-    final hasPortada = (_consejo.imagenPortada ?? '').trim().isNotEmpty;
+    final coverBase64 = ((_consejo.imagenPortada ?? '').trim().isNotEmpty)
+        ? _consejo.imagenPortada!
+        : (_consejo.imagenMiniatura ?? '').trim();
+    final hasPortada = coverBase64.isNotEmpty;
     final isPersonalizadoDetalle = !widget.allowSocialActions;
     final usePinkDetailCards = isPersonalizadoDetalle && !hasPortada;
 
@@ -3170,7 +3640,7 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: const Text('Detalle del Consejo'),
+        title: Text(l10n.tipsDetailTitle),
         actions: [
           if (!widget.isPreviewMode && widget.allowSocialActions) ...[
             IconButton(
@@ -3211,7 +3681,7 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Vista Previa - Así verán el consejo los usuarios',
+                        l10n.tipsPreviewBanner,
                         style: TextStyle(
                           color: Colors.blue[800],
                           fontWeight: FontWeight.w500,
@@ -3226,11 +3696,11 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
               GestureDetector(
                 onTap: () => showImageViewerDialog(
                   context: context,
-                  base64Image: _consejo.imagenPortada!,
+                  base64Image: coverBase64,
                   title: _consejo.titulo,
                 ),
                 child: Image.memory(
-                  base64Decode(_consejo.imagenPortada!),
+                  base64Decode(coverBase64),
                   width: double.infinity,
                   height: 300,
                   fit: BoxFit.contain,
@@ -3262,19 +3732,19 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
                           onPressed: _toggleLike,
                         ),
                         Text(
-                          '${_consejo.totalLikes ?? 0} me gusta',
+                          l10n.commonLikesCount(_consejo.totalLikes ?? 0),
                           style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
                         const Spacer(),
                         IconButton(
                           icon: const Icon(Icons.copy, size: 20),
                           onPressed: _copyToClipboard,
-                          tooltip: 'Copiar',
+                          tooltip: l10n.commonCopy,
                         ),
                         IconButton(
                           icon: const Icon(Icons.picture_as_pdf, size: 20),
                           onPressed: _generateConsejoPdf,
-                          tooltip: 'Generar PDF',
+                          tooltip: l10n.commonGeneratePdf,
                         ),
                       ],
                     )
@@ -3285,12 +3755,12 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
                         IconButton(
                           icon: const Icon(Icons.copy, size: 20),
                           onPressed: _copyToClipboard,
-                          tooltip: 'Copiar',
+                          tooltip: l10n.commonCopy,
                         ),
                         IconButton(
                           icon: const Icon(Icons.picture_as_pdf, size: 20),
                           onPressed: _generateConsejoPdf,
-                          tooltip: 'Generar PDF',
+                          tooltip: l10n.commonGeneratePdf,
                         ),
                       ],
                     ),
@@ -3340,8 +3810,8 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
 
                   // Documentos y URLs - Carrusel horizontal
                   if (documentosYEnlaces.isNotEmpty) ...[
-                    const Text(
-                      'Documentos y enlaces',
+                    Text(
+                      l10n.commonDocumentsAndLinks,
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -3353,93 +3823,85 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
                     else
                       SizedBox(
                         height: 160,
-                        child: Scrollbar(
+                        child: ListView.builder(
                           controller: _documentosScrollController,
-                          thumbVisibility: true,
-                          child: ListView.builder(
-                            controller: _documentosScrollController,
-                            scrollDirection: Axis.horizontal,
-                            itemCount: documentosYEnlaces.length,
-                            itemBuilder: (context, index) {
-                              final doc = documentosYEnlaces[index];
-                              return Container(
-                                width: 180,
-                                margin: EdgeInsets.only(
-                                  right: 12,
-                                  left: index == 0 ? 0 : 0,
+                          scrollDirection: Axis.horizontal,
+                          itemCount: documentosYEnlaces.length,
+                          itemBuilder: (context, index) {
+                            final doc = documentosYEnlaces[index];
+                            return Container(
+                              width: 180,
+                              margin: const EdgeInsets.only(right: 12),
+                              child: Card(
+                                elevation: 3,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
                                 ),
-                                child: Card(
-                                  elevation: 3,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: InkWell(
-                                    onTap: () {
-                                      if (doc.tipo == 'url' &&
-                                          doc.url != null) {
-                                        _launchUrl(doc.url!);
-                                      } else if (doc.tipo == 'documento') {
-                                        _openDocumento(doc);
-                                      }
-                                    },
-                                    borderRadius: BorderRadius.circular(12),
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(10.0),
-                                      child: Column(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(
-                                            doc.tipo == 'documento'
-                                                ? Icons.insert_drive_file
-                                                : _isYouTubeUrl(doc.url)
-                                                    ? Icons.play_circle
-                                                    : Icons.link,
-                                            size: 40,
-                                            color: doc.tipo == 'documento'
-                                                ? Colors.blue
-                                                : _isYouTubeUrl(doc.url)
-                                                    ? Colors.red
-                                                    : Colors.purple,
+                                child: InkWell(
+                                  onTap: () {
+                                    if (doc.tipo == 'url' && doc.url != null) {
+                                      _launchUrl(doc.url!);
+                                    } else if (doc.tipo == 'documento') {
+                                      _openDocumento(doc);
+                                    }
+                                  },
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(10.0),
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          doc.tipo == 'documento'
+                                              ? Icons.insert_drive_file
+                                              : _isYouTubeUrl(doc.url)
+                                                  ? Icons.play_circle
+                                                  : Icons.link,
+                                          size: 40,
+                                          color: doc.tipo == 'documento'
+                                              ? Colors.blue
+                                              : _isYouTubeUrl(doc.url)
+                                                  ? Colors.red
+                                                  : Colors.purple,
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Flexible(
+                                          child: Text(
+                                            doc.nombre ?? l10n.commonDocument,
+                                            style: const TextStyle(
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                            textAlign: TextAlign.center,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
                                           ),
-                                          const SizedBox(height: 6),
+                                        ),
+                                        if (doc.tipo == 'url' &&
+                                            doc.url != null) ...[
+                                          const SizedBox(height: 3),
                                           Flexible(
                                             child: Text(
-                                              doc.nombre ?? 'Sin nombre',
+                                              doc.url!,
                                               style: const TextStyle(
-                                                fontSize: 13,
-                                                fontWeight: FontWeight.bold,
+                                                fontSize: 10,
+                                                color: Colors.grey,
                                               ),
                                               textAlign: TextAlign.center,
-                                              maxLines: 2,
+                                              maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
                                             ),
                                           ),
-                                          if (doc.tipo == 'url' &&
-                                              doc.url != null) ...[
-                                            const SizedBox(height: 3),
-                                            Flexible(
-                                              child: Text(
-                                                doc.url!,
-                                                style: const TextStyle(
-                                                  fontSize: 10,
-                                                  color: Colors.grey,
-                                                ),
-                                                textAlign: TextAlign.center,
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                            ),
-                                          ],
                                         ],
-                                      ),
+                                      ],
                                     ),
                                   ),
                                 ),
-                              );
-                            },
-                          ),
+                              ),
+                            );
+                          },
                         ),
                       ),
                   ],
@@ -3455,8 +3917,8 @@ class _ConsejoDetailScreenState extends State<ConsejoDetailScreen> {
                           color: Colors.amber.shade600,
                         ),
                         const SizedBox(width: 8),
-                        const Text(
-                          'También te puede interesar...',
+                        Text(
+                          l10n.commonYouMayAlsoLike,
                           style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
@@ -3552,13 +4014,14 @@ class _ConsejosHashtagScreenState extends State<ConsejosHashtagScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: Text('Consejos con ${widget.hashtag}'),
+        title: Text(l10n.tipsHashtagTitle(widget.hashtag)),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -3570,7 +4033,7 @@ class _ConsejosHashtagScreenState extends State<ConsejosHashtagScreen> {
                       Icon(Icons.tag, size: 64, color: Colors.grey[400]),
                       const SizedBox(height: 16),
                       Text(
-                        'No hay consejos con ${widget.hashtag}',
+                        l10n.tipsHashtagEmpty(widget.hashtag),
                         style: TextStyle(fontSize: 16, color: Colors.grey[600]),
                       ),
                     ],

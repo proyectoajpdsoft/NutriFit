@@ -115,15 +115,34 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
     }).toList();
   }
 
-  void _navigateToEditScreen([EntrevistaFit? entrevista]) {
-    if (widget.paciente == null) {
-      return;
+  void _navigateToEditScreen([EntrevistaFit? entrevista]) async {
+    Paciente? pacienteToUse = widget.paciente;
+
+    if (pacienteToUse == null && entrevista != null) {
+      try {
+        final pacientes = await _apiService.getPacientes();
+        pacienteToUse = pacientes.firstWhere(
+          (p) => p.codigo == entrevista.codigoPaciente,
+        );
+      } catch (e) {
+        if (mounted) {
+          final errorMessage = e.toString().replaceFirst('Exception: ', '');
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error al cargar el paciente. $errorMessage'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
     }
+
     Navigator.of(context)
         .push(
           MaterialPageRoute(
             builder: (context) => EntrevistaFitEditScreen(
-              paciente: widget.paciente!,
+              paciente: pacienteToUse,
               entrevista: entrevista,
             ),
           ),
@@ -172,13 +191,11 @@ class _EntrevistasFitListScreenState extends State<EntrevistasFitListScreen> {
           ),
         ],
       ),
-      floatingActionButton: widget.paciente == null
-          ? null
-          : FloatingActionButton(
-              onPressed: () => _navigateToEditScreen(),
-              tooltip: 'Nueva Entrevista Fit',
-              child: const Icon(Icons.add),
-            ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _navigateToEditScreen(),
+        tooltip: 'Nueva Entrevista Fit',
+        child: const Icon(Icons.add),
+      ),
       body: Column(
         children: [
           if (_showFilterEntrevistas)

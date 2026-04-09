@@ -23,11 +23,76 @@ PermissionManager::checkPermission($user, 'sesiones');
 
 // GET: Obtener sesiones del usuario
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    $ultimos_accesos = isset($_GET['ultimos_accesos']) ? intval($_GET['ultimos_accesos']) : 0;
     $all_sesiones = isset($_GET['all_sesiones']) ? intval($_GET['all_sesiones']) : 0;
     $codigo_usuario = isset($_GET['codigo_usuario']) ? $_GET['codigo_usuario'] : null;
     $codigo_usuario_auth = intval($user['codigo'] ?? 0);
     $is_admin = (($user['administrador'] ?? 'N') === 'S');
     $is_nutri = strtolower(trim((string)($user['tipo'] ?? ''))) === 'nutricionista';
+
+    if ($ultimos_accesos === 1) {
+        if (!$is_admin && !$is_nutri) {
+            http_response_code(403);
+            echo json_encode(array("message" => "No tienes permiso para consultar accesos globales."));
+            exit();
+        }
+
+        // Registrados: un único registro por usuario con su último acceso exitoso.
+        $query_registered = "SELECT s.id, s.codigousuario, s.fecha, s.hora, s.estado, s.ip_local, s.ip_publica, s.tipo,
+                                    u.nick AS usuario_nick, u.nombre AS usuario_nombre
+                             FROM sesion s
+                             INNER JOIN (
+                                SELECT codigousuario,
+                                       MAX(CONCAT(COALESCE(fecha, '0000-00-00'), ' ', COALESCE(hora, '00:00:00'))) AS max_dt
+                                FROM sesion
+                                WHERE codigousuario IS NOT NULL
+                                  AND estado IN ('OK', 'OK_GUEST_LOGIN')
+                                GROUP BY codigousuario
+                             ) last_s ON last_s.codigousuario = s.codigousuario
+                                     AND CONCAT(COALESCE(s.fecha, '0000-00-00'), ' ', COALESCE(s.hora, '00:00:00')) = last_s.max_dt
+                             LEFT JOIN usuario u ON u.codigo = s.codigousuario
+                             ORDER BY s.fecha DESC, s.hora DESC";
+        $stmt_registered = $db->prepare($query_registered);
+        $stmt_registered->execute();
+        $registered_rows = $stmt_registered->fetchAll(PDO::FETCH_ASSOC);
+
+        // Invitados no registrados: un único registro por IP pública con su último acceso.
+        $query_guest = "SELECT s.id, s.codigousuario, s.fecha, s.hora, s.estado, s.ip_local, s.ip_publica, s.tipo,
+                               NULL AS usuario_nick, NULL AS usuario_nombre
+                        FROM sesion s
+                        INNER JOIN (
+                            SELECT ip_publica,
+                                   MAX(CONCAT(COALESCE(fecha, '0000-00-00'), ' ', COALESCE(hora, '00:00:00'))) AS max_dt
+                            FROM sesion
+                            WHERE (codigousuario IS NULL OR codigousuario = 0)
+                              AND ip_publica IS NOT NULL
+                              AND TRIM(ip_publica) <> ''
+                              AND estado IN ('OK_GUEST_LOGIN', 'OK')
+                            GROUP BY ip_publica
+                        ) last_g ON last_g.ip_publica = s.ip_publica
+                                AND CONCAT(COALESCE(s.fecha, '0000-00-00'), ' ', COALESCE(s.hora, '00:00:00')) = last_g.max_dt
+                        WHERE (s.codigousuario IS NULL OR s.codigousuario = 0)
+                        ORDER BY s.fecha DESC, s.hora DESC";
+        $stmt_guest = $db->prepare($query_guest);
+        $stmt_guest->execute();
+        $guest_rows = $stmt_guest->fetchAll(PDO::FETCH_ASSOC);
+
+        $accesos = array_merge($registered_rows, $guest_rows);
+
+        usort($accesos, function ($a, $b) {
+            $ad = ($a['fecha'] ?? '') . ' ' . ($a['hora'] ?? '00:00:00');
+            $bd = ($b['fecha'] ?? '') . ' ' . ($b['hora'] ?? '00:00:00');
+            if ($ad === $bd) return 0;
+            return ($ad < $bd) ? 1 : -1;
+        });
+
+        http_response_code(200);
+        echo json_encode(array(
+            "total_accesos" => count($accesos),
+            "ultimos_accesos" => $accesos
+        ));
+        exit();
+    }
 
     if ($all_sesiones === 1) {
         if (!$is_admin && !$is_nutri) {

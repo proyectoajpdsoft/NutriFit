@@ -685,11 +685,52 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
     );
   }
 
+  Widget _buildToggleLetterBadge(
+    String label,
+    bool active, {
+    VoidCallback? onTap,
+  }) {
+    final color = active ? Colors.green : Colors.grey;
+    final badge = Container(
+      width: 24,
+      height: 22,
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Center(
+        child: Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+    if (onTap == null) return badge;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: badge,
+      ),
+    );
+  }
+
+  void _toggleCompletado() {
+    setState(() => _completado = !_completado);
+    _markDirty();
+  }
+
   Widget _buildExpandableCard({
     required String title,
     required String cardKey,
     String? subtitle,
     required Widget child,
+    List<Widget> titleBadges = const [],
     List<Widget> titleActions = const [],
     Widget? trailingBadge,
   }) {
@@ -707,7 +748,20 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+            Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                if (titleBadges.isNotEmpty) const SizedBox(width: 6),
+                ...titleBadges,
+              ],
+            ),
             if ((subtitle ?? '').trim().isNotEmpty)
               Text(
                 subtitle!.trim(),
@@ -2334,9 +2388,13 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
                     cardKey: 'semanas',
                     subtitle:
                         '${_desde != null ? DateFormat('dd/MM/yyyy').format(_desde!) : '-'} - ${_hasta != null ? DateFormat('dd/MM/yyyy').format(_hasta!) : '-'}',
-                    trailingBadge: _buildCountCircleBadge(
-                      _completado ? 1 : 0,
-                    ),
+                    titleActions: [
+                      _buildToggleLetterBadge(
+                        'C',
+                        _completado,
+                        onTap: _toggleCompletado,
+                      ),
+                    ],
                     child: Column(
                       children: [
                         Row(
@@ -2412,7 +2470,9 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
                   _buildExpandableCard(
                     title: 'Consejos generales',
                     cardKey: 'consejos_generales',
-                    trailingBadge: _buildCountTagBadge(_consejos.length),
+                    titleBadges: [
+                      _buildCountTagBadge(_consejos.length),
+                    ],
                     child: TextFormField(
                       initialValue: _consejos,
                       decoration: const InputDecoration(
@@ -2427,9 +2487,9 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
                   _buildExpandableCard(
                     title: 'Recomendaciones',
                     cardKey: 'recomendaciones',
-                    trailingBadge: _buildCountTagBadge(
-                      _recomendaciones.length,
-                    ),
+                    titleBadges: [
+                      _buildCountTagBadge(_recomendaciones.length),
+                    ],
                     child: TextFormField(
                       initialValue: _recomendaciones,
                       decoration: const InputDecoration(
@@ -2445,7 +2505,9 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
                   _buildExpandableCard(
                     title: 'Indicaciones',
                     cardKey: 'indicaciones',
-                    trailingBadge: _buildCountTagBadge(_indicaciones.length),
+                    titleBadges: [
+                      _buildCountTagBadge(_indicaciones.length),
+                    ],
                     child: TextFormField(
                       initialValue: _indicaciones,
                       decoration: const InputDecoration(
@@ -2461,9 +2523,9 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
                   _buildExpandableCard(
                     title: 'Indicaciones (paciente)',
                     cardKey: 'indicaciones_paciente',
-                    trailingBadge: _buildCountTagBadge(
-                      _indicacionesUsuario.length,
-                    ),
+                    titleBadges: [
+                      _buildCountTagBadge(_indicacionesUsuario.length),
+                    ],
                     child: TextFormField(
                       initialValue: _indicacionesUsuario,
                       decoration: const InputDecoration(
@@ -2481,6 +2543,17 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
                     _buildExpandableCard(
                       title: 'Días',
                       cardKey: 'dias',
+                      titleBadges: [
+                        _buildCountCircleBadge(
+                          _dias.length,
+                          onTap: () {
+                            setState(() {
+                              _diaSeleccionado = null;
+                            });
+                            _loadEjerciciosPlanFit();
+                          },
+                        ),
+                      ],
                       titleActions: [
                         IconButton(
                           tooltip: 'Añadir día',
@@ -2503,15 +2576,6 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
                           ),
                         ),
                       ],
-                      trailingBadge: _buildCountCircleBadge(
-                        _dias.length,
-                        onTap: () {
-                          setState(() {
-                            _diaSeleccionado = null;
-                          });
-                          _loadEjerciciosPlanFit();
-                        },
-                      ),
                       child: _loadingDias
                           ? const Center(child: CircularProgressIndicator())
                           : _dias.isEmpty
@@ -2577,7 +2641,7 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
                                             );
                                           },
                                           child: Container(
-                                            width: 110,
+                                            width: 142,
                                             padding: const EdgeInsets.symmetric(
                                               horizontal: 4,
                                               vertical: 4,
@@ -2641,27 +2705,6 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
                                                     ],
                                                   ),
                                                 ),
-                                                const SizedBox(width: 4),
-                                                Container(
-                                                  width: 24,
-                                                  height: 24,
-                                                  decoration: BoxDecoration(
-                                                    color:
-                                                        Colors.green.shade100,
-                                                    shape: BoxShape.circle,
-                                                  ),
-                                                  alignment: Alignment.center,
-                                                  child: Text(
-                                                    '${dia.numeroDia}',
-                                                    style: TextStyle(
-                                                      fontSize: 10,
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                      color:
-                                                          Colors.green.shade800,
-                                                    ),
-                                                  ),
-                                                ),
                                               ],
                                             ),
                                           ),
@@ -2678,6 +2721,14 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
                       subtitle: _diaSeleccionado != null
                           ? 'Día ${(_diaSeleccionado!.titulo ?? '').trim().isNotEmpty ? _diaSeleccionado!.titulo! : _diaSeleccionado!.numeroDia}'
                           : 'Todos los días',
+                      titleBadges: [
+                        _buildCountCircleBadge(
+                          _ejercicios.length,
+                          onTap: _diaSeleccionado != null
+                              ? () => _showMultipleEjerciciosSelector()
+                              : null,
+                        ),
+                      ],
                       titleActions: [
                         IconButton(
                           tooltip: 'Añadir ejercicio',
@@ -2687,12 +2738,6 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
                               _showEjercicioDialog(dia: _diaSeleccionado),
                         ),
                       ],
-                      trailingBadge: _buildCountCircleBadge(
-                        _ejercicios.length,
-                        onTap: _diaSeleccionado != null
-                            ? () => _showMultipleEjerciciosSelector()
-                            : null,
-                      ),
                       child: _loadingEjercicios
                           ? const Center(child: CircularProgressIndicator())
                           : _ejercicios.isEmpty
@@ -3009,6 +3054,7 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
         return _buildExpandableCard(
           title: 'Paciente',
           cardKey: 'paciente',
+          subtitle: selectedPaciente?.nombre ?? '',
           titleActions: [
             IconButton(
               tooltip: 'Seleccionar paciente',
@@ -3017,18 +3063,204 @@ class _PlanFitEditScreenState extends State<PlanFitEditScreen> {
               onPressed: () => _showPacienteSelectorDialog(pacientes),
             ),
           ],
-          child: TextFormField(
-            readOnly: true,
-            initialValue: selectedPaciente?.nombre ?? '',
-            decoration: const InputDecoration(
-              hintText: 'Selecciona un paciente',
-              border: OutlineInputBorder(),
-            ),
-            validator: (_) =>
-                _selectedPacienteId == null ? 'Selecciona un paciente' : null,
-          ),
+          child: _buildPacienteTags(selectedPaciente),
         );
       },
+    );
+  }
+
+  int? _calcularEdadPaciente(Paciente paciente) {
+    if (paciente.edad != null && paciente.edad! > 0) return paciente.edad;
+    final nacimiento = paciente.fechaNacimiento;
+    if (nacimiento == null) return null;
+    final hoy = DateTime.now();
+    var edad = hoy.year - nacimiento.year;
+    final noCumplido = (hoy.month < nacimiento.month) ||
+        (hoy.month == nacimiento.month && hoy.day < nacimiento.day);
+    if (noCumplido) edad--;
+    return edad >= 0 ? edad : null;
+  }
+
+  double? _calcularImcPaciente(Paciente paciente) {
+    final peso = paciente.peso;
+    final alturaCm = paciente.altura;
+    if (peso == null || peso <= 0 || alturaCm == null || alturaCm <= 0) {
+      return null;
+    }
+    final alturaM = alturaCm / 100.0;
+    return peso / (alturaM * alturaM);
+  }
+
+  String _getBmiCategory(double bmi) {
+    if (bmi < 16.0) return 'Infrapeso: Delgadez Severa';
+    if (bmi < 17.0) return 'Infrapeso: Delgadez moderada';
+    if (bmi < 18.5) return 'Infrapeso: Delgadez aceptable';
+    if (bmi < 25.0) return 'Peso Normal';
+    if (bmi < 30.0) return 'Sobrepeso';
+    if (bmi < 35.0) return 'Obeso: Tipo I';
+    if (bmi < 40.0) return 'Obeso: Tipo II';
+    return 'Obeso: Tipo III';
+  }
+
+  Color _getBmiColor(double bmi) {
+    if (bmi < 16.0) return Colors.red.shade800;
+    if (bmi < 17.0) return Colors.deepOrange;
+    if (bmi < 18.5) return Colors.orange;
+    if (bmi < 25.0) return Colors.green;
+    if (bmi < 30.0) return Colors.lime.shade700;
+    if (bmi < 35.0) return Colors.deepOrange;
+    if (bmi < 40.0) return Colors.red;
+    return Colors.red.shade800;
+  }
+
+  void _showBmiInfoDialog(double bmi) {
+    final bmiColor = _getBmiColor(bmi);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('IMC (OMS)'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: bmiColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: bmiColor.withValues(alpha: 0.6)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.monitor_weight, size: 18, color: bmiColor),
+                  const SizedBox(width: 6),
+                  Text(
+                    'IMC ${bmi.toStringAsFixed(1)}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: bmiColor,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _getBmiCategory(bmi),
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 10),
+            const Text('Tipos:'),
+            const SizedBox(height: 6),
+            const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('- Infrapeso: Delgadez Severa'),
+                Text('- Infrapeso: Delgadez moderada'),
+                Text('- Infrapeso: Delgadez aceptable'),
+                Text('- Peso Normal'),
+                Text('- Sobrepeso'),
+                Text('- Obeso: Tipo I'),
+                Text('- Obeso: Tipo II'),
+                Text('- Obeso: Tipo III'),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: const Text('IMC = peso (kg) / altura (m)²'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPacienteInfoTag({
+    required IconData icon,
+    required String value,
+    VoidCallback? onTap,
+  }) {
+    final chip = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.blue.shade100),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: Colors.blue.shade900),
+          const SizedBox(width: 6),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.blue.shade900,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (onTap == null) return chip;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: chip,
+    );
+  }
+
+  Widget _buildPacienteTags(Paciente? paciente) {
+    if (paciente == null) {
+      return const Text(
+        'Selecciona un paciente',
+        style: TextStyle(color: Colors.black54),
+      );
+    }
+
+    final edad = _calcularEdadPaciente(paciente);
+    final peso = paciente.peso;
+    final altura = paciente.altura;
+    final imc = _calcularImcPaciente(paciente);
+
+    final tags = <Widget>[
+      _buildPacienteInfoTag(icon: Icons.person, value: paciente.nombre),
+      if (edad != null) _buildPacienteInfoTag(icon: Icons.cake, value: '$edad'),
+      if (peso != null && peso > 0)
+        _buildPacienteInfoTag(
+          icon: Icons.scale,
+          value: peso.toStringAsFixed(1),
+        ),
+      if (altura != null && altura > 0)
+        _buildPacienteInfoTag(icon: Icons.height, value: '$altura'),
+      if (imc != null)
+        _buildPacienteInfoTag(
+          icon: Icons.analytics,
+          value: imc.toStringAsFixed(1),
+          onTap: () => _showBmiInfoDialog(imc),
+        ),
+    ];
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: tags,
     );
   }
 

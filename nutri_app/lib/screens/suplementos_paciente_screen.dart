@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -9,8 +10,40 @@ import '../screens/suplemento_detail_screen.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import '../services/consejo_receta_pdf_service.dart';
+import '../widgets/premium_feature_dialog_helper.dart';
+import '../widgets/premium_upsell_card.dart';
 
 enum _OrdenSuplementosPremium { nombre, fecha }
+
+bool _canAccessSuplementosCatalog(AuthService authService) {
+  return authService.isPremium ||
+      authService.userType == 'Nutricionista' ||
+      authService.userType == 'Administrador';
+}
+
+Future<void> _showPremiumRequiredForSuplementosCopyPdf(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
+  return PremiumFeatureDialogHelper.show(
+    context,
+    message: l10n.supplementsPremiumCopyPdfMessage,
+  );
+}
+
+Future<void> _showPremiumRequiredForSuplementosExplore(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
+  return PremiumFeatureDialogHelper.show(
+    context,
+    message: l10n.supplementsPremiumExploreMessage,
+  );
+}
+
+Future<void> _showPremiumRequiredForSuplementosTools(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
+  return PremiumFeatureDialogHelper.show(
+    context,
+    message: l10n.supplementsPremiumToolsMessage,
+  );
+}
 
 class SuplementosPacienteScreen extends StatefulWidget {
   const SuplementosPacienteScreen({super.key});
@@ -21,16 +54,21 @@ class SuplementosPacienteScreen extends StatefulWidget {
 }
 
 class _SuplementosPacienteScreenState extends State<SuplementosPacienteScreen> {
+  static const String _paramNonPremiumPreviewCodes =
+      'codigos_suplementos_no_premium';
   static const String _prefsSearchVisible =
       'suplementos_paciente_search_visible';
   static const String _prefsSearchQuery = 'suplementos_paciente_search_query';
+  static const String _prefsSearchScope = 'suplementos_paciente_search_scope';
 
   List<Suplemento> _suplementos = [];
   List<Suplemento> _filtered = [];
   bool _isLoading = true;
   bool _searchVisible = false;
   String _searchQuery = '';
+  String _searchScope = 'ambos';
   String? _loadErrorMessage;
+  List<int>? _nonPremiumPreviewCodes;
   _OrdenSuplementosPremium _orden = _OrdenSuplementosPremium.nombre;
   bool _ordenAscendente = true;
 
@@ -63,11 +101,20 @@ class _SuplementosPacienteScreenState extends State<SuplementosPacienteScreen> {
       _filtered = List.from(_suplementos);
     } else {
       final q = _searchQuery.toLowerCase();
-      _filtered = _suplementos
-          .where((s) =>
-              s.titulo.toLowerCase().contains(q) ||
-              (s.descripcion ?? '').toLowerCase().contains(q))
-          .toList();
+      _filtered = _suplementos.where((s) {
+        final matchTitle = s.titulo.toLowerCase().contains(q);
+        final matchDescription =
+            (s.descripcion ?? '').toLowerCase().contains(q);
+        switch (_searchScope) {
+          case 'titulo':
+            return matchTitle;
+          case 'descripcion':
+            return matchDescription;
+          case 'ambos':
+          default:
+            return matchTitle || matchDescription;
+        }
+      }).toList();
     }
 
     int compareNombre(Suplemento a, Suplemento b) =>
@@ -130,6 +177,7 @@ class _SuplementosPacienteScreenState extends State<SuplementosPacienteScreen> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_prefsSearchVisible, _searchVisible);
       await prefs.setString(_prefsSearchQuery, _searchQuery);
+      await prefs.setString(_prefsSearchScope, _searchScope);
     } catch (_) {
       // Ignore persistence errors to avoid breaking UI flow.
     }
@@ -142,6 +190,11 @@ class _SuplementosPacienteScreenState extends State<SuplementosPacienteScreen> {
       setState(() {
         _searchVisible = prefs.getBool(_prefsSearchVisible) ?? false;
         _searchQuery = prefs.getString(_prefsSearchQuery) ?? '';
+        final restoredScope = prefs.getString(_prefsSearchScope) ?? 'ambos';
+        _searchScope =
+            {'titulo', 'descripcion', 'ambos'}.contains(restoredScope)
+                ? restoredScope
+                : 'ambos';
         _searchCtrl.text = _searchQuery;
       });
     } catch (_) {
@@ -176,15 +229,22 @@ class _SuplementosPacienteScreenState extends State<SuplementosPacienteScreen> {
       _loadErrorMessage = null;
     });
     try {
-      final response =
-          await context.read<ApiService>().get('api/suplementos.php?activos=1');
+      final apiService = context.read<ApiService>();
+      final previewCodesFuture = apiService
+          .getParametroValor(_paramNonPremiumPreviewCodes)
+          .then(_parsePreviewCodes)
+          .catchError((_) => null);
+      final response = await apiService.get('api/suplementos.php?activos=1');
       if (response.statusCode == 200 && mounted) {
         final List<dynamic> data = jsonDecode(response.body) as List<dynamic>;
+        final previewCodes = await previewCodesFuture;
+        if (!mounted) return;
         setState(() {
           _suplementos = data
               .map((e) =>
                   Suplemento.fromJson(Map<String, dynamic>.from(e as Map)))
               .toList();
+          _nonPremiumPreviewCodes = previewCodes;
           _applyFilter();
           _loadErrorMessage = null;
         });
@@ -196,6 +256,7 @@ class _SuplementosPacienteScreenState extends State<SuplementosPacienteScreen> {
         setState(() {
           _suplementos = [];
           _filtered = [];
+          _nonPremiumPreviewCodes = null;
           _loadErrorMessage = _friendlyApiError(
             e,
             fallback: 'No se pudieron cargar los suplementos.',
@@ -228,16 +289,31 @@ class _SuplementosPacienteScreenState extends State<SuplementosPacienteScreen> {
   }
 
   Future<void> _openDetail(Suplemento s) async {
+    final authService = context.read<AuthService>();
+    final canAccessFullCatalog = _canAccessSuplementosCatalog(authService);
+
     await Navigator.push<void>(
       context,
       MaterialPageRoute(
         builder: (_) => SuplementoDetailScreen(
           suplemento: s,
-          onExportPdf: _exportItemPdf,
+          onExportPdf: canAccessFullCatalog
+              ? _exportItemPdf
+              : (_) => _showPremiumRequiredForSuplementosCopyPdf(context),
           allSuplementos: _suplementos,
-          showPremiumRecommendations: context.read<AuthService>().isPremium,
-          onNavigateToSuplemento: (target) => _openDetail(target),
+          showPremiumRecommendations: true,
+          allowCopyAndPdf: canAccessFullCatalog,
+          allowDiscoveryNavigation: canAccessFullCatalog,
+          onRequestPremiumAccess: (message) =>
+              PremiumFeatureDialogHelper.show(context, message: message),
+          onNavigateToSuplemento: canAccessFullCatalog
+              ? (target) => _openDetail(target)
+              : (target) => _showPremiumRequiredForSuplementosExplore(context),
           onHashtagTap: (hashtag) {
+            if (!canAccessFullCatalog) {
+              _showPremiumRequiredForSuplementosExplore(context);
+              return;
+            }
             setState(() {
               _searchVisible = true;
             });
@@ -260,20 +336,113 @@ class _SuplementosPacienteScreenState extends State<SuplementosPacienteScreen> {
     _saveListState();
   }
 
+  void _applySearchScope(String scope) {
+    setState(() {
+      _searchScope = scope;
+      _applyFilter();
+    });
+    _saveListState();
+  }
+
+  List<int>? _parsePreviewCodes(String? rawValue) {
+    final raw =
+        (rawValue ?? '').trim().replaceAll(';', ',').replaceAll('|', ',');
+    if (raw.isEmpty) return null;
+
+    final codes = raw
+        .split(',')
+        .map((item) => int.tryParse(item.trim()))
+        .whereType<int>()
+        .where((value) => value > 0)
+        .toList(growable: false);
+
+    if (codes.isEmpty) return null;
+    return codes;
+  }
+
+  List<Suplemento> _buildPreviewSuplementos() {
+    final configuredCodes = _nonPremiumPreviewCodes;
+    if (configuredCodes != null && configuredCodes.isNotEmpty) {
+      final byCode = <int, Suplemento>{
+        for (final item in _suplementos)
+          if (item.codigo != null) item.codigo!: item,
+      };
+      final configuredItems = configuredCodes
+          .map((code) => byCode[code])
+          .whereType<Suplemento>()
+          .toList(growable: false);
+      if (configuredItems.isNotEmpty) {
+        return configuredItems;
+      }
+    }
+
+    final preview = List<Suplemento>.from(_suplementos);
+    preview.sort((a, b) {
+      final dateA = a.fechaa ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final dateB = b.fechaa ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final byDate = dateB.compareTo(dateA);
+      if (byDate != 0) return byDate;
+      return a.titulo.toLowerCase().compareTo(b.titulo.toLowerCase());
+    });
+    return preview.take(3).toList(growable: false);
+  }
+
+  String _catalogHighlightCount(int total) {
+    if (total <= 0) return '0';
+    if (total < 10) return '$total';
+    return '${total - (total % 10)}';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final authService = context.watch<AuthService>();
+    final canAccessFullCatalog = _canAccessSuplementosCatalog(authService);
+    final visibleItems =
+        canAccessFullCatalog ? _filtered : _buildPreviewSuplementos();
+    final totalSuplementos = _suplementos.length;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Suplementos'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Suplementos'),
+            const SizedBox(width: 8),
+            Container(
+              width: 24,
+              height: 24,
+              alignment: Alignment.center,
+              decoration: const BoxDecoration(
+                color: Colors.blue,
+                shape: BoxShape.circle,
+              ),
+              child: Text(
+                '$totalSuplementos',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
         actions: [
           IconButton(
             icon: Icon(_searchVisible ? Icons.search_off : Icons.search),
             tooltip: _searchVisible ? 'Ocultar búsqueda' : 'Buscar',
-            onPressed: _toggleSearchVisibility,
+            onPressed: canAccessFullCatalog
+                ? _toggleSearchVisibility
+                : () => _showPremiumRequiredForSuplementosTools(context),
           ),
           PopupMenuButton<String>(
             tooltip: 'Opciones',
             onSelected: (value) {
+              if (!canAccessFullCatalog) {
+                _showPremiumRequiredForSuplementosTools(context);
+                return;
+              }
+
               switch (value) {
                 case 'buscar':
                   _toggleSearchVisibility();
@@ -380,42 +549,80 @@ class _SuplementosPacienteScreenState extends State<SuplementosPacienteScreen> {
                 )
               : Column(
                   children: [
-                    if (_searchVisible)
+                    if (canAccessFullCatalog && _searchVisible)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
-                        child: TextField(
-                          controller: _searchCtrl,
-                          autofocus: true,
-                          onChanged: _applySearch,
-                          decoration: InputDecoration(
-                            hintText: 'Buscar suplementos…',
-                            prefixIcon: IconButton(
-                              tooltip: _searchQuery.isEmpty
-                                  ? 'Buscar'
-                                  : 'Limpiar búsqueda',
-                              icon: Icon(
-                                _searchQuery.isEmpty
-                                    ? Icons.search
-                                    : Icons.clear,
+                        child: Column(
+                          children: [
+                            TextField(
+                              controller: _searchCtrl,
+                              autofocus: true,
+                              onChanged: _applySearch,
+                              decoration: InputDecoration(
+                                hintText: 'Buscar suplementos…',
+                                prefixIcon: IconButton(
+                                  tooltip: _searchQuery.isEmpty
+                                      ? 'Buscar'
+                                      : 'Limpiar búsqueda',
+                                  icon: Icon(
+                                    _searchQuery.isEmpty
+                                        ? Icons.search
+                                        : Icons.clear,
+                                  ),
+                                  onPressed: _searchQuery.isEmpty
+                                      ? null
+                                      : () {
+                                          _searchCtrl.clear();
+                                          _applySearch('');
+                                        },
+                                ),
+                                suffixIcon: IconButton(
+                                  tooltip: 'Ocultar búsqueda',
+                                  icon:
+                                      const Icon(Icons.visibility_off_outlined),
+                                  onPressed: _toggleSearchVisibility,
+                                ),
+                                border: const OutlineInputBorder(),
                               ),
-                              onPressed: _searchQuery.isEmpty
-                                  ? null
-                                  : () {
-                                      _searchCtrl.clear();
-                                      _applySearch('');
+                            ),
+                            const SizedBox(height: 8),
+                            SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: Row(
+                                children: [
+                                  ChoiceChip(
+                                    label: const Text('Título'),
+                                    selected: _searchScope == 'titulo',
+                                    onSelected: (value) {
+                                      if (value) _applySearchScope('titulo');
                                     },
+                                  ),
+                                  const SizedBox(width: 8),
+                                  ChoiceChip(
+                                    label: const Text('Descripción'),
+                                    selected: _searchScope == 'descripcion',
+                                    onSelected: (value) {
+                                      if (value) {
+                                        _applySearchScope('descripcion');
+                                      }
+                                    },
+                                  ),
+                                  const SizedBox(width: 8),
+                                  ChoiceChip(
+                                    label: const Text('Ambos'),
+                                    selected: _searchScope == 'ambos',
+                                    onSelected: (value) {
+                                      if (value) _applySearchScope('ambos');
+                                    },
+                                  ),
+                                ],
+                              ),
                             ),
-                            suffixIcon: IconButton(
-                              tooltip: 'Ocultar búsqueda',
-                              icon: const Icon(Icons.visibility_off_outlined),
-                              onPressed: _toggleSearchVisibility,
-                            ),
-                            border: const OutlineInputBorder(),
-                          ),
+                          ],
                         ),
                       ),
                     Expanded(
-                      child: _filtered.isEmpty
+                      child: visibleItems.isEmpty
                           ? Center(
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
@@ -424,9 +631,12 @@ class _SuplementosPacienteScreenState extends State<SuplementosPacienteScreen> {
                                       size: 64, color: Colors.grey.shade400),
                                   const SizedBox(height: 16),
                                   Text(
-                                    _searchQuery.isEmpty
-                                        ? 'No hay suplementos disponibles'
-                                        : 'Sin resultados para "$_searchQuery"',
+                                    canAccessFullCatalog &&
+                                            _searchQuery.isNotEmpty
+                                        ? 'Sin resultados para "$_searchQuery"'
+                                        : _searchQuery.isEmpty
+                                            ? 'No hay suplementos disponibles'
+                                            : 'No hay suplementos disponibles',
                                     style: TextStyle(
                                         color: Colors.grey.shade600,
                                         fontSize: 15),
@@ -444,9 +654,37 @@ class _SuplementosPacienteScreenState extends State<SuplementosPacienteScreen> {
                                   12,
                                   40 + MediaQuery.of(context).padding.bottom,
                                 ),
-                                itemCount: _filtered.length,
+                                itemCount: canAccessFullCatalog
+                                    ? visibleItems.length
+                                    : visibleItems.length + 1,
                                 itemBuilder: (context, index) {
-                                  final s = _filtered[index];
+                                  if (!canAccessFullCatalog &&
+                                      index == visibleItems.length) {
+                                    return Padding(
+                                      padding: const EdgeInsets.only(top: 12),
+                                      child: PremiumUpsellCard(
+                                        title: AppLocalizations.of(context)!
+                                            .supplementsPremiumTitle,
+                                        subtitle: AppLocalizations.of(context)!
+                                            .supplementsPremiumSubtitle,
+                                        subtitleHighlight: AppLocalizations.of(
+                                                context)!
+                                            .supplementsPremiumPreviewHighlight(
+                                          _catalogHighlightCount(
+                                            _suplementos.length,
+                                          ),
+                                        ),
+                                        subtitleHighlightColor:
+                                            Colors.pink.shade700,
+                                        onPressed: () => Navigator.pushNamed(
+                                          context,
+                                          '/premium_info',
+                                        ),
+                                      ),
+                                    );
+                                  }
+
+                                  final s = visibleItems[index];
                                   final desc = (s.descripcion ?? '').trim();
                                   return Card(
                                     margin:

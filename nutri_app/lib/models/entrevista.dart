@@ -56,6 +56,7 @@ class Entrevista {
   String? resultadosBascula;
   String? gustaCocinar;
   String? establecimientoCompra;
+  String? observacion;
 
   Entrevista({
     required this.codigo,
@@ -109,6 +110,7 @@ class Entrevista {
     this.resultadosBascula,
     this.gustaCocinar,
     this.establecimientoCompra,
+    this.observacion,
   });
 
   factory Entrevista.fromJson(Map<String, dynamic> json) {
@@ -187,6 +189,7 @@ class Entrevista {
       resultadosBascula: json["resultados_bascula"],
       gustaCocinar: json["gusta_cocinar"] ?? 'N',
       establecimientoCompra: json["establecimiento_compra"],
+      observacion: json["observacion"],
     );
   }
 
@@ -242,5 +245,6 @@ class Entrevista {
         "resultados_bascula": resultadosBascula,
         "gusta_cocinar": gustaCocinar,
         "establecimiento_compra": establecimientoCompra,
+        "observacion": observacion,
       };
 }

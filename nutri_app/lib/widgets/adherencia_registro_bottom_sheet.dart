@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/adherencia_service.dart';
 
@@ -21,6 +22,8 @@ Future<void> showAdherenciaRegistroBottomSheet({
   }
 
   final rootContext = context;
+  final l10n = AppLocalizations.of(rootContext)!;
+  final localeName = Localizations.localeOf(rootContext).toString();
   var tiempoAvisoCumplimientoSegundos = 18;
 
   final adherenciaService = AdherenciaService();
@@ -43,21 +46,31 @@ Future<void> showAdherenciaRegistroBottomSheet({
   await cargarTiempoAvisoCumplimiento();
 
   String tipoLabel(AdherenciaTipo tipo) {
-    return tipo == AdherenciaTipo.nutri ? 'Plan Nutricional' : 'Plan Fit';
+    return tipo == AdherenciaTipo.nutri
+        ? l10n.patientAdherenceNutriPlan
+        : l10n.patientAdherenceFitPlan;
   }
 
   String tipoLabelMensaje(AdherenciaTipo tipo) {
-    return tipo == AdherenciaTipo.nutri ? 'Plan nutricional' : 'Plan fit';
+    return tipoLabel(tipo).toLowerCase();
+  }
+
+  String formatLocalizedDate(DateTime value) {
+    try {
+      return DateFormat('EEEE, d MMM', localeName).format(value).trim();
+    } catch (_) {
+      return DateFormat('EEEE, d MMM', 'es_ES').format(value).trim();
+    }
   }
 
   String buildSheetTitle(DateTime? fecha) {
     if (fecha == null) {
-      return 'Cumplimiento para hoy';
+      return l10n.patientAdherenceSheetTitleToday;
     }
-    final base = DateFormat('EEEE, d MMM', 'es_ES').format(fecha).trim();
+    final base = formatLocalizedDate(fecha);
     final normalized =
         base.isEmpty ? base : base[0].toUpperCase() + base.substring(1);
-    return 'Cumplimiento para $normalized';
+    return l10n.patientAdherenceSheetTitleForDate(normalized);
   }
 
   DateTime dayOnly(DateTime value) =>
@@ -70,9 +83,8 @@ Future<void> showAdherenciaRegistroBottomSheet({
   if (isFutureTarget) {
     if (rootContext.mounted) {
       ScaffoldMessenger.of(rootContext).showSnackBar(
-        const SnackBar(
-          content: Text(
-              'No se puede registrar cumplimiento en fechas futuras. Solo hoy o días anteriores.'),
+        SnackBar(
+          content: Text(l10n.patientAdherenceFutureDateError),
           backgroundColor: Colors.orange,
         ),
       );
@@ -84,12 +96,9 @@ Future<void> showAdherenciaRegistroBottomSheet({
     final today = dayOnly(DateTime.now());
     final target = dayOnly(fecha);
     if (today == target) {
-      return 'hoy';
+      return l10n.patientAdherenceDateToday;
     }
-    return DateFormat('EEEE, d MMM', 'es_ES')
-        .format(fecha)
-        .trim()
-        .toLowerCase();
+    return formatLocalizedDate(fecha).toLowerCase();
   }
 
   String buildStatusMessage(
@@ -98,11 +107,15 @@ Future<void> showAdherenciaRegistroBottomSheet({
     DateTime fecha,
   ) {
     final estadoMsg = switch (estado) {
-      AdherenciaEstado.cumplido => 'cumplido',
-      AdherenciaEstado.parcial => 'parcial',
-      AdherenciaEstado.noRealizado => 'no realizado',
+      AdherenciaEstado.cumplido => l10n.patientAdherenceCompleted,
+      AdherenciaEstado.parcial => l10n.patientAdherencePartial,
+      AdherenciaEstado.noRealizado => l10n.patientAdherenceNotDone,
     };
-    return '${tipoLabelMensaje(tipo)} $estadoMsg ${buildDateMessage(fecha)}';
+    return l10n.patientAdherenceStatusSaved(
+      tipoLabelMensaje(tipo),
+      estadoMsg.toLowerCase(),
+      buildDateMessage(fecha),
+    );
   }
 
   Color estadoColor(AdherenciaEstado estado) {
@@ -258,8 +271,8 @@ Future<void> showAdherenciaRegistroBottomSheet({
   }) async {
     var motivoTexto = motivoInicial ?? '';
     final titulo = estado == AdherenciaEstado.noRealizado
-        ? 'Motivo de no realización'
-        : 'Motivo de cumplimiento parcial';
+        ? l10n.patientAdherenceReasonNotDoneTitle
+        : l10n.patientAdherenceReasonPartialTitle;
 
     final result = await showDialog<String>(
       context: rootContext,
@@ -273,21 +286,21 @@ Future<void> showAdherenciaRegistroBottomSheet({
           onChanged: (value) {
             motivoTexto = value;
           },
-          decoration: const InputDecoration(
-            hintText: 'Cuéntanos brevemente qué pasó hoy',
+          decoration: InputDecoration(
+            hintText: l10n.patientAdherenceReasonHint,
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, ''),
-            child: const Text('Omitir motivo'),
+            child: Text(l10n.patientAdherenceSkipReason),
           ),
           ElevatedButton(
             onPressed: () {
               final value = motivoTexto.trim();
               Navigator.pop(dialogContext, value);
             },
-            child: const Text('Guardar y continuar'),
+            child: Text(l10n.patientAdherenceSaveContinue),
           ),
         ],
       ),
@@ -315,11 +328,12 @@ Future<void> showAdherenciaRegistroBottomSheet({
         (metrica.porcentaje - metrica.tendencia).clamp(0, 100);
     final reincidente = porcentajePrevio < 50;
 
-    final title =
-        reincidente ? '⚠️ Vamos a reaccionar' : '💪 Aún estamos a tiempo';
+    final title = reincidente
+        ? l10n.patientAdherenceAlertRecoveryTitle
+        : l10n.patientAdherenceAlertEncouragementTitle;
     final body = reincidente
-        ? 'Llevas dos semanas seguidas por debajo del 50% en ${tipoLabelMensaje(tipo).toLowerCase()}. Vamos a recuperar el ritmo ya: pequeños pasos diarios, pero sin fallar. Tú puedes, pero toca ponerse serio 🚨🙂'
-        : 'Esta semana ${tipoLabelMensaje(tipo).toLowerCase()} va por debajo del 50%. La próxima puede ser mucho mejor: vuelve a tu rutina base y suma una victoria cada día 🌱✨';
+        ? l10n.patientAdherenceAlertRecoveryBody(tipoLabelMensaje(tipo))
+        : l10n.patientAdherenceAlertEncouragementBody(tipoLabelMensaje(tipo));
 
     mostrarAvisoSuperiorAdherencia(
       title: title,
@@ -329,6 +343,20 @@ Future<void> showAdherenciaRegistroBottomSheet({
   }
 
   final title = buildSheetTitle(fechaObjetivo);
+
+  AdherenciaEstado? parseStoredEstado(dynamic raw) {
+    final normalized = (raw ?? '').toString().trim().toLowerCase();
+    if (normalized == 'cumplido') {
+      return AdherenciaEstado.cumplido;
+    }
+    if (normalized == 'parcial') {
+      return AdherenciaEstado.parcial;
+    }
+    if (normalized == 'no') {
+      return AdherenciaEstado.noRealizado;
+    }
+    return null;
+  }
 
   final estados = <AdherenciaTipo, AdherenciaEstado?>{
     for (final tipo in tipos) tipo: estadoHoyInicial?[tipo],
@@ -349,6 +377,11 @@ Future<void> showAdherenciaRegistroBottomSheet({
               ? AdherenciaTipo.fit
               : null;
       if (tipo == null) continue;
+
+      final estado = parseStoredEstado(row['estado']);
+      if (estado != null) {
+        estados[tipo] = estado;
+      }
 
       final motivo =
           (row['observacion'] ?? row['motivo'] ?? '').toString().trim();
@@ -396,9 +429,8 @@ Future<void> showAdherenciaRegistroBottomSheet({
               saving = false;
             });
             ScaffoldMessenger.of(rootContext).showSnackBar(
-              const SnackBar(
-                content: Text(
-                    'No se puede registrar cumplimiento en fechas futuras. Solo hoy o dias anteriores.'),
+              SnackBar(
+                content: Text(l10n.patientAdherenceFutureDateError),
                 backgroundColor: Colors.orange,
               ),
             );
@@ -449,12 +481,17 @@ Future<void> showAdherenciaRegistroBottomSheet({
           });
           ScaffoldMessenger.of(rootContext).showSnackBar(
             SnackBar(
-              content: Text('No se pudo guardar en BD: $e'),
+              content: Text(l10n.patientAdherenceSaveError(e.toString())),
               backgroundColor: Colors.red,
             ),
           );
         }
       }
+
+      final tiposToShow = tipoInicial != null && tipos.contains(tipoInicial)
+          ? <AdherenciaTipo>[tipoInicial]
+          : tipos;
+      final motivoExpandido = <AdherenciaTipo, bool>{};
 
       ButtonStyle selectedStyle(Color color) {
         return ElevatedButton.styleFrom(
@@ -468,6 +505,51 @@ Future<void> showAdherenciaRegistroBottomSheet({
         AdherenciaTipo tipo,
       ) {
         final selected = estados[tipo];
+        final motivo = motivosGuardados[tipo];
+        final motiExpanded = motivoExpandido[tipo] ?? false;
+
+        Widget buildEstadoIconButton({
+          required IconData icon,
+          required Color color,
+          required AdherenciaEstado estado,
+          required String tooltip,
+        }) {
+          final isSelected = selected == estado;
+          if (isSelected) {
+            return Tooltip(
+              message: tooltip,
+              child: ElevatedButton(
+                onPressed: saving
+                    ? null
+                    : () => registrar(setModalState, tipo, estado),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: color,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(52, 52),
+                  shape: const CircleBorder(),
+                  padding: EdgeInsets.zero,
+                ),
+                child: Icon(icon, size: 28),
+              ),
+            );
+          }
+          return Tooltip(
+            message: tooltip,
+            child: OutlinedButton(
+              onPressed:
+                  saving ? null : () => registrar(setModalState, tipo, estado),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: color,
+                minimumSize: const Size(52, 52),
+                shape: const CircleBorder(),
+                side: BorderSide(color: color, width: 1.5),
+                padding: EdgeInsets.zero,
+              ),
+              child: Icon(icon, size: 26),
+            ),
+          );
+        }
+
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -475,68 +557,101 @@ Future<void> showAdherenciaRegistroBottomSheet({
               tipoLabel(tipo),
               style: const TextStyle(fontWeight: FontWeight.w700),
             ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                (selected == AdherenciaEstado.cumplido
-                    ? ElevatedButton.icon
-                    : OutlinedButton.icon)(
-                  onPressed: saving
-                      ? null
-                      : () => registrar(
-                            setModalState,
-                            tipo,
-                            AdherenciaEstado.cumplido,
-                          ),
-                  style: selected == AdherenciaEstado.cumplido
-                      ? selectedStyle(Colors.green)
-                      : null,
-                  icon: const Icon(Icons.check_circle_outline, size: 16),
-                  label: const Text('Cumplido'),
+                buildEstadoIconButton(
+                  icon: Icons.check_circle_outline,
+                  color: Colors.green,
+                  estado: AdherenciaEstado.cumplido,
+                  tooltip: l10n.patientAdherenceCompleted,
                 ),
-                (selected == AdherenciaEstado.parcial
-                    ? ElevatedButton.icon
-                    : OutlinedButton.icon)(
-                  onPressed: saving
-                      ? null
-                      : () => registrar(
-                            setModalState,
-                            tipo,
-                            AdherenciaEstado.parcial,
-                          ),
-                  style: selected == AdherenciaEstado.parcial
-                      ? selectedStyle(Colors.orange)
-                      : null,
-                  icon: const Icon(Icons.change_circle_outlined, size: 16),
-                  label: const Text('Parcial'),
+                buildEstadoIconButton(
+                  icon: Icons.change_circle_outlined,
+                  color: Colors.orange,
+                  estado: AdherenciaEstado.parcial,
+                  tooltip: l10n.patientAdherencePartial,
                 ),
-                (selected == AdherenciaEstado.noRealizado
-                    ? ElevatedButton.icon
-                    : OutlinedButton.icon)(
-                  onPressed: saving
-                      ? null
-                      : () => registrar(
-                            setModalState,
-                            tipo,
-                            AdherenciaEstado.noRealizado,
-                          ),
-                  style: selected == AdherenciaEstado.noRealizado
-                      ? selectedStyle(Colors.red)
-                      : null,
-                  icon: const Icon(Icons.cancel_outlined, size: 16),
-                  label: const Text('No realizado'),
+                buildEstadoIconButton(
+                  icon: Icons.cancel_outlined,
+                  color: Colors.red,
+                  estado: AdherenciaEstado.noRealizado,
+                  tooltip: l10n.patientAdherenceNotDone,
                 ),
               ],
             ),
+            if (motivo != null && motivo.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () => setModalState(() {
+                        motivoExpandido[tipo] =
+                            !(motivoExpandido[tipo] ?? false);
+                      }),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.notes,
+                              size: 14,
+                              color: Colors.grey.shade700,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                l10n.patientAdherenceReasonLabel,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.grey.shade800,
+                                ),
+                              ),
+                            ),
+                            Icon(
+                              motiExpanded
+                                  ? Icons.keyboard_arrow_up
+                                  : Icons.keyboard_arrow_down,
+                              size: 18,
+                              color: Colors.grey.shade600,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (motiExpanded) ...[
+                      Divider(height: 1, color: Colors.grey.shade300),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                        child: Text(
+                          motivo,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey.shade800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
           ],
         );
       }
-
-      final tiposToShow = tipoInicial != null && tipos.contains(tipoInicial)
-          ? <AdherenciaTipo>[tipoInicial]
-          : tipos;
 
       return StatefulBuilder(
         builder: (modalStateContext, setModalState) => Padding(
@@ -568,7 +683,7 @@ Future<void> showAdherenciaRegistroBottomSheet({
                 child: TextButton(
                   onPressed:
                       saving ? null : () => Navigator.pop(modalStateContext),
-                  child: const Text('Cerrar'),
+                  child: Text(l10n.commonClose),
                 ),
               ),
             ],
@@ -599,6 +714,8 @@ class _CumplimientoInfoBannerState extends State<_CumplimientoInfoBanner> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeInOut,
@@ -622,7 +739,7 @@ class _CumplimientoInfoBannerState extends State<_CumplimientoInfoBanner> {
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      '¿Qué significa cada estado de cumplimiento?',
+                      l10n.patientAdherenceInfoTitle,
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.blue.shade800,
@@ -649,54 +766,49 @@ class _CumplimientoInfoBannerState extends State<_CumplimientoInfoBanner> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (_hasNutri) ...[
-                    _SectionTitle('Plan Nutricional'),
+                    _SectionTitle(l10n.patientAdherenceNutriPlan),
                     const SizedBox(height: 4),
                     _StateRow(
                       icon: Icons.check_circle_outline,
                       color: Colors.green,
-                      label: 'Cumplido',
+                      label: l10n.patientAdherenceCompleted,
                       description:
-                          'Seguiste el plan de alimentación tal como estaba previsto para este día.',
+                          l10n.patientAdherenceNutriCompletedDescription,
                     ),
                     _StateRow(
                       icon: Icons.change_circle_outlined,
                       color: Colors.orange,
-                      label: 'Parcial',
-                      description:
-                          'Seguiste parte del plan pero no completamente: alguna comida omitida, cambiada o con cantidad distinta.',
+                      label: l10n.patientAdherencePartial,
+                      description: l10n.patientAdherenceNutriPartialDescription,
                     ),
                     _StateRow(
                       icon: Icons.cancel_outlined,
                       color: Colors.red,
-                      label: 'No realizado',
-                      description:
-                          'No seguiste el plan de alimentación en este día.',
+                      label: l10n.patientAdherenceNotDone,
+                      description: l10n.patientAdherenceNutriNotDoneDescription,
                     ),
                     if (_hasFit) const SizedBox(height: 10),
                   ],
                   if (_hasFit) ...[
-                    _SectionTitle('Plan Fit'),
+                    _SectionTitle(l10n.patientAdherenceFitPlan),
                     const SizedBox(height: 4),
                     _StateRow(
                       icon: Icons.check_circle_outline,
                       color: Colors.green,
-                      label: 'Cumplido',
-                      description:
-                          'Realizaste el entrenamiento completo previsto para este día.',
+                      label: l10n.patientAdherenceCompleted,
+                      description: l10n.patientAdherenceFitCompletedDescription,
                     ),
                     _StateRow(
                       icon: Icons.change_circle_outlined,
                       color: Colors.orange,
-                      label: 'Parcial',
-                      description:
-                          'Hiciste parte del entrenamiento: algunos ejercicios, series o tiempo incompleto.',
+                      label: l10n.patientAdherencePartial,
+                      description: l10n.patientAdherenceFitPartialDescription,
                     ),
                     _StateRow(
                       icon: Icons.cancel_outlined,
                       color: Colors.red,
-                      label: 'No realizado',
-                      description:
-                          'No realizaste el entrenamiento en este día.',
+                      label: l10n.patientAdherenceNotDone,
+                      description: l10n.patientAdherenceFitNotDoneDescription,
                     ),
                   ],
                 ],

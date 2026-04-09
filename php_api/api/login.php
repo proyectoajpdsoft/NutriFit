@@ -78,6 +78,7 @@ $has_two_factor_last_counter_col = isset($usuario_columns['two_factor_last_count
 $has_login_failed_attempts_col = isset($usuario_columns['login_failed_attempts']);
 $has_login_blocked_until_col = isset($usuario_columns['login_blocked_until']);
 $has_url_api_col = isset($usuario_columns['url_api']);
+$has_eliminado_col = isset($usuario_columns['eliminado']);
 
 $current_api_base_url = get_current_api_base_url();
 
@@ -125,7 +126,11 @@ if ($has_login_blocked_until_col) {
     $query_fields[] = "login_blocked_until";
 }
 
-$query = "SELECT " . implode(', ', $query_fields) . " FROM usuario WHERE nick = :nick LIMIT 0,1";
+$query = "SELECT " . implode(', ', $query_fields) . " FROM usuario WHERE nick = :nick";
+if ($has_eliminado_col) {
+    $query .= " AND COALESCE(eliminado, 'N') <> 'S'";
+}
+$query .= " LIMIT 0,1";
 $stmt = $db->prepare($query);
 $stmt->bindParam(':nick', $data->nick);
 $stmt->execute();

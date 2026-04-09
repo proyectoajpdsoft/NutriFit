@@ -39,6 +39,8 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
   bool _filterPaciente = false;
   bool _filterNutricionista = false;
   bool _filterUsuarioSinPaciente = false;
+  bool _filterSolicitudPremium = false;
+  bool _filterEliminados = false;
   bool _showFilters = false;
   int? _sesionesUsuarioFiltro;
   DateTime? _sesionesDesde;
@@ -73,6 +75,10 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
       spacing: 6,
       runSpacing: 4,
       children: [
+        if (usuario.eliminado.toUpperCase() == 'S')
+          _buildTag('Eliminado', Colors.red.shade700),
+        if (usuario.emailVerificado.toUpperCase() == 'S')
+          _buildTag('Email verificado', Colors.teal.shade600),
         _buildTag(isActivo ? 'Activo' : 'Inactivo',
             isActivo ? Colors.green : Colors.grey),
         _buildTag(hasWeb ? 'Acceso web' : 'Sin acceso web',
@@ -158,6 +164,10 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
         prefs.getBool('usuarios_filter_nutricionista') ?? false;
     final filterUsuarioSinPaciente =
         prefs.getBool('usuarios_filter_usuario_sin_paciente') ?? false;
+    final filterSolicitudPremium =
+        prefs.getBool('usuarios_filter_solicitud_premium') ?? false;
+    final filterEliminados =
+        prefs.getBool('usuarios_filter_eliminados') ?? false;
     if (!mounted) return;
     setState(() {
       _showFilters = showFilters;
@@ -167,6 +177,8 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
       _filterPaciente = filterPaciente;
       _filterNutricionista = filterNutricionista;
       _filterUsuarioSinPaciente = filterUsuarioSinPaciente;
+      _filterSolicitudPremium = filterSolicitudPremium;
+      _filterEliminados = filterEliminados;
     });
     _refreshUsuarios();
   }
@@ -183,10 +195,15 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
       'usuarios_filter_usuario_sin_paciente',
       _filterUsuarioSinPaciente,
     );
+    await prefs.setBool(
+      'usuarios_filter_solicitud_premium',
+      _filterSolicitudPremium,
+    );
+    await prefs.setBool('usuarios_filter_eliminados', _filterEliminados);
   }
 
   void _refreshUsuarios() {
-    final future = _apiService.getUsuarios();
+    final future = _apiService.getUsuarios(includeDeleted: true);
     setState(() {
       _usuariosFuture = future;
     });
@@ -994,26 +1011,25 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
               !_filterActivos || usuario.activo.toUpperCase() == 'S';
           final matchesAcceso =
               !_filterAccesoWeb || usuario.accesoweb.toUpperCase() == 'S';
-          final tipoLower = (usuario.tipo ?? '').toLowerCase();
+          final tipoLower = (usuario.tipo ?? '').trim().toLowerCase();
+          final matchesPaciente = !_filterPaciente || tipoLower == 'paciente';
           final matchesNutricionista =
-              !_filterNutricionista || tipoLower.contains('nutricionista');
-
-          final hasPacienteAsignado = (usuario.codigoPaciente ?? 0) > 0;
-          final matchesPaciente = !_filterPaciente || hasPacienteAsignado;
-          final matchesUsuarioSinPaciente =
-              !_filterUsuarioSinPaciente || !hasPacienteAsignado;
-
-          final bothPacienteFiltersSelected =
-              _filterPaciente && _filterUsuarioSinPaciente;
-          final matchesPacienteDimension = bothPacienteFiltersSelected
-              ? true
-              : (matchesPaciente && matchesUsuarioSinPaciente);
+              !_filterNutricionista || tipoLower == 'nutricionista';
+          final matchesUsuario =
+              !_filterUsuarioSinPaciente || tipoLower == 'usuario';
+          final matchesSolicitudPremium = !_filterSolicitudPremium ||
+              (usuario.premiumSolicitudPendiente ?? '').toUpperCase() == 'S';
+          final matchesEliminados =
+              !_filterEliminados || usuario.eliminado.toUpperCase() == 'S';
 
           return matchesSearch &&
               matchesActivos &&
               matchesAcceso &&
+              matchesPaciente &&
               matchesNutricionista &&
-              matchesPacienteDimension;
+              matchesUsuario &&
+              matchesSolicitudPremium &&
+              matchesEliminados;
         }).toList();
 
         return Column(
@@ -1055,6 +1071,8 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
                             _filterPaciente = false;
                             _filterNutricionista = false;
                             _filterUsuarioSinPaciente = false;
+                            _filterSolicitudPremium = false;
+                            _filterEliminados = false;
                           });
                           _saveUiState();
                         },
@@ -1071,7 +1089,9 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
                                 !_filterAccesoWeb &&
                                 !_filterPaciente &&
                                 !_filterNutricionista &&
-                                !_filterUsuarioSinPaciente) {
+                                !_filterUsuarioSinPaciente &&
+                                !_filterSolicitudPremium &&
+                                !_filterEliminados) {
                               _filterTodos = true;
                             }
                           });
@@ -1090,7 +1110,9 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
                                 !_filterAccesoWeb &&
                                 !_filterPaciente &&
                                 !_filterNutricionista &&
-                                !_filterUsuarioSinPaciente) {
+                                !_filterUsuarioSinPaciente &&
+                                !_filterSolicitudPremium &&
+                                !_filterEliminados) {
                               _filterTodos = true;
                             }
                           });
@@ -1109,7 +1131,9 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
                                 !_filterAccesoWeb &&
                                 !_filterPaciente &&
                                 !_filterNutricionista &&
-                                !_filterUsuarioSinPaciente) {
+                                !_filterUsuarioSinPaciente &&
+                                !_filterSolicitudPremium &&
+                                !_filterEliminados) {
                               _filterTodos = true;
                             }
                           });
@@ -1128,7 +1152,9 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
                                 !_filterAccesoWeb &&
                                 !_filterPaciente &&
                                 !_filterNutricionista &&
-                                !_filterUsuarioSinPaciente) {
+                                !_filterUsuarioSinPaciente &&
+                                !_filterSolicitudPremium &&
+                                !_filterEliminados) {
                               _filterTodos = true;
                             }
                           });
@@ -1147,7 +1173,51 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
                                 !_filterAccesoWeb &&
                                 !_filterPaciente &&
                                 !_filterNutricionista &&
-                                !_filterUsuarioSinPaciente) {
+                                !_filterUsuarioSinPaciente &&
+                                !_filterSolicitudPremium &&
+                                !_filterEliminados) {
+                              _filterTodos = true;
+                            }
+                          });
+                          _saveUiState();
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      FilterChip(
+                        label: const Text('Solicitud Premium'),
+                        selected: _filterSolicitudPremium,
+                        onSelected: (selected) {
+                          setState(() {
+                            _filterSolicitudPremium = selected;
+                            _filterTodos = false;
+                            if (!_filterActivos &&
+                                !_filterAccesoWeb &&
+                                !_filterPaciente &&
+                                !_filterNutricionista &&
+                                !_filterUsuarioSinPaciente &&
+                                !_filterSolicitudPremium &&
+                                !_filterEliminados) {
+                              _filterTodos = true;
+                            }
+                          });
+                          _saveUiState();
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      FilterChip(
+                        label: const Text('Eliminados'),
+                        selected: _filterEliminados,
+                        onSelected: (selected) {
+                          setState(() {
+                            _filterEliminados = selected;
+                            _filterTodos = false;
+                            if (!_filterActivos &&
+                                !_filterAccesoWeb &&
+                                !_filterPaciente &&
+                                !_filterNutricionista &&
+                                !_filterUsuarioSinPaciente &&
+                                !_filterSolicitudPremium &&
+                                !_filterEliminados) {
                               _filterTodos = true;
                             }
                           });
@@ -1207,7 +1277,35 @@ class _UsuariosListScreenState extends State<UsuariosListScreen>
                             subtitle: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
+                                if ((usuario.nombre ?? '').trim().isNotEmpty ||
+                                    (usuario.email ?? '')
+                                        .trim()
+                                        .isNotEmpty) ...[
+                                  Text(
+                                    [
+                                      if ((usuario.nombre ?? '')
+                                          .trim()
+                                          .isNotEmpty)
+                                        usuario.nombre!.trim(),
+                                      if ((usuario.email ?? '')
+                                          .trim()
+                                          .isNotEmpty)
+                                        usuario.email!.trim(),
+                                    ].join(' • '),
+                                  ),
+                                  const SizedBox(height: 4),
+                                ],
                                 _buildUserTags(usuario),
+                                if (usuario.eliminado.toUpperCase() == 'S' &&
+                                    usuario.fechaEliminacion != null) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Fecha eliminación: ${usuario.fechaEliminacion!.toLocal()}'
+                                        .split('.')
+                                        .first,
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                ],
                                 if (isAdminUser) ...[
                                   const SizedBox(height: 4),
                                   actionsRow,

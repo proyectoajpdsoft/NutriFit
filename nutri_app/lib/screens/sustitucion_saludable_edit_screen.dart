@@ -8,6 +8,7 @@ import 'package:nutri_app/models/sustitucion_saludable.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:nutri_app/services/auth_service.dart';
 import 'package:nutri_app/utils/sustituciones_saludables_ai.dart';
+import 'package:nutri_app/widgets/image_viewer_dialog.dart';
 import 'package:nutri_app/widgets/paste_image_dialog.dart';
 import 'package:nutri_app/widgets/unsaved_changes_dialog.dart';
 import 'package:provider/provider.dart';
@@ -44,6 +45,7 @@ class _SustitucionSaludableEditScreenState
   bool _loading = false;
   bool _hasChanges = false;
   bool _categoriasExpanded = true;
+  bool _portadaExpanded = true;
   bool _suspendDirtyTracking = false;
   List<Map<String, dynamic>> _categorias = <Map<String, dynamic>>[];
   List<int> _selectedCategoriaIds = <int>[];
@@ -366,7 +368,7 @@ class _SustitucionSaludableEditScreenState
             children: [
               ListTile(
                 leading: const Icon(Icons.add_photo_alternate_outlined),
-                title: const Text('Añadir foto'),
+                title: const Text('Añadir imagen'),
                 onTap: () {
                   Navigator.pop(ctx);
                   _pickImage();
@@ -395,7 +397,7 @@ class _SustitucionSaludableEditScreenState
           children: [
             ListTile(
               leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Cambiar foto'),
+              title: const Text('Cambiar imagen'),
               onTap: () {
                 Navigator.pop(ctx);
                 _pickImage();
@@ -411,7 +413,7 @@ class _SustitucionSaludableEditScreenState
             ),
             ListTile(
               leading: const Icon(Icons.delete_outline, color: Colors.red),
-              title: const Text('Eliminar foto',
+              title: const Text('Eliminar imagen',
                   style: TextStyle(color: Colors.red)),
               onTap: () {
                 Navigator.pop(ctx);
@@ -426,6 +428,17 @@ class _SustitucionSaludableEditScreenState
           ],
         ),
       ),
+    );
+  }
+
+  void _viewPortadaImage() {
+    if ((_imagenPortadaBase64 ?? '').trim().isEmpty) return;
+
+    showImageViewerDialog(
+      context: context,
+      base64Image: _imagenPortadaBase64!,
+      title:
+          _tituloCtrl.text.isNotEmpty ? _tituloCtrl.text : 'Imagen de portada',
     );
   }
 
@@ -989,47 +1002,183 @@ class _SustitucionSaludableEditScreenState
                       ),
                     ),
                     const SizedBox(height: 24),
-                    // ─── Foto de portada ───
-                    Text('Portada',
-                        style: Theme.of(context).textTheme.labelLarge),
-                    const SizedBox(height: 8),
-                    GestureDetector(
-                      onTap: _imagenPortadaBase64 == null
-                          ? () => _showPortadaMenu(context)
-                          : null,
-                      onLongPress: _imagenPortadaBase64 != null
-                          ? () => _showPortadaMenu(context)
-                          : null,
-                      child: Container(
-                        width: double.infinity,
-                        height: 120,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[200],
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.grey[300]!),
-                        ),
-                        child: _imagenPortadaBase64 != null
-                            ? ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: Image.memory(
-                                  base64Decode(_imagenPortadaBase64!),
-                                  fit: BoxFit.cover,
-                                ),
-                              )
-                            : Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(Icons.image_outlined,
-                                        size: 40, color: Colors.grey[600]),
-                                    const SizedBox(height: 4),
-                                    Text('Toca para añadir foto',
-                                        style: TextStyle(
+                    Card(
+                      margin: EdgeInsets.zero,
+                      child: Column(
+                        children: [
+                          InkWell(
+                            onTap: () => setState(() {
+                              _portadaExpanded = !_portadaExpanded;
+                            }),
+                            borderRadius: BorderRadius.circular(12),
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Portada',
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          _imagenPortadaBase64 != null
+                                              ? (_imagenNombre ??
+                                                  'Imagen seleccionada')
+                                              : 'Sin imagen',
+                                          style: TextStyle(
                                             fontSize: 12,
-                                            color: Colors.grey[600])),
-                                  ],
-                                ),
+                                            color: Colors.grey[600],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  IconButton(
+                                    onPressed: _pickImage,
+                                    icon: const Icon(
+                                      Icons.add_photo_alternate_outlined,
+                                    ),
+                                    tooltip: 'Añadir imagen',
+                                  ),
+                                  IconButton(
+                                    onPressed: _pasteImage,
+                                    icon:
+                                        const Icon(Icons.content_paste_rounded),
+                                    tooltip: 'Pegar imagen',
+                                  ),
+                                  if (_imagenPortadaBase64 != null)
+                                    IconButton(
+                                      onPressed: () {
+                                        setState(() {
+                                          _imagenPortadaBase64 = null;
+                                          _imagenMiniaturaBase64 = null;
+                                          _imagenNombre = null;
+                                          _hasChanges = true;
+                                        });
+                                      },
+                                      icon: const Icon(Icons.delete_outline),
+                                      tooltip: 'Eliminar imagen',
+                                    ),
+                                  IconButton(
+                                    onPressed: () => setState(() {
+                                      _portadaExpanded = !_portadaExpanded;
+                                    }),
+                                    icon: Icon(
+                                      _portadaExpanded
+                                          ? Icons.expand_less
+                                          : Icons.expand_more,
+                                    ),
+                                    tooltip: _portadaExpanded
+                                        ? 'Plegar'
+                                        : 'Desplegar',
+                                  ),
+                                ],
                               ),
+                            ),
+                          ),
+                          if (_portadaExpanded) const Divider(height: 1),
+                          if (_portadaExpanded)
+                            Padding(
+                              padding: const EdgeInsets.all(16.0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Center(
+                                    child: Builder(
+                                      builder: (BuildContext menuContext) {
+                                        return GestureDetector(
+                                          onTap: () {
+                                            if (_imagenPortadaBase64 != null) {
+                                              _viewPortadaImage();
+                                            } else {
+                                              _showPortadaMenu(menuContext);
+                                            }
+                                          },
+                                          onLongPress: () {
+                                            _showPortadaMenu(menuContext);
+                                          },
+                                          child: Container(
+                                            width: 100,
+                                            height: 100,
+                                            decoration: BoxDecoration(
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                              border: Border.all(
+                                                color: Colors.grey[300]!,
+                                                width: 2,
+                                              ),
+                                            ),
+                                            child: ClipRRect(
+                                              borderRadius:
+                                                  BorderRadius.circular(10),
+                                              child: _imagenPortadaBase64 !=
+                                                      null
+                                                  ? Image.memory(
+                                                      base64Decode(
+                                                        _imagenMiniaturaBase64 ??
+                                                            _imagenPortadaBase64!,
+                                                      ),
+                                                      fit: BoxFit.cover,
+                                                    )
+                                                  : Container(
+                                                      color: Colors.grey[200],
+                                                      child: Column(
+                                                        mainAxisAlignment:
+                                                            MainAxisAlignment
+                                                                .center,
+                                                        children: [
+                                                          Icon(
+                                                            Icons.article,
+                                                            size: 64,
+                                                            color: Colors
+                                                                .grey[400],
+                                                          ),
+                                                          const SizedBox(
+                                                            height: 8,
+                                                          ),
+                                                          Text(
+                                                            'Sin imagen',
+                                                            style: TextStyle(
+                                                              color: Colors
+                                                                  .grey[600],
+                                                              fontSize: 14,
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Center(
+                                    child: Text(
+                                      _imagenPortadaBase64 != null
+                                          ? 'Toca para ver • Mantén pulsado para opciones'
+                                          : 'Toca para añadir imagen',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey[600],
+                                        fontStyle: FontStyle.italic,
+                                      ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                     const SizedBox(height: 24),

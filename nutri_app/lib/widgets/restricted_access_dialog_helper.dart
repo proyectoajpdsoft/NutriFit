@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:nutri_app/l10n/app_localizations.dart';
 import 'package:nutri_app/screens/contacto_nutricionista_screen.dart';
 import 'package:nutri_app/services/api_service.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 class RestrictedAccessDialogHelper {
-  static const String _genericMessage =
-      'Para acceder a tus planes nutricionales, planes de entrenamiento y recomendaciones personales, primero necesitas contactar con tu dietista online, que te asignará un plan específico, ajustado a tus necesidades.';
-
   static Future<void> show(
     BuildContext context, {
     required String title,
@@ -27,9 +25,12 @@ class RestrictedAccessDialogHelper {
 
     if (!context.mounted) return;
 
+    final l10n = AppLocalizations.of(context)!;
+
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
+        titlePadding: const EdgeInsets.fromLTRB(20, 18, 12, 0),
         title: Row(
           children: [
             Icon(
@@ -37,7 +38,20 @@ class RestrictedAccessDialogHelper {
               color: Theme.of(dialogContext).colorScheme.primary,
             ),
             const SizedBox(width: 8),
-            Expanded(child: Text(title)),
+            Expanded(
+              child: Text(
+                title,
+                style: Theme.of(dialogContext).textTheme.titleMedium,
+              ),
+            ),
+            IconButton(
+              tooltip: l10n.commonClose,
+              onPressed: () => Navigator.pop(dialogContext),
+              icon: const Icon(Icons.close),
+              style: IconButton.styleFrom(
+                shape: const CircleBorder(),
+              ),
+            ),
           ],
         ),
         content: SingleChildScrollView(
@@ -61,7 +75,7 @@ class RestrictedAccessDialogHelper {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        message ?? _genericMessage,
+                        message ?? l10n.restrictedAccessGenericMessage,
                         style: const TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
@@ -92,7 +106,7 @@ class RestrictedAccessDialogHelper {
                         size: 18),
                     label: Text(primaryActionLabel),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.deepOrange,
+                      backgroundColor: Colors.green.shade600,
                       foregroundColor: Colors.white,
                       elevation: 3,
                       padding: const EdgeInsets.symmetric(vertical: 14),
@@ -108,16 +122,19 @@ class RestrictedAccessDialogHelper {
                 ),
                 const SizedBox(height: 16),
               ],
-              const Text(
-                'Formas de contacto:',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              Text(
+                l10n.restrictedAccessContactMethods,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
               ),
               const SizedBox(height: 12),
               _buildDialogContactRow(
                 context: dialogContext,
                 icon: Icons.email,
-                label: 'Email',
-                value: email.isNotEmpty ? email : 'No disponible',
+                label: l10n.commonEmail,
+                value: email.isNotEmpty ? email : l10n.commonUnavailable,
                 onTap: email.isNotEmpty
                     ? () => _launchUrl('mailto:$email')
                     : () {},
@@ -136,7 +153,7 @@ class RestrictedAccessDialogHelper {
                     );
                   },
                   icon: const Icon(Icons.arrow_forward, size: 18),
-                  label: const Text('Más formas de contacto'),
+                  label: Text(l10n.restrictedAccessMoreContactOptions),
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     textStyle: const TextStyle(
@@ -151,12 +168,6 @@ class RestrictedAccessDialogHelper {
             ],
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cerrar'),
-          ),
-        ],
       ),
     );
   }

@@ -1,0 +1,1545 @@
+{
+  "@@locale": "en",
+  "settingsAndPrivacyTitle": "Settings and privacy",
+  "settingsAndPrivacyMenuLabel": "Settings and privacy",
+  "configTabParameters": "Parameters",
+  "configTabPremium": "Premium",
+  "configTabAppMenu": "App menu",
+  "configTabGeneral": "General",
+  "configTabSecurity": "Security",
+  "configTabUser": "User",
+  "configTabDisplay": "Display",
+  "configTabDefaults": "Defaults",
+  "configTabPrivacy": "Privacy",
+  "securitySubtabAccess": "Access",
+  "securitySubtabEmailServer": "Email server",
+  "securitySubtabCipher": "Encrypt/Decrypt",
+  "securitySubtabSessions": "Sessions",
+  "securitySubtabAccesses": "Access logs",
+  "privacyCenterTab": "Center",
+  "privacyPolicyTab": "Policy",
+  "privacySessionsTab": "Sessions",
+  "privacyLastUpdatedLabel": "Last updated: {date}",
+  "@privacyLastUpdatedLabel": {
+    "placeholders": {
+      "date": {}
+    }
+  },
+  "privacyIntro": "This section shows the updated NutriFitApp Privacy Policy, explains how personal data is processed under the GDPR and the Spanish LOPDGDD, and details how you can delete your account and all associated data directly from the app.",
+  "privacyPrintPdf": "Print / save as PDF",
+  "privacyPdfGenerateError": "Error generating privacy PDF: {error}",
+  "@privacyPdfGenerateError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "privacyCannotIdentifyUser": "The current user could not be identified.",
+  "privacyOpenProfileError": "Could not open Edit Profile: {error}",
+  "@privacyOpenProfileError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "privacyDeleteDialogTitle": "Delete all my data",
+  "privacyDeleteDialogIntro": "This action deletes your account and all data associated with it under your right to erasure.",
+  "privacyDeleteDialogBody": "Login history, chats, weight tracking, shopping list, activities, tasks, trainings, exercises, and images linked to your account will be deleted.",
+  "privacyDeleteDialogWarning": "This action is irreversible and will sign you out.",
+  "privacyDeleteTypedTitle": "Final confirmation",
+  "privacyDeleteTypedPrompt": "To confirm, type {keyword} in uppercase:",
+  "@privacyDeleteTypedPrompt": {
+    "placeholders": {
+      "keyword": {}
+    }
+  },
+  "privacyDeleteTypedHint": "{keyword}",
+  "@privacyDeleteTypedHint": {
+    "placeholders": {
+      "keyword": {}
+    }
+  },
+  "privacyDeleteTypedMismatch": "You must type {keyword} to confirm.",
+  "@privacyDeleteTypedMismatch": {
+    "placeholders": {
+      "keyword": {}
+    }
+  },
+  "commonCancel": "Cancel",
+  "privacyDeleteMyData": "Delete my data",
+  "privacyDeleteConnectionError": "The process could not be completed. Please check your internet connection.",
+  "privacyDeleteAccountFailed": "The account could not be deleted.",
+  "privacyActionPolicyTitle": "Privacy policy",
+  "privacyActionPolicyDescription": "Review the full privacy text, user rights, and data processing details under GDPR and LOPDGDD.",
+  "privacyViewPolicy": "View policy",
+  "privacyPdfShort": "PDF",
+  "privacyActionSecurityTitle": "Security and access",
+  "privacyActionSecurityDescription": "Open Edit Profile to manage email, two-factor authentication (2FA), trusted devices, and other access controls for your account.",
+  "privacyOpenEditProfile": "Open Edit Profile",
+  "privacyActionSessionsTitle": "Sign-ins",
+  "privacyActionSessionsDescription": "Review successful sessions, failed attempts, and access activity linked to your account.",
+  "privacyViewSessions": "View sessions",
+  "privacyActionDeleteTitle": "Delete all my data",
+  "privacyActionDeleteDescription": "You can request complete deletion of your account and related data directly from the app. This action is irreversible and will sign you out.",
+  "sessionsUserCodeUnavailable": "User code is not available",
+  "sessionsAnonymousGuestInfo": "No session data is available for unregistered users, since access is anonymous.",
+  "sessionsError": "Error: {error}",
+  "@sessionsError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "commonRetry": "Retry",
+  "sessionsNoDataAvailable": "No session data available",
+  "sessionsSuccessfulTitle": "Latest Successful Sign-ins",
+  "sessionsCurrent": "Current session:",
+  "sessionsPrevious": "Previous session:",
+  "sessionsNoSuccessful": "No successful sessions recorded",
+  "sessionsFailedTitle": "Latest Failed Access Attempts",
+  "sessionsAttemptNumber": "Attempt {count}:",
+  "@sessionsAttemptNumber": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "sessionsNoFailed": "No failed attempts recorded.",
+  "sessionsStatsTitle": "Session Statistics",
+  "sessionsTotal": "Total sessions: {count}",
+  "@sessionsTotal": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "sessionsSuccessfulCount": "Successful attempts: {count}",
+  "@sessionsSuccessfulCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "sessionsFailedCount": "Failed attempts: {count}",
+  "@sessionsFailedCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "commonNotAvailable": "N/A",
+  "sessionsDate": "Date: {value}",
+  "@sessionsDate": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "sessionsTime": "Time: {value}",
+  "@sessionsTime": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "sessionsDevice": "Device: {value}",
+  "@sessionsDevice": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "sessionsIpAddress": "IP address:",
+  "sessionsPublicIp": "Public: {value}",
+  "@sessionsPublicIp": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "privacyPolicyTitle": "NutriFitApp privacy policy",
+  "privacyPolicyLastUpdated": "April 7, 2026",
+  "privacyPolicySection1Title": "1. Data controller",
+  "privacyPolicySection1Paragraph1": "The data controller for the personal data processed through the NutriFit application is the owner or operating entity of the NutriFitApp service.",
+  "privacyPolicySection1Paragraph2": "Controller contact details:",
+  "privacyPolicySection1Bullet1": "Name or business name: Patricia Carmona Fernández.",
+  "privacyPolicySection1Bullet2": "Tax ID/VAT number: Provided upon request.",
+  "privacyPolicySection1Bullet3": "Address: Provided upon request.",
+  "privacyPolicySection1Bullet4": "Contact email: aprendeconpatrica[ — at — ]gmail[ — dot — ]com",
+  "privacyPolicySection2Title": "2. Applicable regulations",
+  "privacyPolicySection2Paragraph1": "This Privacy Policy has been drafted in accordance with the applicable personal data protection regulations, in particular:",
+  "privacyPolicySection2Bullet1": "Regulation (EU) 2016/679 of the European Parliament and of the Council of 27 April 2016, the General Data Protection Regulation (GDPR).",
+  "privacyPolicySection2Bullet2": "Spanish Organic Law 3/2018 of 5 December on Personal Data Protection and guarantee of digital rights (LOPDGDD).",
+  "privacyPolicySection2Bullet3": "Any other applicable Spanish and European regulations.",
+  "privacyPolicySection3Title": "3. What NutriFitApp is",
+  "privacyPolicySection3Paragraph1": "NutriFitApp is an application focused on nutrition, health, sports, habit tracking, and personal organization. It may include features such as a user profile, tasks, shopping list, recipes, tips, healthy substitutions, training, nutritional scanner, notifications, additives, supplements, weight control, and tracking tools between the user and the professional.",
+  "privacyPolicySection4Title": "4. What personal data we process",
+  "privacyPolicySection4Paragraph1": "Depending on how you use the app, NutriFitApp may process the following categories of data:",
+  "privacyPolicySection4Bullet1": "Identification data: name, nickname or alias, email address, profile image, and other registration data.",
+  "privacyPolicySection4Bullet2": "Access and authentication data: credentials, session identifiers, security verifications, and elements associated with secure access to the account.",
+  "privacyPolicySection4Bullet3": "App usage data: interactions, preferences, saved settings, and actions performed within the application.",
+  "privacyPolicySection4Bullet4": "Data provided by the user: tasks, notes, comments, feelings, manually entered content, and any other information voluntarily provided.",
+  "privacyPolicySection4Bullet5": "Data related to nutrition, wellness, physical activity, or personal tracking that the user chooses to add to the application.",
+  "privacyPolicySection4Bullet6": "Technical and device data: technical identifiers, app version, operating system, language settings, and the minimum data needed for operation, security, and diagnostics.",
+  "privacyPolicySection4Bullet7": "Data derived from push notifications, if the user enables them.",
+  "privacyPolicySection4Bullet8": "Camera or image data, if the user uses features such as profile image, scanner, content capture, or images in activities.",
+  "privacyPolicySection4Bullet9": "Data linked to calendar features, if the user decides to use schedule integrations.",
+  "privacyPolicySection4Bullet10": "Any other data necessary to properly provide the services offered in the app.",
+  "privacyPolicySection4Paragraph2": "If, in certain cases, data related to health or personal wellness is processed, such processing will only take place to the extent necessary to provide the functionality requested by the user and in accordance with the applicable legal basis.",
+  "privacyPolicySection5Title": "5. Purposes of processing",
+  "privacyPolicySection5Bullet1": "Create and manage the user account.",
+  "privacyPolicySection5Bullet2": "Allow sign-in and keep the session authenticated.",
+  "privacyPolicySection5Bullet3": "Provide the main NutriFitApp features.",
+  "privacyPolicySection5Bullet4": "Manage the user profile.",
+  "privacyPolicySection5Bullet5": "Allow tracking of habits, tasks, training, nutrition, and related content.",
+  "privacyPolicySection5Bullet6": "Facilitate interaction between the user and the professional when that functionality is enabled.",
+  "privacyPolicySection5Bullet7": "Send notifications related to account activity or features used by the user.",
+  "privacyPolicySection5Bullet8": "Improve the user experience, stability, security, and performance of the app.",
+  "privacyPolicySection5Bullet9": "Handle requests, incidents, or inquiries submitted by the user.",
+  "privacyPolicySection5Bullet10": "Comply with applicable legal obligations.",
+  "privacyPolicySection5Bullet11": "Protect the controller's legitimate interests regarding security, fraud prevention, service integrity, and protection against unauthorized access.",
+  "privacyPolicySection6Title": "6. Legal basis",
+  "privacyPolicySection6Paragraph1": "The legal bases that legitimize processing may be, depending on the case:",
+  "privacyPolicySection6Bullet1": "Performance of the contractual or pre-contractual relationship when the user registers for and uses NutriFitApp.",
+  "privacyPolicySection6Bullet2": "The user's consent for those features that require it.",
+  "privacyPolicySection6Bullet3": "Compliance with legal obligations.",
+  "privacyPolicySection6Bullet4": "The controller's legitimate interest in ensuring the security, continuity, and proper functioning of the application.",
+  "privacyPolicySection6Paragraph2": "When processing is based on consent, the user may withdraw it at any time, without affecting the lawfulness of processing carried out before its withdrawal.",
+  "privacyPolicySection7Title": "7. Data retention",
+  "privacyPolicySection7Paragraph1": "Personal data will be kept for as long as necessary to fulfill the purpose for which it was collected and, thereafter, for the periods legally required to address potential liabilities.",
+  "privacyPolicySection7Paragraph2": "When the user requests deletion of the account, their data will be deleted or anonymized in accordance with the internal retention policy and any applicable legal obligations.",
+  "privacyPolicySection8Title": "8. User-initiated data deletion",
+  "privacyPolicySection8Paragraph1": "NutriFitApp allows the user to delete all of their data by deleting the account directly from the application at any time.",
+  "privacyPolicySection8Paragraph2": "Steps within the app to completely delete the account and its data:",
+  "privacyPolicySection8Step1": "Sign in to NutriFitApp with your user account.",
+  "privacyPolicySection8Step2": "Open Edit Profile.",
+  "privacyPolicySection8Step3": "Within that screen, locate the account deletion option (the “Delete all my data” button).",
+  "privacyPolicySection8Step4": "Tap Delete all my data.",
+  "privacyPolicySection8Step5": "Confirm the deletion process.",
+  "privacyPolicySection8Paragraph3": "After confirmation, the application will execute the deletion process for the account and associated data according to the system's operation, and will sign the user out.",
+  "privacyPolicySection8Paragraph4": "If, for any reason, the user cannot complete the process from the app, they may also request deletion by writing to the contact email indicated above.",
+  "privacyPolicySection9Title": "9. Data recipients",
+  "privacyPolicySection9Paragraph1": "Data will NEVER be sold or disclosed to third parties.",
+  "privacyPolicySection9Paragraph2": "Only the following may have access to the data:",
+  "privacyPolicySection9Bullet1": "Qualified technical personnel solely for technological processes necessary for app operation, hosting, notifications, technical support, or related services.",
+  "privacyPolicySection9Bullet2": "Data processors contracted by the controller, under the corresponding contractual safeguards.",
+  "privacyPolicySection9Bullet3": "Public administrations, judges, courts, or competent authorities when there is a legal obligation.",
+  "privacyPolicySection9Paragraph3": "There are no international data transfers outside the European Economic Area.",
+  "privacyPolicySection10Title": "10. Device permissions",
+  "privacyPolicySection10Paragraph1": "NutriFitApp may request device permissions only when they are necessary for a specific feature. For example:",
+  "privacyPolicySection10Bullet1": "Camera: to capture images or use scanning features.",
+  "privacyPolicySection10Bullet2": "Gallery or files: to select images or documents, or to save PDF documents from the app.",
+  "privacyPolicySection10Bullet3": "Notifications: for relevant alerts within the app.",
+  "privacyPolicySection10Bullet4": "Calendar: if the user decides to export or add events.",
+  "privacyPolicySection10Bullet5": "Other permissions strictly necessary for certain application tools.",
+  "privacyPolicySection10Paragraph2": "The user may revoke these permissions at any time from the device settings, although some features may no longer be available.",
+  "privacyPolicySection11Title": "11. Information security",
+  "privacyPolicySection11Paragraph1": "NutriFitApp applies reasonable technical and organizational measures to protect personal data against loss, alteration, unauthorized access, disclosure, or destruction. Information is encrypted in transit.",
+  "privacyPolicySection11Paragraph2": "However, the user should be aware that no Internet transmission or storage system can guarantee absolute security.",
+  "privacyPolicySection12Title": "12. User rights",
+  "privacyPolicySection12Paragraph1": "The user may exercise the following rights at any time:",
+  "privacyPolicySection12Bullet1": "Access.",
+  "privacyPolicySection12Bullet2": "Rectification.",
+  "privacyPolicySection12Bullet3": "Erasure.",
+  "privacyPolicySection12Bullet4": "Objection.",
+  "privacyPolicySection12Bullet5": "Restriction of processing.",
+  "privacyPolicySection12Bullet6": "Portability.",
+  "privacyPolicySection12Bullet7": "Withdrawal of consent, when processing is based on it.",
+  "privacyPolicySection12Paragraph2": "To exercise these rights, the user may:",
+  "privacyPolicySection12Bullet8": "Use the functions available within the app, when they exist.",
+  "privacyPolicySection12Bullet9": "Contact the controller through the contact email indicated above.",
+  "privacyPolicySection12Paragraph3": "The request must allow the applicant to be reasonably identified.",
+  "privacyPolicySection12Paragraph4": "The user also has the right to lodge a complaint with the Spanish Data Protection Agency (AEPD) if they believe their rights have not been properly addressed:",
+  "privacyPolicySection12Paragraph5": "https://www.aepd.es/",
+  "privacyPolicySection13Title": "13. Minors",
+  "privacyPolicySection13Paragraph1": "NutriFitApp is not generally intended for minors without the intervention or authorization of their legal representatives when required. If we detect that personal data of a minor has been collected in breach of the applicable regulations, the appropriate measures will be taken for its deletion.",
+  "privacyPolicySection14Title": "14. Accuracy and user responsibility",
+  "privacyPolicySection14Paragraph1": "The user guarantees that the data provided is true, accurate, and up to date, and undertakes to communicate any changes.",
+  "privacyPolicySection14Paragraph2": "The user shall be responsible for any damages or losses that may arise from providing false, inaccurate, or outdated data.",
+  "privacyPolicySection15Title": "15. Changes to this policy",
+  "privacyPolicySection15Paragraph1": "NutriFitApp may update this Privacy Policy to adapt it to legal, technical, or functional changes. When changes are relevant, the user will be informed through appropriate means.",
+  "privacyPolicySection16Title": "16. Contact",
+  "privacyPolicySection16Paragraph1": "For any matter related to privacy or data protection, you can contact:",
+  "privacyPolicySection16Paragraph2": "aprendeconpatrica[ — at — ]gmail[ — dot — ]com",
+  "commonClose": "Close",
+  "appUpdatedNotice": "The app has been updated to version {version}.",
+  "@appUpdatedNotice": {
+    "placeholders": {
+      "version": {}
+    }
+  },
+  "commonContinue": "Continue",
+  "commonAgree": "OK",
+  "commonLater": "Later",
+  "commonValidate": "Validate",
+  "commonToday": "today",
+  "commonDebug": "DEBUG",
+  "commonAllRightsReserved": "All rights reserved",
+  "navHome": "Home",
+  "navLogout": "Sign out",
+  "navChat": "Chat",
+  "navPatients": "Patients",
+  "navAppointments": "Appointments",
+  "navReviews": "Reviews",
+  "navMeasurements": "Measurements",
+  "navNutriInterviews": "Nutri interviews",
+  "navNutriPlans": "Nutri plans",
+  "navFitInterviews": "Fit interviews",
+  "navFitPlans": "Fit plans",
+  "navExercises": "Exercises",
+  "navExerciseVideos": "Exercise videos",
+  "navActivities": "Activities",
+  "navDashboard": "Dashboard",
+  "navCharges": "Charges",
+  "navClients": "Clients",
+  "navTips": "Tips",
+  "navRecipes": "Recipes",
+  "navSubstitutions": "Substitutions",
+  "navTalksAndSeminars": "Talks and seminars",
+  "navTalks": "Talks",
+  "navPremiumPreview": "Go Premium (preview)",
+  "navPremium": "Go Premium",
+  "premiumRegistrationRequiredBody": "To go Premium, you must register first. Registration is free and, once you have your account, you will be able to request Premium access from the dietitian.",
+  "premiumRegisterFree": "Register for free",
+  "premiumPaymentMethodLabel": "Payment method",
+  "premiumVerifyEmailAction": "Verify your email to pay",
+  "premiumContinuePayment": "Continue to payment",
+  "premiumVerifiedEmailStatus": "Verified email: {email}",
+  "@premiumVerifiedEmailStatus": {"placeholders": {"email": {}}},
+  "premiumPaymentNeedsRegistration": "To make the payment, register first. It's free:",
+  "premiumPaymentNeedsEmailVerification": "To make the payment, first verify your email in",
+  "premiumGoToRegisterLink": "Go to user registration",
+  "premiumGuestRegistrationBody": "If you do not have an account yet, you must first register for free so you can request Premium access.",
+  "premiumBenefitsSectionTitle": "Benefits of being Premium",
+  "premiumPaymentSectionTitle": "Premium payment and signup",
+  "premiumAfterRegistrationMessage": "After registering, you will be able to use the Premium payment assistant on this same screen.",
+  "premiumFinalActivationMessage": "Final activation of Premium access is carried out by the NutriFit team after validating the payment and the selected period. It will be completed within the next 24/48/72 hours depending on the chosen method.",
+  "premiumDefaultIntroTitle": "Unlock your Premium experience",
+  "premiumDefaultIntroText": "Access exclusive content, advanced resources, and enhanced follow-up to get more out of your plan.",
+  "premiumDefaultBenefit1": "Access exclusive Premium-only features, such as Exercise Videos and future improvements.",
+  "premiumDefaultBenefit2": "Healthy substitutions library: quick swaps like \"if I do not have X, use Y\" so you can stay on plan.",
+  "premiumDefaultBenefit3": "A more complete in-app experience with differentiated content and expanded access.",
+  "premiumDefaultBenefit4": "Possibility of receiving personalized proposals from your nutritionist depending on the contracted service.",
+  "premiumDefaultPaymentMethod1": "The nutritionist may offer methods such as PayPal, Bizum, bank transfer, or other personalized options.",
+  "premiumDefaultPaymentMethod2": "These details are configurable through global parameters so each professional can adapt the commercial offer.",
+  "premiumDefaultPaymentIntro": "Instructions to complete the payment and activate your Premium account.",
+  "premiumDefaultActivationNotice": "Once payment is received, your Premium profile will be activated within approximately 24/48/72 hours depending on the selected method.",
+  "premiumDefaultPaypalSteps": "Open the payment gateway at: {url_paypal}.\nMake the payment using the PayPal account ({email_paypal}) and the indicated amount.\nIf needed, use the {boton_abrir_url_paypal} button.",
+  "premiumDefaultBizumSteps": "Send the Bizum payment to the phone number {telefono_nutricionista}.\nAdd the payment concept before confirming the payment.\nIf needed, use the {boton_copiar_telefono} button.",
+  "premiumDefaultTransferSteps": "Make the bank transfer using the details shown on screen.\nCheck the amount and add the concept before sending.\nIf needed, copy the available bank details.",
+  "premiumPayWithPaypal": "Pay with PayPal",
+  "premiumPayWithBizum": "Pay with Bizum",
+  "premiumPayWithTransfer": "Pay by bank transfer",
+  "premiumPeriodBadgeMaxDiscount": "Maximum discount",
+  "premiumPeriodBadgeHighSaving": "High savings",
+  "premiumPeriodBadgeMediumSaving": "Medium savings",
+  "premiumPeriodBadgeNoDiscount": "No discount",
+  "premiumPeriodLabel": "Premium period",
+  "premiumPeriodMonths": "{months} month{months, plural, one {} other {s}}",
+  "@premiumPeriodMonths": {"placeholders": {"months": {"type": "int"}}},
+  "premiumPriceUnavailable": "Price not available for {period}.",
+  "@premiumPriceUnavailable": {"placeholders": {"period": {}}},
+  "premiumPriceDisplay": "Price: {amount} (contracted period: {period})",
+  "@premiumPriceDisplay": {"placeholders": {"amount": {}, "period": {}}},
+  "premiumVerifyEmailBeforePayment": "You must verify your email before continuing with the payment.",
+  "premiumCopyPhone": "Copy phone",
+  "premiumOpenPayment": "Go to payment",
+  "premiumCopyConcept": "Copy concept",
+  "premiumVerifyEmailBeforeNotifyPayment": "You must verify your email before notifying the payment.",
+  "premiumNotifyPaymentError": "The payment could not be notified: {error}",
+  "@premiumNotifyPaymentError": {"placeholders": {"error": {}}},
+  "premiumCompletePaymentTitle": "Complete payment",
+  "premiumPaymentConceptLabel": "Concept you must include in the payment method:",
+  "premiumStepsFor": "Steps for {method}",
+  "@premiumStepsFor": {"placeholders": {"method": {}}},
+  "premiumBizumPhoneLabel": "Bizum phone",
+  "premiumAfterPaymentNotice": "Once you have completed the payment, tap \"I have completed the payment\" to notify the NutriFit team. As soon as the payment is verified, your Premium account will be activated and you will be notified by email.",
+  "premiumSendingNotification": "Sending notification...",
+  "premiumIHavePaid": "I have completed the payment",
+  "premiumInvalidUrl": "Invalid URL.",
+  "premiumOpenPaymentError": "The payment link could not be opened: {error}",
+  "@premiumOpenPaymentError": {"placeholders": {"error": {}}},
+  "premiumPeriodSummaryMaxDiscount": "12-month subscription period (maximum discount).",
+  "premiumPeriodSummaryHighDiscount": "6-month subscription period (high discount).",
+  "premiumPeriodSummaryDiscount": "3-month subscription period (discount).",
+  "premiumPeriodSummarySingleMonth": "1-month subscription period.",
+  "premiumPaymentConcept": "NutriFit Premium user {nick}.",
+  "@premiumPaymentConcept": {"placeholders": {"nick": {}}},
+  "navFoods": "Foods",
+  "navSupplements": "Supplements",
+  "navFoodAdditives": "Food additives",
+  "navAdditives": "Additives",
+  "navScanner": "Scanner",
+  "navSettings": "Settings",
+  "navUsers": "Users",
+  "navTasks": "Tasks",
+  "navChatWithDietitian": "Chat with dietitian",
+  "navContactDietitian": "Contact dietitian",
+  "navEditProfile": "Edit profile",
+  "profileEditProfileTab": "Profile",
+  "profileEditSessionsTab": "Sign-ins",
+  "profileEditPremiumBadgeTitle": "Premium account",
+  "profileEditPremiumBadgeBody": "You have access to exclusive features such as Exercise Videos.",
+  "profileEditNickLabel": "Nickname / User",
+  "profileEditNickRequired": "Nickname is required",
+  "profileEditEmailLabel": "Email",
+  "profileEditInvalidEmail": "Invalid email",
+  "profileEditEmailInUse": "The email entered is not valid, please use another one",
+  "profileEditChangeEmailTooltip": "Change email account",
+  "profileEditVerifyEmailCta": "Verify email",
+  "profileEditTwoFactorShortLabel": "Two-factor",
+  "profileEditBmiCardTitle": "BMI data",
+  "profileEditBmiInfoTooltip": "BMI/MVP information",
+  "profileEditBmiCardBody": "To get BMI, MVP, and recommendations, complete Age and Height.",
+  "profileEditAgeLabel": "Age",
+  "profileEditInvalidAge": "Invalid age",
+  "profileEditHeightLabel": "Height (cm)",
+  "profileEditInvalidHeight": "Invalid height",
+  "profileEditPasswordCardTitle": "Change password",
+  "profileEditPasswordHint": "Leave blank to keep the current password",
+  "profileEditPasswordLabel": "Password",
+  "profileEditPasswordConfirmLabel": "Confirm password",
+  "profileEditPasswordConfirmRequired": "You must confirm the password",
+  "profileEditPasswordMismatch": "Passwords do not match",
+  "profileEditSaveChanges": "Save changes",
+  "profileEditDeleteMyData": "Delete all my data",
+  "profileEditChangeEmailTitle": "Change email",
+  "profileEditChangeEmailVerifiedWarning": "The current email is verified. If you change it, you will need to verify it again.",
+  "profileEditChangeEmailNewLabel": "New email",
+  "profileEditChangeEmailRequired": "You must enter an email.",
+  "profileEditChangeEmailMustDiffer": "You must enter an email different from the current one.",
+  "profileEditChangeEmailValidationFailed": "The email could not be validated. Please try again.",
+  "profileEditChangeEmailReview": "Review the email entered.",
+  "profileEditEmailRequiredForVerification": "You must enter an email account first.",
+  "profileEditEmailCodeSentGeneric": "Code sent.",
+  "profileEditEmailVerifiedGeneric": "Email verified.",
+  "profileEditEmailCodeLengthError": "The code must have 10 digits.",
+  "profileEditEmailCodeDialogTitle": "Validate email code",
+  "profileEditEmailCodeTenDigitsLabel": "10-digit code",
+  "profileEditValidateEmailCodeAction": "Validate code",
+  "profileEditVerifyEmailTitle": "Verify email",
+  "profileEditVerifyEmailIntroPrefix": "Verifying your email will let you recover access by email if you forget your password and also ",
+  "profileEditVerifyEmailPremiumLink": "subscribe to Premium",
+  "profileEditFollowTheseSteps": "Follow these steps...",
+  "profileEditYourEmail": "your email",
+  "profileEditSendCodeInstruction": "Tap \"Send code\" to send the verification code to {email}.",
+  "@profileEditSendCodeInstruction": {"placeholders": {"email": {}}},
+  "profileEditEmailCodeSentInfo": "A code was sent to your email account. It will expire in 15 minutes. If you do not see it in Inbox, check the Spam folder.",
+  "profileEditEmailSendFailed": "The verification email could not be sent at this time. Please try again later.",
+  "profileEditSendCodeAction": "Send code",
+  "profileEditResendCodeAction": "Send again",
+  "profileEditVerifyCodeInstruction": "Check your email. You will have received an email with a code. Copy it, paste it here, and tap \"Verify\".",
+  "profileEditVerificationCodeLabel": "Verification code",
+  "profileEditEmailRequiredInProfile": "You must first enter an email in Edit Profile in order to verify it.",
+  "profileEditTwoFactorDialogTitle": "Two-factor authentication (2FA)",
+  "profileEditTwoFactorEnabledStatus": "Status: Enabled",
+  "profileEditTwoFactorEnabledBody": "Two-factor authentication is already enabled on your account. From here you can only check whether this device is trusted and link or unlink it.",
+  "profileEditTrustedDeviceEnabledBody": "This device is marked as trusted. The 2FA code will not be requested on future sign-ins until you remove the trust from here.",
+  "profileEditTrustedDeviceDisabledBody": "This device is not marked as trusted. You can mark it by tapping \"Set this device as trusted\" or by signing out and signing in again, enabling the \"Trust this device\" checkbox during 2FA validation.",
+  "profileEditRemoveTrustedDeviceAction": "Remove trust from this device",
+  "profileEditSetTrustedDeviceAction": "Set this device as trusted",
+  "profileEditCancelProcess": "Cancel process",
+  "profileEditSetTrustedDeviceTitle": "Set trusted device",
+  "profileEditSetTrustedDeviceBody": "To mark this device as trusted, you must validate it during 2FA sign-in by enabling the \"Trust this device\" checkbox.\n\nDo you want to sign out now to do that?",
+  "profileEditGoToLogin": "Go to login",
+  "profileEditActivateTwoFactorTitle": "Enable two-factor authentication",
+  "profileEditActivateTwoFactorIntro": "Two-factor authentication (2FA) adds an extra layer of security: in addition to your password, a temporary code from your authenticator app is requested.",
+  "profileEditTwoFactorStep1": "Open your authenticator app (Google Authenticator, Microsoft Authenticator, Authy, etc.) and add an account.",
+  "profileEditTwoFactorSetupKeyLabel": "Key to configure 2FA:",
+  "profileEditKeyCopied": "Key copied to clipboard",
+  "profileEditHideOptions": "Hide options",
+  "profileEditMoreOptions": "More options...",
+  "profileEditQrSavedDownloads": "QR saved to Downloads: {path}",
+  "@profileEditQrSavedDownloads": {"placeholders": {"path": {}}},
+  "profileEditQrShared": "The menu to share or save the QR code was opened.",
+  "profileEditOtpUrlCopied": "otpauth URL copied",
+  "profileEditCopyUrl": "Copy URL",
+  "profileEditOtpUrlInfo": "The \"Copy URL\" option copies an otpauth link with the full 2FA configuration for importing into compatible apps. If your app does not allow link import, use \"Copy\" on the key.",
+  "profileEditTwoFactorConfirmCodeInstruction": "Enter the 6-digit code shown by your authenticator app to confirm.",
+  "profileEditActivateTwoFactorAction": "Enable",
+  "profileEditTwoFactorActivated": "Two-factor authentication enabled successfully",
+  "profileEditTwoFactorActivateFailed": "2FA could not be enabled.",
+  "profileEditNoQrData": "There is no data to save the QR code.",
+  "profileEditQrSavedPath": "QR saved to: {path}",
+  "@profileEditQrSavedPath": {"placeholders": {"path": {}}},
+  "profileEditQrSaveFailed": "The QR code could not be saved: {error}",
+  "@profileEditQrSaveFailed": {"placeholders": {"error": {}}},
+  "profileEditDeactivateTwoFactorTitle": "Disable two-factor authentication (2FA)",
+  "profileEditCurrentCodeSixDigitsLabel": "Current 6-digit code",
+  "profileEditDeactivateTwoFactorAction": "Disable",
+  "profileEditTwoFactorDeactivated": "Two-factor authentication disabled successfully",
+  "profileEditTwoFactorDeactivateFailed": "2FA could not be disabled.",
+  "profileEditRemoveTrustedDeviceTitle": "Remove device trust",
+  "profileEditRemoveTrustedDeviceBody": "On this device, the 2FA code will be requested again on the next sign-in. Do you want to continue?",
+  "profileEditRemoveTrustedDeviceActionShort": "Remove trust",
+  "profileEditTrustedDeviceRemoved": "Device trust removed.",
+  "profileEditTrustedDeviceRemoveFailed": "Could not remove device trust: {error}",
+  "@profileEditTrustedDeviceRemoveFailed": {"placeholders": {"error": {}}},
+  "profileEditMvpDialogTitle": "MVP calculation and formulas",
+  "profileEditMvpWhatIsTitle": "What is MVP?",
+  "profileEditMvpWhatIsBody": "MVP is a minimum set of anthropometric indicators to help you easily monitor your health progress: BMI, waist-to-height, and waist-to-hip.",
+  "profileEditMvpFormulasTitle": "Formulas used and their origin:",
+  "profileEditMvpOriginBmi": "Source: WHO (adult BMI classification).",
+  "profileEditMvpOriginWhtr": "Source: Waist-to-Height Ratio index.",
+  "profileEditMvpOriginWhr": "Source: Waist-Hip Ratio (WHO, abdominal obesity).",
+  "profileEditImportantNotice": "Important notice",
+  "profileEditMvpImportantNoticeBody": "These calculations and classifications are indicative. For a personalized assessment, always consult a medical professional, dietitian-nutritionist, or personal trainer.",
+  "profileEditAccept": "Accept",
+  "profileEditNotAvailable": "N/A",
+  "profileEditSessionDate": "Date",
+  "profileEditSessionTime": "Time",
+  "profileEditSessionDevice": "Device",
+  "profileEditSessionIp": "IP address:",
+  "profileEditSessionPublicIp": "Public",
+  "profileEditUserCodeUnavailable": "User code not available",
+  "profileEditGenericError": "Error",
+  "profileEditRetry": "Retry",
+  "profileEditSessionDataUnavailable": "Sign-in data could not be accessed at this time.",
+  "profileEditNoSessionData": "No session data available",
+  "profileEditSuccessfulSessionsTitle": "Latest successful sign-ins",
+  "profileEditCurrentSession": "Current session:",
+  "profileEditPreviousSession": "Previous session:",
+  "profileEditNoSuccessfulSessions": "No successful sessions recorded",
+  "profileEditFailedAttemptsTitle": "Latest failed sign-in attempts",
+  "profileEditAttemptLabel": "Attempt {count}:",
+  "@profileEditAttemptLabel": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "profileEditNoFailedAttempts": "No failed attempts recorded.",
+  "profileEditSessionStatsTitle": "Session statistics",
+  "profileEditTotalSessions": "Total sessions: {count}",
+  "@profileEditTotalSessions": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "profileEditSuccessfulAttempts": "Successful attempts: {count}",
+  "@profileEditSuccessfulAttempts": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "profileEditFailedAttempts": "Failed attempts: {count}",
+  "@profileEditFailedAttempts": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "navRecommendations": "Recommendations",
+  "navExerciseCatalog": "Exercise catalog",
+  "exerciseCatalogSearchFieldLabel": "Search in",
+  "exerciseCatalogSearchFieldAll": "All",
+  "exerciseCatalogSearchFieldTitle": "Title",
+  "exerciseCatalogSearchFieldInstructions": "Instructions",
+  "exerciseCatalogSearchFieldHashtags": "Hashtags",
+  "exerciseCatalogSearchLabel": "Search exercises",
+  "exerciseCatalogSearchHint": "Type to search in the selected field",
+  "exerciseCatalogClearSearch": "Clear search",
+  "exerciseCatalogHideSearch": "Hide search",
+  "navWeightControl": "Weight control",
+  "navShoppingList": "Shopping list",
+  "navStartRegistration": "Start registration",
+  "navPreviewRegisteredUser": "Preview as registered user",
+  "navPreviewGuestUser": "Preview as unregistered user",
+  "drawerGuestUser": "Guest user",
+  "drawerAdminUser": "Administrator user",
+  "drawerPremiumPatientUser": "Premium patient user",
+  "drawerPatientUser": "Patient user",
+  "drawerPremiumRegisteredUser": "Premium registered user",
+  "drawerRegisteredUser": "Registered user",
+  "drawerPremiumBadge": "PREMIUM",
+  "drawerRestrictedNutriPlansTitle": "Nutrition plans",
+  "drawerRestrictedTrainingTitle": "Personalized training",
+  "drawerRestrictedRecommendationsTitle": "Recommendations",
+  "drawerRegistrationRequiredTitle": "Registration required",
+  "drawerRegistrationRequiredChatMessage": "To chat with your online dietitian, please register first. It's free.",
+  "homePaymentNotifiedTitle": "Payment notified to NutriFit",
+  "homePaymentNotifiedMessage": "We have received your payment notification. Your Premium account will be activated once NutriFit receives and verifies the payment. We will notify you by email and through the in-app chat. The Premium period starts from the payment verification date.",
+  "homePremiumExpiredTitle": "Your Premium has expired",
+  "homePremiumExpiringTitle": "Your Premium is about to expire",
+  "homePremiumExpiredMessage": "Your Premium expired on {date}. You can renew it now.",
+  "@homePremiumExpiredMessage": {
+    "placeholders": {
+      "date": {}
+    }
+  },
+  "homePremiumExpiringTodayMessage": "Your Premium expires on {date} (today). We recommend renewing it so you don't lose your benefits.",
+  "@homePremiumExpiringTodayMessage": {
+    "placeholders": {
+      "date": {}
+    }
+  },
+  "homePremiumExpiringInDaysMessage": "Your Premium expires on {date} (in {days} days). We recommend renewing it so you don't lose your benefits.",
+  "@homePremiumExpiringInDaysMessage": {
+    "placeholders": {
+      "date": {},
+      "days": {}
+    }
+  },
+  "homeRenewPremium": "Renew Premium",
+  "homeSecurityRecommendedTitle": "Recommended security",
+  "homeSecurityRecommendedBody": "You work with sensitive medical data. We recommend enabling two-factor authentication (2FA) to better protect your account.",
+  "homeGoToEditProfile": "Go to Edit Profile",
+  "homeDoNotShowAgain": "Do not show again",
+  "loginNetworkError": "There is a problem with the internet connection or the app does not have permission to connect.",
+  "loginInvalidCredentials": "Incorrect username or password.",
+  "loginFailedGeneric": "Sign-in could not be completed. Please try again.",
+  "loginGuestFailedGeneric": "Guest access could not be completed. Please try again.",
+  "loginUnknownUserType": "Unknown user type",
+  "loginTwoFactorTitle": "2FA verification",
+  "loginTwoFactorPrompt": "Enter the 6-digit code from your TOTP app.",
+  "loginTwoFactorCodeLabel": "2FA code",
+  "loginTrustThisDevice": "Trust this device",
+  "loginTrustThisDeviceSubtitle": "2FA will no longer be requested on this device.",
+  "loginCodeMustHave6Digits": "The code must have 6 digits.",
+  "loginRecoveryTitle": "Recover access",
+  "loginRecoveryIdentifierIntro": "Enter your username (nick) or your email account to recover access.",
+  "loginUserOrEmailLabel": "Username or email",
+  "loginEnterUserOrEmail": "Enter a username or email.",
+  "loginNoRecoveryMethods": "This user has no recovery methods available.",
+  "loginSelectRecoveryMethod": "Select recovery method",
+  "loginRecoveryByEmail": "Using your email",
+  "loginRecoveryByTwoFactor": "Using two-factor authentication (2FA)",
+  "loginEmailRecoveryIntro": "We will send you a recovery code by email. Enter it here along with your new password.",
+  "loginRecoveryStep1SendCode": "Step 1: Send code",
+  "loginRecoveryStep1SendCodeBody": "Tap \"Send code\" to receive a recovery code in your email.",
+  "loginSendCode": "Send code",
+  "loginRecoveryStep2VerifyCode": "Step 2: Verify code",
+  "loginRecoveryStep2VerifyCodeBody": "Enter the code you received in your email.",
+  "loginRecoveryCodeLabel": "Recovery code",
+  "loginRecoveryCodeHintAlpha": "Ex. 1a3B",
+  "loginRecoveryCodeHintNumeric": "Ex. 1234",
+  "loginVerifyCode": "Verify code",
+  "loginRecoveryStep3NewPassword": "Step 3: New password",
+  "loginRecoveryStep3NewPasswordBody": "Enter your new password.",
+  "loginNewPasswordLabel": "New password",
+  "loginRepeatNewPasswordLabel": "Repeat new password",
+  "loginBothPasswordsRequired": "Complete both password fields.",
+  "loginPasswordsMismatch": "Passwords do not match.",
+  "loginPasswordResetSuccess": "Password reset. You can sign in now.",
+  "loginTwoFactorRecoveryIntro": "To reset your password using two-factor authentication, you need the temporary code from your app.",
+  "loginTwoFactorRecoveryStep1": "Step 1: Open your authenticator app",
+  "loginTwoFactorRecoveryStep1Body": "Find the 6-digit temporary code in your authenticator app (Google Authenticator, Microsoft Authenticator, Authy, etc.)",
+  "loginIHaveIt": "I have it",
+  "loginTwoFactorRecoveryStep2": "Step 2: Verify your 2FA code",
+  "loginTwoFactorRecoveryStep2Body": "Enter the 6-digit code in the field below.",
+  "loginTwoFactorCodeSixDigitsLabel": "2FA code (6 digits)",
+  "loginTwoFactorCodeHint": "000000",
+  "loginVerifyTwoFactorCode": "Verify 2FA code",
+  "loginCodeMustHaveExactly6Digits": "The code must have exactly 6 digits.",
+  "loginPasswordUpdatedSuccess": "Password updated. You can sign in now.",
+  "loginUsernameLabel": "Username",
+  "loginEnterUsername": "Enter your username",
+  "loginPasswordLabel": "Password",
+  "loginEnterPassword": "Enter your password",
+  "loginSignIn": "Sign in",
+  "loginForgotPassword": "Forgot your password?",
+  "loginGuestInfo": "Access NutriFit for free to browse health and nutrition tips, exercise videos, recipes, weight control, and much more.",
+  "loginGuestAccess": "Access without credentials",
+  "loginRegisterFree": "Register for free",
+  "registerCreateAccountTitle": "Create account",
+  "registerFullNameLabel": "Full name",
+  "registerEnterFullName": "Enter your name",
+  "registerUsernameMinLength": "The username must be at least 3 characters long",
+  "registerEmailLabel": "Email",
+  "registerInvalidEmail": "Invalid email address",
+  "registerAdditionalDataTitle": "Additional data",
+  "registerAdditionalDataCollapsedSubtitle": "Age and height (optional)",
+  "registerAdditionalDataExpandedSubtitle": "Age and height for BMI/MVP",
+  "registerAdditionalDataInfo": "To enable BMI, MVP, and health metrics calculations, enter your age and height in centimeters.",
+  "registerAgeLabel": "Age",
+  "registerInvalidAge": "Invalid age",
+  "registerHeightLabel": "Height (cm)",
+  "registerInvalidHeight": "Invalid height",
+  "registerConfirmPasswordLabel": "Confirm password",
+  "registerConfirmPasswordRequired": "Confirm your password",
+  "registerCreateAccountButton": "Create account",
+  "registerAlreadyHaveAccount": "Already have an account? Sign in",
+  "registerEmailUnavailable": "This email account cannot be used. Please enter a different one.",
+  "registerSuccessMessage": "User registered successfully. Please sign in with your username and password.",
+  "registerNetworkError": "The process could not be completed. Please check your internet connection.",
+  "registerGenericError": "Registration could not be completed",
+  "loginResetPassword": "Reset password",
+  "loginEmailRecoverySendFailedGeneric": "The recovery email could not be sent right now. Please try again later.",
+  "passwordChecklistTitle": "Password requirements:",
+  "passwordChecklistMinLength": "Minimum {count} characters",
+  "@passwordChecklistMinLength": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "passwordChecklistUpperLower": "At least one uppercase and one lowercase letter",
+  "passwordChecklistNumber": "At least one number (0-9)",
+  "passwordChecklistSpecial": "At least one special character (*,.+-#\\$?¿!¡_()/\\%&)",
+  "loginPasswordMinLengthError": "The new password must be at least {count} characters long.",
+  "@loginPasswordMinLengthError": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "loginPasswordUppercaseError": "The new password must contain at least one uppercase letter.",
+  "loginPasswordLowercaseError": "The new password must contain at least one lowercase letter.",
+  "loginPasswordNumberError": "The new password must contain at least one number.",
+  "loginPasswordSpecialError": "The new password must contain at least one special character (* , . + - # \\$ ? ¿ ! ¡ _ ( ) / \\ % &).",
+  "commonOk": "OK",
+  "commonReadMore": "Read more",
+  "commonViewAll": "View all",
+  "commonCouldNotOpenLink": "The link could not be opened",
+  "commonCollapse": "Collapse",
+  "commonExpand": "Expand",
+  "patientSecurityRecommendedTitle": "Improve your account security",
+  "patientSecurityRecommendedBody": "We recommend enabling two-factor authentication (2FA). Add an extra layer of protection beyond your password.",
+  "patientChatLoadError": "The process could not be completed. Please check your internet connection",
+  "patientAdherenceNutriPlan": "Nutrition plan",
+  "patientAdherenceFitPlan": "Fit plan",
+  "patientAdherenceCompleted": "Completed",
+  "patientAdherencePartial": "Partial",
+  "patientAdherenceNotDone": "Not completed",
+  "patientAdherenceNoChanges": "No changes",
+  "patientAdherenceTrendPoints": "{trend} pts",
+  "@patientAdherenceTrendPoints": {
+    "placeholders": {
+      "trend": {}
+    }
+  },
+  "patientAdherenceTitle": "Adherence",
+  "patientAdherenceImprovementPoints": "Improvement points",
+  "patientAdherenceImprovementNutriTarget": "Nutrition: try to meet the plan at least 5 out of 7 days this week.",
+  "patientAdherenceImprovementNutriTrend": "Nutrition: you are trending down compared with last week; return to your base routine.",
+  "patientAdherenceImprovementFitTarget": "Fit: try to reach 3-4 sessions this week, even if they are short.",
+  "patientAdherenceImprovementFitTrend": "Fit: the trend has dropped; schedule your next sessions today.",
+  "patientAdherenceImprovementKeepGoing": "Good pace. Stay consistent to consolidate results.",
+  "patientAdherenceSheetTitleToday": "Adherence for today",
+  "patientAdherenceSheetTitleForDate": "Adherence for {date}",
+  "@patientAdherenceSheetTitleForDate": {
+    "placeholders": {
+      "date": {}
+    }
+  },
+  "patientAdherenceDateToday": "today",
+  "patientAdherenceStatusSaved": "{plan}: {status} {date}",
+  "@patientAdherenceStatusSaved": {
+    "placeholders": {
+      "plan": {},
+      "status": {},
+      "date": {}
+    }
+  },
+  "patientAdherenceFutureDateError": "Adherence cannot be recorded for future dates. Only today or previous days are allowed.",
+  "patientAdherenceReasonNotDoneTitle": "Reason for not completing it",
+  "patientAdherenceReasonPartialTitle": "Reason for partial completion",
+  "patientAdherenceReasonHint": "Briefly tell us what happened today",
+  "patientAdherenceSkipReason": "Skip reason",
+  "patientAdherenceSaveContinue": "Save and continue",
+  "patientAdherenceSaveError": "Could not save to the database: {error}",
+  "@patientAdherenceSaveError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "patientAdherenceReasonLabel": "Reason",
+  "patientAdherenceInfoTitle": "What does each adherence status mean?",
+  "patientAdherenceNutriCompletedDescription": "You followed the nutrition plan exactly as planned for this day.",
+  "patientAdherenceNutriPartialDescription": "You followed part of the plan but not completely: a meal was skipped, changed, or had a different quantity.",
+  "patientAdherenceNutriNotDoneDescription": "You did not follow the nutrition plan on this day.",
+  "patientAdherenceFitCompletedDescription": "You completed the full workout planned for this day.",
+  "patientAdherenceFitPartialDescription": "You completed part of the workout: some exercises, sets, or duration were incomplete.",
+  "patientAdherenceFitNotDoneDescription": "You did not complete the workout on this day.",
+  "patientAdherenceAlertRecoveryTitle": "Time to react",
+  "patientAdherenceAlertRecoveryBody": "You have been below 50% for two weeks in a row in {plan}. Let's recover the rhythm now: small daily steps, but without missing. You can do it, but it is time to get serious.",
+  "@patientAdherenceAlertRecoveryBody": {
+    "placeholders": {
+      "plan": {}
+    }
+  },
+  "patientAdherenceAlertEncouragementTitle": "There is still time",
+  "patientAdherenceAlertEncouragementBody": "This week {plan} is below 50%. Next week can be much better: return to your base routine and add one win each day.",
+  "@patientAdherenceAlertEncouragementBody": {
+    "placeholders": {
+      "plan": {}
+    }
+  },
+  "patientRecommendationsForYou": "Recommendations for you",
+  "patientWelcomeNeutral": "Welcome",
+  "patientWelcomeFemale": "Welcome",
+  "patientWelcomeMale": "Welcome",
+  "patientWelcomeToNutriFit": "{welcome} to NutriFit",
+  "@patientWelcomeToNutriFit": {
+    "placeholders": {
+      "welcome": {}
+    }
+  },
+  "patientWelcomeBody": "From NutriFit you can review your personalized nutrition and training plans. You can chat with and contact your online dietitian and read personalized recommendations. \n\nYou also have nutrition and health tips, recipes, a shopping list, food information, measurements (weight control), blood pressure, and many other features...",
+  "patientPersonalRecommendation": "Personal recommendation",
+  "patientNewBadge": "NEW",
+  "patientContactDietitianPrompt": "Contact the dietitian...",
+  "patientContactDietitianTrainer": "Contact Dietitian/Trainer",
+  "contactDietitianMethodsTitle": "Contact methods",
+  "contactDietitianEmailLabel": "Email",
+  "contactDietitianCallLabel": "Call",
+  "contactDietitianSocialTitle": "Follow us on social media",
+  "contactDietitianWebsiteLabel": "Website",
+  "contactDietitianPhoneCopied": "Phone number copied to clipboard.",
+  "contactDietitianWhatsappInvalidPhone": "There is no valid phone number to open WhatsApp.",
+  "contactDietitianWhatsappOpenError": "Could not open WhatsApp: {error}",
+  "@contactDietitianWhatsappOpenError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "contactDietitianWhatsappDialogTitle": "Contact via WhatsApp",
+  "contactDietitianWhatsappDialogBody": "You can open the WhatsApp chat directly with the number {phone}. You can also copy the number to the clipboard to use it in your WhatsApp application or save it.",
+  "@contactDietitianWhatsappDialogBody": {
+    "placeholders": {
+      "phone": {}
+    }
+  },
+  "contactDietitianCopyPhone": "Copy phone",
+  "contactDietitianOpenWhatsapp": "Open WhatsApp",
+  "contactDietitianWhatsappLabel": "WhatsApp",
+  "contactDietitianTelegramLabel": "Telegram",
+  "chatTitle": "Chat",
+  "chatHideSearch": "Hide search",
+  "chatSearch": "Search",
+  "chatSearchHint": "Search in chat...",
+  "chatMessageHint": "Write a message",
+  "profileImagePickerDialogTitle": "Select profile image",
+  "profileImagePickerTakePhoto": "Take photo",
+  "profileImagePickerChooseFromGallery": "Choose from gallery",
+  "profileImagePickerSelectImage": "Select image",
+  "profileImagePickerRemovePhoto": "Remove photo",
+  "profileImagePickerPrompt": "Select your profile image",
+  "profileImagePickerMaxDimensions": "Max. {width}x{height}px",
+  "@profileImagePickerMaxDimensions": {"placeholders": {"width": {}, "height": {}}},
+  "profileImagePickerSaved": "Image saved successfully ({sizeKb}KB)",
+  "@profileImagePickerSaved": {"placeholders": {"sizeKb": {}}},
+  "profileImagePickerProcessError": "Error processing image",
+  "profileImagePickerTechnicalDetails": "Technical details",
+  "profileImagePickerOperationFailed": "The operation could not be completed. Please try again or contact support.",
+  "shoppingListPremiumTitle": "Premium shopping list",
+  "shoppingListPremiumSubtitle": "You can view the last {limit} items and create up to {limit} records. If you want an unlimited list, ",
+  "@shoppingListPremiumSubtitle": {
+    "placeholders": {
+      "limit": {}
+    }
+  },
+  "shoppingListPremiumHighlight": "go Premium.",
+  "shoppingListPremiumLimitMessage": "As a non-Premium user you can create up to {limit} items in the shopping list. Go Premium to add unlimited items and access the full history.",
+  "@shoppingListPremiumLimitMessage": {
+    "placeholders": {
+      "limit": {}
+    }
+  },
+  "shoppingListTabAll": "All",
+  "shoppingListTabPending": "Next purchase",
+  "shoppingListTabBought": "Bought",
+  "shoppingListTabExpiring": "Expiring soon",
+  "shoppingListTabExpired": "Expired",
+  "shoppingListFilterCategories": "Filter categories",
+  "shoppingListFilterCategoriesCount": "Filter categories ({count})",
+  "@shoppingListFilterCategoriesCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "shoppingListMoreOptions": "More options",
+  "shoppingListFilter": "Filter",
+  "shoppingListRefresh": "Refresh",
+  "shoppingListAddItem": "Add item",
+  "shoppingListGuestMessage": "To use the shopping list, you need to sign up. It's free.",
+  "weightControlBack": "Back",
+  "weightControlChangeTarget": "Change target weight",
+  "weightControlHideFilter": "Hide filter",
+  "weightControlShowFilter": "Show filter",
+  "weightControlGuestMessage": "To manage your weight tracking, you need to sign up. It's free.",
+  "weightControlLoadError": "Error loading measurements: {error}",
+  "@weightControlLoadError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "weightControlNoMeasurementsTitle": "There are no measurements recorded yet.",
+  "weightControlNoMeasurementsBody": "Start by adding your first measurement to see your progress.",
+  "weightControlAddMeasurement": "Add measurement",
+  "weightControlNoWeightsForPeriod": "There are no weights for {period}.",
+  "@weightControlNoWeightsForPeriod": {
+    "placeholders": {
+      "period": {}
+    }
+  },
+  "weightControlNoMeasurementsForPeriod": "There are no measurements for {period}.",
+  "@weightControlNoMeasurementsForPeriod": {
+    "placeholders": {
+      "period": {}
+    }
+  },
+  "weightControlPremiumPerimetersTitle": "Premium perimeter evolution",
+  "weightControlPremiumChartBody": "This chart is available only for Premium users. Activate your account to see your full progress with advanced visual indicators.",
+  "weightControlCurrentMonth": "Current month",
+  "weightControlPreviousMonth": "Previous month",
+  "weightControlQuarter": "Quarter",
+  "weightControlSemester": "Semester",
+  "weightControlCurrentYear": "Year",
+  "weightControlPreviousYear": "Previous year",
+  "weightControlAllTime": "All time",
+  "weightControlLastDaysLabel": "Last {days} days",
+  "@weightControlLastDaysLabel": {
+    "placeholders": {
+      "days": {}
+    }
+  },
+  "patientMoreContactOptions": "More contact options",
+  "patientContactEmailShort": "Email...",
+  "patientContactWhatsAppShort": "WhatsApp...",
+  "patientContactTelegramShort": "Telegram...",
+  "patientContactEmailSubject": "Request for Online Dietitian services",
+  "patientAddDietitianToContactsTitle": "Add dietitian to contacts",
+  "patientAddDietitianToContactsBody": "Please add the dietitian manually to your contacts with the following details:\n\nName: Online Dietitian - NutriFit",
+  "patientViewAllTipsCount": "View all tips ({count})",
+  "@patientViewAllTipsCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "settingsNotificationsTab": "Notifications",
+  "settingsLegendsTab": "Legends",
+  "settingsCalendarsTab": "Calendars",
+  "settingsPushPreferenceSaveError": "The push notification preference could not be saved.",
+  "settingsScannerFrameReset": "Scanner frame reset to default values",
+  "settingsCurrentView": "Current view: {mode}",
+  "@settingsCurrentView": {
+    "placeholders": {
+      "mode": {}
+    }
+  },
+  "settingsCalendarModeWeek": "Week",
+  "settingsCalendarModeMonth": "Month",
+  "settingsCalendarModeTwoWeeks": "2 weeks",
+  "settingsNutriBreachTitle": "Nutri plan breach alerts",
+  "settingsNutriBreachSubtitle": "Receive notifications when the nutrition plan is not followed.",
+  "settingsFitBreachTitle": "Fit plan breach alerts",
+  "settingsFitBreachSubtitle": "Receive notifications when the training plan is not followed.",
+  "settingsChatPushTitle": "Enable chat push notifications",
+  "settingsChatPushSubtitle": "Receive push notifications when you have unread messages from the dietitian.",
+  "settingsPerimetersLegendTitle": "Perimeter evolution",
+  "settingsPerimetersLegendSubtitle": "Show or hide the legend in the perimeter evolution chart.",
+  "settingsWeightCalendarLegendTitle": "Weight control calendar",
+  "settingsWeightCalendarLegendSubtitle": "Show or hide the legend of the weight control calendar (lost weight, gained weight, no changes, normal BMI, BMI out of range, and higher weight/lower BMI).",
+  "settingsTasksCalendarLegendTitle": "Task calendar",
+  "settingsTasksCalendarLegendSubtitle": "Future legend. This preference will be applied to the task calendar soon.",
+  "settingsTasksCalendarTitle": "Task calendar",
+  "settingsWeightControlCalendarTitle": "Measurements calendar (weight control)",
+  "settingsNutriCalendarTitle": "Nutri plans calendar",
+  "settingsFitCalendarTitle": "Fit plans calendar",
+  "settingsShowActivityEquivalencesTitle": "Show activity equivalences",
+  "settingsShowActivityEquivalencesSubtitle": "Enable or disable equivalence messages on the activities screen.",
+  "settingsScannerFrameWidthTitle": "Scanner frame width",
+  "settingsScannerFrameWidthSubtitle": "Applies when taking a photo in label scanning and in the shopping list.",
+  "settingsScannerFrameHeightTitle": "Scanner frame height",
+  "settingsScannerFrameHeightSubtitle": "Adjust the height of the barcode framing area.",
+  "settingsResetScannerFrameSize": "Reset size"
+  ,"commonPremiumFeatureTitle": "Premium feature",
+  "commonSearch": "Search",
+  "commonFilter": "Filter",
+  "commonRefresh": "Refresh",
+  "commonMoreOptions": "More options",
+  "commonDelete": "Delete",
+  "commonClear": "Clear",
+  "commonApply": "Apply",
+  "commonCopy": "Copy",
+  "commonGeneratePdf": "Generate PDF",
+  "commonHideSearch": "Hide search",
+  "commonFilterByCategories": "Filter by categories",
+  "commonFilterByCategoriesCount": "Filter categories ({count})",
+  "@commonFilterByCategoriesCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "commonMatchAll": "Match all",
+  "commonRequireAllSelected": "If enabled, all selected items are required.",
+  "commonCategoryFallback": "Category {id}",
+  "@commonCategoryFallback": {
+    "placeholders": {
+      "id": {}
+    }
+  },
+  "commonSignInToLike": "You must sign in to like this",
+  "commonSignInToSaveFavorites": "You must sign in to save favorites",
+  "commonCouldNotIdentifyUser": "Error: The user could not be identified",
+  "commonLikeChangeError": "Error changing like status. {error}",
+  "@commonLikeChangeError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "commonFavoriteChangeError": "Error changing favorite status. {error}",
+  "@commonFavoriteChangeError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "commonGuestFavoritesRequiresRegistration": "To mark {itemType} as favorites, you must register first. It's free.",
+  "@commonGuestFavoritesRequiresRegistration": {"placeholders": {"itemType": {}}},
+  "commonRecipesAndTipsPremiumCopyPdfMessage": "To copy recipes and tips and export them as PDF, you must be a Premium user.",
+  "commonCopiedToClipboard": "Copied to clipboard",
+  "commonCopiedToClipboardLabel": "{label} copied to the clipboard.",
+  "@commonCopiedToClipboardLabel": {"placeholders": {"label": {}}},
+  "commonLanguage": "Language",
+  "commonUser": "user",
+  "languageSpanish": "Spanish",
+  "languageEnglish": "English",
+  "languageItalian": "Italian",
+  "languageGerman": "German",
+  "languageFrench": "French",
+  "languagePortuguese": "Portuguese",
+  "commonCopyError": "Error copying: {error}",
+  "@commonCopyError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "commonGeneratePdfError": "Error generating PDF: {error}",
+  "@commonGeneratePdfError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "commonOpenLinkError": "Error opening link: {error}",
+  "@commonOpenLinkError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "commonDocumentUnavailable": "The document is not available",
+  "commonDecodeError": "Decoding error: {error}",
+  "@commonDecodeError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "commonSaveDocumentError": "Error: The document could not be saved",
+  "commonOpenDocumentError": "Error opening document: {error}",
+  "@commonOpenDocumentError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "commonDownloadDocument": "Download document",
+  "commonDocumentsAndLinks": "Documents and links",
+  "commonYouMayAlsoLike": "You may also like...",
+  "commonSortByTitle": "Sort by title",
+  "commonSortByRecent": "Sort by recent",
+  "commonSortByPopular": "Sort by popular",
+  "commonPersonalTab": "Personal",
+  "commonFeaturedTab": "Featured",
+  "commonAllTab": "All",
+  "commonFavoritesTab": "Favorites",
+  "commonFeaturedFeminineTab": "Featured",
+  "commonAllFeminineTab": "All",
+  "commonFavoritesFeminineTab": "Favorites",
+  "commonLikesCount": "{count} likes",
+  "@commonLikesCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "commonLink": "Link",
+  "commonTipItem": "tip",
+  "commonRecipeItem": "recipe",
+  "commonAdditiveItem": "additive",
+  "commonSupplementItem": "supplement",
+  "commonSeeLinkToType": "See link to {type}",
+  "@commonSeeLinkToType": {
+    "placeholders": {
+      "type": {}
+    }
+  },
+  "commonDocument": "Document",
+  "todoPriorityHigh": "High",
+  "todoPriorityMedium": "Medium",
+  "todoPriorityLow": "Low",
+  "todoStatusPending": "Pending",
+  "todoStatusResolved": "Resolved",
+  "todoCalendarPriority": "Priority: {value}",
+  "@todoCalendarPriority": {"placeholders": {"value": {}}},
+  "todoCalendarStatus": "Status: {value}",
+  "@todoCalendarStatus": {"placeholders": {"value": {}}},
+  "todoExportError": "Error exporting task: {error}",
+  "@todoExportError": {"placeholders": {"error": {}}},
+  "todoDateRequiredForCalendar": "The task must have a date to add it to the calendar",
+  "todoAddToCalendarError": "The task could not be added to the calendar: {error}",
+  "@todoAddToCalendarError": {"placeholders": {"error": {}}},
+  "todoPremiumLimitMessage": "As a non-Premium user, you can create up to {limit} tasks. Go Premium to add unlimited tasks and view your full history.",
+  "@todoPremiumLimitMessage": {"placeholders": {"limit": {"type": "int"}}},
+  "todoNoDate": "No date",
+  "todoPriorityHighTooltip": "High priority",
+  "todoPriorityMediumTooltip": "Medium priority",
+  "todoPriorityLowTooltip": "Low priority",
+  "todoStatusResolvedShort": "Completed (R)",
+  "todoStatusPendingShort": "Pending (P)",
+  "todoMarkPending": "Mark as pending",
+  "todoMarkResolved": "Mark as resolved",
+  "todoEditTaskTitle": "Edit task",
+  "todoNewTaskTitle": "New task",
+  "todoTitleLabel": "Title",
+  "todoTitleRequired": "Title is required",
+  "todoDescriptionTitle": "Description",
+  "todoDescriptionOptionalLabel": "Description (optional)",
+  "todoPriorityTitle": "Priority",
+  "todoStatusTitle": "Status",
+  "todoTasksForDay": "Tasks for {date}",
+  "@todoTasksForDay": {"placeholders": {"date": {}}},
+  "todoNewShort": "New",
+  "todoNoTasksSelectedDay": "There are no tasks for the selected day.",
+  "todoNoTasksToShow": "There are no tasks to show.",
+  "todoPremiumTitle": "Premium tasks",
+  "todoPremiumPreviewSubtitle": "You can review the latest {limit} entries and create up to {limit} tasks. If you want unlimited tasks, go Premium.",
+  "@todoPremiumPreviewSubtitle": {"placeholders": {"limit": {"type": "int"}}},
+  "todoPremiumPreviewHighlight": " You currently have {count} registered tasks.",
+  "@todoPremiumPreviewHighlight": {"placeholders": {"count": {"type": "int"}}},
+  "todoEmptyState": "You do not have any tasks yet.",
+  "todoScreenTitle": "Tasks",
+  "todoTabPending": "Pending",
+  "todoTabResolved": "Resolved",
+  "todoTabAll": "All",
+  "todoHideFilters": "Hide filters",
+  "todoViewList": "View list",
+  "todoViewCalendar": "View calendar",
+  "todoSortByDate": "Sort by date",
+  "todoSortByPriority": "Sort by priority",
+  "todoSearchHint": "Search by title or description",
+  "todoClearSearch": "Clear search",
+  "todoDeleteTitle": "Delete task",
+  "todoDeleteConfirm": "Do you want to delete the task \"{title}\"?",
+  "@todoDeleteConfirm": {"placeholders": {"title": {}}},
+  "todoDeletedSuccess": "Task deleted successfully",
+  "todoAddToDeviceCalendar": "Add to device calendar",
+  "todoEditAction": "Edit",
+  "todoSelectDate": "Select date",
+  "todoRemoveDate": "Remove date",
+  "todoGuestTitle": "Registration required",
+  "todoGuestBody": "To use Tasks, you must register first. It's free.",
+  "commonSave": "Save",
+  "commonSortByName": "Sort by name",
+  "commonSortByType": "Sort by type",
+  "commonSortByDate": "Sort by date",
+  "commonSortBySeverity": "Sort by severity",
+  "commonName": "Name",
+  "commonTitleField": "Title",
+  "commonDescriptionField": "Description",
+  "commonTypeField": "Type",
+  "commonSeverity": "Severity",
+  "commonNoResultsForQuery": "No results for \"{query}\"",
+  "@commonNoResultsForQuery": {
+    "placeholders": {
+      "query": {}
+    }
+  },
+  "tipsPremiumToolsMessage": "Search, filters, favorites, likes, and full access to the tips catalog are available only for Premium users.",
+  "tipsPremiumPreviewTitle": "Premium tips",
+  "tipsPremiumPreviewSubtitle": "You can see a preview of the latest 3 tips. Go Premium to access the full catalog and all its tools.",
+  "tipsPreviewAvailableCount": " There are currently {count} tips available.",
+  "@tipsPreviewAvailableCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "tipsSearchLabel": "Search tips",
+  "tipsNoPersonalizedRecommendations": "No personalized recommendations",
+  "tipsViewGeneralTips": "View general tips",
+  "tipsUnreadBadge": "Unread",
+  "messagesInboxTitle": "Unread messages",
+  "messagesInboxGuestBody": "To chat online with your dietitian, please register first. It's free.",
+  "messagesInboxGuestAction": "Start registration",
+  "messagesInboxUnreadChats": "Unread chats",
+  "messagesInboxNoPendingChats": "There are no pending chats.",
+  "messagesInboxUser": "User",
+  "messagesInboxImage": "Image",
+  "messagesInboxNoMessages": "No messages",
+  "messagesInboxPendingExerciseFeelings": "Pending exercise feedback",
+  "messagesInboxNoPendingExerciseFeelings": "There is no pending exercise feedback.",
+  "messagesInboxViewPendingExerciseFeelings": "View pending exercise feedback",
+  "messagesInboxUnreadDietitianChats": "Unread dietitian chats",
+  "messagesInboxOpenDietitianChat": "Open chat with dietitian",
+  "messagesInboxMessage": "Message",
+  "messagesInboxDietitianMessage": "Message from dietitian",
+  "messagesInboxUnreadCoachComments": "Unread coach comments",
+  "messagesInboxNoUnreadCoachComments": "You have no personal trainer comments pending to read.",
+  "messagesInboxViewPendingComments": "View pending comments",
+  "messagesInboxLoadError": "Error loading messages: {error}",
+  "@messagesInboxLoadError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "tipsNoFeaturedAvailable": "No featured tips",
+  "tipsNoTipsAvailable": "No tips available",
+  "tipsNoFavoriteTips": "You have no favorite tips",
+  "tipsDetailTitle": "Tip details",
+  "tipsPreviewBanner": "Preview - This is how users will see the tip",
+  "tipsHashtagTitle": "Tips with {hashtag}",
+  "@tipsHashtagTitle": {
+    "placeholders": {
+      "hashtag": {}
+    }
+  },
+  "tipsHashtagEmpty": "There are no tips with {hashtag}",
+  "@tipsHashtagEmpty": {
+    "placeholders": {
+      "hashtag": {}
+    }
+  },
+  "tipsLoadErrorStatus": "Error loading tips: {statusCode}",
+  "@tipsLoadErrorStatus": {
+    "placeholders": {
+      "statusCode": {}
+    }
+  },
+  "tipsLoadError": "Error loading tips. {error}",
+  "@tipsLoadError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "recipesPremiumToolsMessage": "Search, filters, favorites, likes, and full access to the recipes catalog are available only for Premium users.",
+  "recipesPremiumPreviewTitle": "Premium recipes",
+  "recipesPremiumPreviewSubtitle": "You can see a preview of the latest 3 recipes. Go Premium to access the full catalog and all its tools.",
+  "recipesPreviewAvailableCount": " There are currently {count} recipes available.",
+  "@recipesPreviewAvailableCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "recipesSearchLabel": "Search recipes",
+  "recipesNoFeaturedAvailable": "No featured recipes",
+  "recipesNoRecipesAvailable": "No recipes available",
+  "recipesNoFavoriteRecipes": "You have no favorite recipes",
+  "recipesDetailTitle": "Recipe details",
+  "recipesPreviewBanner": "Preview - This is how users will see the recipe",
+  "recipesHashtagTitle": "Recipes with {hashtag}",
+  "@recipesHashtagTitle": {
+    "placeholders": {
+      "hashtag": {}
+    }
+  },
+  "recipesHashtagEmpty": "There are no recipes with {hashtag}",
+  "@recipesHashtagEmpty": {
+    "placeholders": {
+      "hashtag": {}
+    }
+  },
+  "additivesPremiumCopyPdfMessage": "To copy an additive and export it to PDF, you must be a Premium user.",
+  "additivesPremiumExploreMessage": "Hashtags and additive recommendations are available only for Premium users.",
+  "additivesPremiumToolsMessage": "Search, filters, refresh, and full sorting of the additives catalog are available only for Premium users.",
+  "additivesFilterTitle": "Filter additives",
+  "additivesNoConfiguredTypes": "There are no types configured in tipos_aditivos.",
+  "additivesTypesLabel": "Types",
+  "additivesSearchHint": "Search additives",
+  "additivesEmpty": "No additives available",
+  "additivesPremiumTitle": "Premium additives",
+  "additivesPremiumSubtitle": "The full additives catalog is available only for Premium users.",
+  "additivesCatalogHighlight": " (with more than {count} additives)",
+  "@additivesCatalogHighlight": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "additivesLoadFailed": "Additives could not be loaded.",
+  "additivesCatalogUnavailable": "The additives catalog is temporarily unavailable. Please try again later.",
+  "additivesServerConnectionError": "Could not connect to the server. Check your connection and try again.",
+  "additivesSeveritySafe": "Safe",
+  "additivesSeverityAttention": "Caution",
+  "additivesSeverityHigh": "High",
+  "additivesSeverityRestricted": "Restricted",
+  "additivesSeverityForbidden": "Forbidden",
+  "substitutionsPremiumToolsMessage": "Search, filters, favorites, and full sorting of healthy substitutions are available only for Premium users.",
+  "substitutionsPremiumCopyPdfMessage": "To copy a healthy substitution and export it to PDF, you must be a Premium user.",
+  "substitutionsPremiumExploreMessage": "Hashtags, categories, recommendations, and advanced navigation for healthy substitutions are available only for Premium users.",
+  "substitutionsPremiumEngagementMessage": "Favorites and likes for healthy substitutions are available only for Premium users.",
+  "substitutionsSearchLabel": "Search substitutions or hashtags",
+  "substitutionsEmptyFeatured": "No featured substitutions.",
+  "substitutionsEmptyAll": "No substitutions available.",
+  "substitutionsEmptyFavorites": "You do not have favorite substitutions yet.",
+  "substitutionsPremiumTitle": "Premium substitutions",
+  "substitutionsPremiumSubtitle": "The full healthy substitutions library is available only for Premium users.",
+  "substitutionsCatalogHighlight": " (with more than {count} substitutions)",
+  "@substitutionsCatalogHighlight": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "substitutionsDefaultBadge": "Premium substitution",
+  "substitutionsTapForDetail": "Tap to view the full detail",
+  "substitutionsDetailTitle": "Healthy substitution",
+  "substitutionsRecommendedChange": "Recommended change",
+  "substitutionsIfUnavailable": "If you do not have",
+  "substitutionsUse": "Use",
+  "substitutionsEquivalence": "Equivalent amount",
+  "substitutionsGoal": "Goal",
+  "substitutionsNotesContext": "Sustitución saludable",
+  "commonExport": "Export",
+  "commonImport": "Import",
+  "commonSave": "Save",
+  "commonPhoto": "Photo",
+  "commonGallery": "Gallery",
+  "commonUnavailable": "Unavailable",
+  "scannerTitle": "Label scanner",
+  "scannerPremiumRequiredMessage": "Scanning, opening gallery images, and searching products from the scanner are available only for Premium users.",
+  "scannerClearTrainingTitle": "Clear OCR training",
+  "scannerClearTrainingBody": "All corrections saved on this device will be deleted. Do you want to continue?",
+  "scannerLocalTrainingRemoved": "Local OCR training removed",
+  "scannerExportRulesTitle": "Export OCR rules",
+  "scannerImportRulesTitle": "Import OCR rules",
+  "scannerImportRulesHint": "Paste the exported JSON here",
+  "scannerInvalidFormat": "Invalid format",
+  "scannerInvalidJsonOrCanceled": "Invalid JSON or import canceled",
+  "scannerImportedRulesCount": "Imported {count} training rules",
+  "@scannerImportedRulesCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "scannerRulesUploaded": "OCR rules uploaded to the server",
+  "scannerRulesUploadError": "Error uploading rules: {error}",
+  "@scannerRulesUploadError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "scannerNoRemoteRules": "No remote rules available.",
+  "scannerDownloadedRulesCount": "Downloaded {count} rules from the server",
+  "@scannerDownloadedRulesCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "scannerRulesDownloadError": "Error downloading rules: {error}",
+  "@scannerRulesDownloadError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "scannerTrainingMarkedCorrect": "Training saved: reading marked as correct",
+  "scannerCorrectOcrValuesTitle": "Correct OCR values",
+  "scannerSugarField": "Sugar (g)",
+  "scannerSaltField": "Salt (g)",
+  "scannerFatField": "Fat (g)",
+  "scannerProteinField": "Protein (g)",
+  "scannerPortionField": "Serving (g)",
+  "scannerSaveCorrection": "Save correction",
+  "scannerCorrectionSaved": "Correction saved. It will be applied to similar labels.",
+  "scannerSourceBarcode": "Barcode",
+  "scannerSourceOcrOpenFood": "Name OCR + Open Food Facts",
+  "scannerSourceOcrTable": "Nutrition table OCR",
+  "scannerSourceAutoBarcodeOpenFood": "Automatic detection (barcode + Open Food Facts)",
+  "scannerSourceAutoOcrOpenFood": "Automatic detection (OCR + Open Food Facts)",
+  "scannerSourceAutoOcrTable": "Automatic detection (nutrition table OCR)",
+  "scannerNoNutritionData": "Nutrition data could not be obtained. Take the photo in good lighting, with sharp focused text, and framing the nutrition information table.",
+  "scannerReadCompleted": "Reading completed: {source}",
+  "@scannerReadCompleted": {
+    "placeholders": {
+      "source": {}
+    }
+  },
+  "scannerAnalyzeError": "Could not analyze the label: {error}",
+  "@scannerAnalyzeError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "scannerHeaderTitle": "Food label scanner",
+  "scannerHeaderTooltip": "Full process information",
+  "scannerHeaderBody": "Take a photo of a product barcode or select an image from the gallery. When this mode is enabled, NutriFit will automatically detect the barcode, product name, or nutrition table.",
+  "scannerPremiumBanner": "Premium feature: you can enter the screen and view the information, but Search, Photo, and Gallery are blocked for non-Premium users.",
+  "scannerTrainingModeTitle": "OCR training mode",
+  "scannerTrainingModeSubtitle": "Lets you correct readings to improve detections.",
+  "scannerModeLabel": "Mode",
+  "scannerModeAuto": "Automatic mode",
+  "scannerModeBarcode": "Barcode mode",
+  "scannerModeOcrTable": "Nutrition table mode",
+  "scannerActionSearchOpenFood": "Search in Open Food Facts",
+  "scannerAutoHint": "In automatic mode, the app first tries to detect the barcode and, if it cannot find a valid product, it tries OCR on the name or the nutrition table.",
+  "scannerBarcodeHint": "In barcode mode, the camera shows a guide frame and the app analyzes only that area to improve accuracy.",
+  "scannerOcrHint": "In nutrition table mode, the app prioritizes OCR reading of the product name and nutrition table without relying on the barcode.",
+  "scannerDismissHintTooltip": "Close (long press the mode button to show it again)",
+  "scannerAnalyzing": "Analyzing label...",
+  "scannerResultPerServing": "Per-serving result",
+  "scannerThresholdInfo": "Threshold info",
+  "scannerMiniTrainingTitle": "Mini OCR training",
+  "scannerMiniTrainingApplied": "Previous learning was applied for this label or a similar one.",
+  "commonEmail": "Email",
+  "restrictedAccessGenericMessage": "To access your nutrition plans, training plans, and personalized recommendations, you first need to contact your online dietitian/coach, who will assign you a specific plan tailored to your needs.",
+  "restrictedAccessContactMethods": "Contact methods:",
+  "restrictedAccessMoreContactOptions": "More contact options",
+  "videosPremiumToolsMessage": "Search, filters, favorites, likes, and full sorting of exercise videos are available only for Premium users.",
+  "videosPremiumPlaybackMessage": "Full playback of exercise videos is available only for Premium users.",
+  "videosPremiumTitle": "Premium videos",
+  "videosPremiumSubtitle": "The full exercise videos catalog is available only for Premium users. Access ",
+  "videosPremiumPreviewHighlight": "{count} exclusive videos.",
+  "@videosPremiumPreviewHighlight": {"placeholders": {"count": {}}},
+  "charlasPremiumToolsMessage": "Search, filters, favorites, likes, and full sorting of talks and seminars are available only for Premium users.",
+  "charlasPremiumContentMessage": "Full access to the talk or seminar content is available only for Premium users.",
+  "charlasPremiumTitle": "Premium talks",
+  "charlasPremiumSubtitle": "The full talks and seminars catalog is available only for Premium users. Access ",
+  "charlasPremiumPreviewHighlight": "{count} exclusive talks.",
+  "@charlasPremiumPreviewHighlight": {"placeholders": {"count": {}}},
+  "supplementsPremiumCopyPdfMessage": "To copy a supplement and export it to PDF, you must be a Premium user.",
+  "supplementsPremiumExploreMessage": "Hashtags and supplement recommendations are available only for Premium users.",
+  "supplementsPremiumToolsMessage": "Search, refresh, and full sorting of the supplements catalog are available only for Premium users.",
+  "supplementsPremiumTitle": "Premium supplements",
+  "supplementsPremiumSubtitle": "The full supplements catalog is available only for Premium users.",
+  "supplementsPremiumPreviewHighlight": "(with more than {count} supplements)",
+  "@supplementsPremiumPreviewHighlight": {"placeholders": {"count": {}}},
+  "exerciseCatalogPremiumToolsMessage": "Search, filters, refresh, and full sorting of the exercise catalog are available only for Premium users.",
+  "exerciseCatalogPremiumVideoMessage": "The full exercise video is available only for Premium users.",
+  "exerciseCatalogPremiumTitle": "Premium exercises",
+  "exerciseCatalogPremiumSubtitle": "The full exercise catalog is available only for Premium users.",
+  "exerciseCatalogPremiumPreviewHighlight": "(with more than {count} exercises)",
+  "@exerciseCatalogPremiumPreviewHighlight": {"placeholders": {"count": {}}},
+  "scannerMiniTrainingPrompt": "Validate or correct this reading to train recognition.",
+  "scannerTrainingCorrect": "It is correct",
+  "scannerTrainingCorrectAction": "Correct",
+  "scannerDownloadServerRules": "Download server rules",
+  "scannerUploadServerRules": "Upload server rules",
+  "scannerClearLocalRules": "Clear local",
+  "scannerZoomLabel": "Zoom",
+  "scannerDetectedTextTitle": "Detected text (OCR)",
+  "scannerManualSearchTitle": "Search in Open Food Facts",
+  "scannerManualSearchHint": "Product name",
+  "scannerNoValidProductByName": "No valid product was found with that name.",
+  "scannerManualSearchSource": "Manual search by name (Open Food Facts)",
+  "scannerProductFound": "Product found in Open Food Facts",
+  "scannerProductSearchError": "Error searching product: {error}",
+  "@scannerProductSearchError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "scannerProductName": "Product name",
+  "scannerBrand": "Brand",
+  "scannerFormat": "Format",
+  "scannerBarcodeLabel": "Barcode",
+  "scannerActions": "Actions",
+  "scannerAddToShoppingList": "Add to shopping list",
+  "scannerNutriScoreNova": "Nutri-Score   NOVA",
+  "scannerNutriScoreMeaning": "What does Nutri-Score mean?",
+  "scannerNovaMeaning": "What does NOVA mean?",
+  "scannerIngredients": "Ingredients",
+  "scannerNutritionData": "Nutrition data",
+  "scannerEnergyValue": "Energy: {value}",
+  "@scannerEnergyValue": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "scannerCarbohydratesValue": "Carbohydrates: {value}",
+  "@scannerCarbohydratesValue": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "scannerFiberValue": "Fiber: {value}",
+  "@scannerFiberValue": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "scannerSaturatedFatValue": "Saturated fat: {value}",
+  "@scannerSaturatedFatValue": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "scannerSodiumValue": "Sodium: {value}",
+  "@scannerSodiumValue": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "scannerImageTitle": "Nutrition label",
+  "scannerOpenImageError": "Could not open the image: {error}",
+  "@scannerOpenImageError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "scannerInfoTitle": "Information",
+  "scannerContactDietitianButton": "Contact dietitian",
+  "scannerAllergensAndTraces": "Allergens and traces",
+  "scannerAllergensValue": "Allergens: {value}",
+  "@scannerAllergensValue": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "scannerTracesValue": "Traces: {value}",
+  "@scannerTracesValue": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "scannerFeaturedLabels": "Featured labels",
+  "scannerCopiedData": "Data copied to clipboard",
+  "scannerRegisterForShoppingList": "Sign up to add products to the shopping list",
+  "scannerUnknownUser": "User not identified",
+  "scannerExistingFoodUpdated": "The food already exists and has been updated",
+  "scannerProductAddedToShoppingList": "Product added to the shopping list",
+  "scannerAddToShoppingListError": "Error adding to the list: {error}",
+  "@scannerAddToShoppingListError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "scannerThresholdInfoIntro": "The \"Per-serving result\" table helps you see whether a value is close to (OK) or far from (Caution/High) the suggested reference range.",
+  "scannerThresholdComponent": "Component",
+  "scannerThresholdOk": "OK",
+  "scannerThresholdCaution": "Caution",
+  "scannerThresholdHighLow": "High / Low",
+  "scannerThresholdSugar": "Sugar",
+  "scannerThresholdSalt": "Salt",
+  "scannerThresholdFat": "Fat",
+  "scannerThresholdProtein": "Protein",
+  "scannerThresholdDisclaimer": "The suggestions and values shown are always indicative and do not replace advice from a dietitian. In addition, the number of servings you consume directly affects the total amount of each nutrient you ingest.",
+  "scannerOcrAccuracyTitle": "Reading accuracy (OCR)",
+  "scannerOcrAccuracyBody": "The accuracy of the detected product depends directly on image quality. If the photo is blurry, reflective, or does not clearly focus the barcode or the nutrition table, the values may be incorrect. Always review the product name to make sure it matches.",
+  "scannerOcrTip1": "• Focus only on the barcode.",
+  "scannerOcrTip2": "• If there is no barcode, focus only on the nutrition information table.",
+  "scannerOcrTip3": "• If you photograph the barcode, make sure it is fully visible and sharp.",
+  "scannerOcrTip4": "• Avoid shadows, reflections, and poor lighting.",
+  "scannerOcrTip5": "• Keep the phone steady and the text as straight as possible.",
+  "scannerOcrTip6": "• Check that numbers and units (g/ml) are readable.",
+  "scannerOcrTip7": "• Avoid photographing wrinkled or damaged labels.",
+  "scannerNutriScoreDescription": "Nutri-Score is a public front-of-pack labeling system used in Europe to summarize the product's overall nutritional quality.",
+  "scannerNutriScoreA": "Most nutritionally favorable",
+  "scannerNutriScoreB": "Favorable",
+  "scannerNutriScoreC": "Intermediate",
+  "scannerNutriScoreD": "Less favorable",
+  "scannerNutriScoreE": "Least healthy overall",
+  "scannerNovaDescription": "NOVA classifies foods by degree of processing (public health academic system).",
+  "scannerNova1": "Unprocessed or minimally processed",
+  "scannerNova2": "Processed culinary ingredients",
+  "scannerNova3": "Processed foods",
+  "scannerNova4": "Ultra-processed foods",
+  "scannerGuestAccuracyPromptStart": "If you want more accurate information ",
+  "scannerGuestAccuracyPromptLink": "sign up (it's free)",
+  "scannerGuestAccuracyPromptEnd": " and enter your age and height.",
+  "scannerCaptureTipsTitle": "Tips for taking the photo...",
+  "scannerCaptureTipsIntro": "To obtain correct values, the image must clearly focus on the barcode or the nutrition information table.",
+  "scannerCaptureTipsBody": "• If you scan the barcode, center it in the frame.\n• If you scan the nutrition table, make sure the whole table is visible.\n• Avoid shaky, blurry, or reflective photos.\n• Use good lighting and get close enough to read the numbers.\n• If the result does not look right, retake the photo from another angle.",
+  "scannerImportantNotice": "Important notice",
+  "scannerOrientativeNotice": "These calculations and this information are indicative and also depend on the quality of the photo/image and on whether the product exists in the Open Food Facts database. For a personalized assessment, always consult your online dietitian.",
+  "scannerNutrientColumn": "Nutrient",
+  "scannerServingColumn": "Serving ({portion})",
+  "@scannerServingColumn": {
+    "placeholders": {
+      "portion": {}
+    }
+  },
+  "scannerStatus100gColumn": "Status (100 g)",
+  "scannerCameraInitError": "Could not start the camera: {error}",
+  "@scannerCameraInitError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "scannerTakePhotoError": "Could not take the photo: {error}",
+  "@scannerTakePhotoError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "scannerFrameHint": "Center the label/barcode inside the frame",
+  "activitiesCatalogTitle": "Activities catalog"
+}
